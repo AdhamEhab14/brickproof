@@ -1,0 +1,57 @@
+# Three-Tier secure bootloader (STM32F103RB), FBL self-update.
+# https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader
+#
+# Build the target first, with the published TEST keys:
+#   cmake -S . -B build-test -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" -DBL_TEST_KEYS=ON
+#   cmake --build build-test
+# then:  brickproof run adapters/three_tier_f103/adapter.yaml --target <bootloader repo>
+
+name: three_tier_f103
+target: ../../../Three_Tier_Secure_Bootloader     # default: next to this repo
+
+platform:
+  base: stm32f103
+  extra: platform_extra.repl
+
+flash:
+  base: 0x08000000
+  size: 0x20000          # 128 KB
+  page: 0x400            # 1 KB
+  write_unit: 2          # halfword programming
+
+firmware:
+  - file: build-test/boot_manager.elf
+  - file: build-test/fbl.elf
+
+uart: usart2
+reset:
+  - gpioPortC OnGPIO 13 false     # hold B1 so the device stays in the bootloader
+boot_settle: 1.5                  # Boot Manager LED delay (0.6 s) plus FBL start-up
+
+driver:
+  file: driver.py
+  options:
+    fbl_bin: build-test/fbl.bin
+    version: "1.6.0"
+
+scenario:
+  name: fbl-self-update
+  cut_limit: 30                   # virtual seconds to wait for a cut to fire
+  cuts:
+    - name: first-sbl-erase
+      on_erase: 0x08004000
+      expect: {kind: erase, addr: 0x08004000}
+    - name: sbl-erase-page-20
+      on_erase: 0x08009000
+      expect: {kind: erase, addr: 0x08009000}
+    # the SBL's first erase is op 7 of the update, so after its 40 erases the
+    # copy loop starts at op 47, one program per halfword (11848 of them)
+    - name: copy-first-halfword
+      at_op: 47
+      expect: {kind: program}
+    - name: copy-halfword-100
+      at_op: 147
+      expect: {kind: program}
+    - name: copy-last-halfword
+      at_op: 11894
+      expect: {kind: program}

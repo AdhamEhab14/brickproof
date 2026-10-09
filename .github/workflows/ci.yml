@@ -1,0 +1,84 @@
+# unit  - lint and the tests that need no emulator.
+# e2e   - builds the Three-Tier bootloader (the first target), then cuts power
+#         during its FBL self-update in Renode and checks it recovers each time.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests
+        run: python -m pytest -v
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the target bootloader
+        uses: actions/checkout@v4
+        with:
+          repository: AdhamEhab14/Three-Tier-STM32-Secure-Bootloader
+          path: target
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - name: Build the target with its published TEST keys
+        working-directory: target
+        run: |
+          cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
+          cmake --build build-test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev]" -r adapters/three_tier_f103/requirements.txt
+
+      - name: Pull the plug during the FBL self-update
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          brickproof run adapters/three_tier_f103/adapter.yaml --target target --json brickproof-out/three_tier.json
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brickproof-results
+          path: brickproof-out/
