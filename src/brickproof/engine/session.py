@@ -9,6 +9,7 @@ relative path, because the monitor breaks on paths with spaces.
 
 Ported from the Three-Tier bootloader's tests/renode/renode_session.py.
 """
+import atexit
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ import socket
 import subprocess
 import sys
 import time
+import weakref
 from dataclasses import dataclass
 
 PROMPT_RE = re.compile(rb"\([^)\r\n]*\) $")
@@ -36,12 +38,26 @@ REG_REFUSED = 0x12C
 REG_REFUSED_AT = 0x130
 REG_RESYNC = 0x138
 REG_COMPARE = 0x13C
+REG_CMP_FROM = 0x140
+REG_CMP_LEN = 0x144
 EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to compare flash with
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused"}
 NEVER = 0xFFFFFFFF
 
 CUT_ERASE = 1
 CUT_PROGRAM = 2
+
+
+# Every session that has a Renode process. If the interpreter exits without them
+# being closed (an exception in a user's script, Ctrl-C), they are closed here:
+# a leftover renode.exe keeps eating CPU and slows every later run.
+_live = weakref.WeakSet()
+
+
+@atexit.register
+def _close_leftovers():
+    for session in list(_live):
+        session.close()
 
 
 class MachineHung(RuntimeError):
@@ -111,14 +127,27 @@ class RenodeSession:
         self.rx = bytearray()
         self._start()
 
+    STARTUP_WAIT = 90           # seconds to wait for Renode's monitor to answer
+    QUIT_WAIT = 10              # seconds to let it exit by itself before it is killed
+
     def _start(self):
+        """Bring Renode up. If anything on the way fails (a platform it rejects, memory
+        sizes that do not match), the process must not be left running behind us."""
+        _live.add(self)
+        try:
+            self._bring_up()
+        except BaseException:
+            self.close()
+            raise
+
+    def _bring_up(self):
         self.mon_port = free_port()
         self.uart_port = free_port()
         self.proc = subprocess.Popen(
             [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port)],
             cwd=self.workdir, stdin=subprocess.PIPE,
             stdout=open(self.log, "ab") if self.log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        self.mon = connect(self.mon_port, 90)
+        self.mon = connect(self.mon_port, self.STARTUP_WAIT)
         self._buf = b""
         self._drain_banner()
         self.cmd("logLevel 3")
@@ -309,12 +338,34 @@ class RenodeSession:
         """First address where flash differs from `expected` (a whole-flash image), or
         None. The comparison runs inside the flash model, on the whole flash: loading
         a file is fast, reading memory back as text is not."""
+        return self.image_mismatch(expected, self.flash.base, name, whole=True)
+
+    def image_mismatch(self, data, addr, name="image_expect.bin", whole=False):
+        """First address where flash at `addr` differs from `data`, or None if that
+        image is exactly what is there."""
         with open(os.path.join(self.workdir, name), "wb") as f:
-            f.write(expected)
-        reply = self.cmd_batch(["sysbus LoadBinary @%s 0x%X" % (name, EXPECT_BASE),
-                                self._set(REG_COMPARE, 1),
-                                "sysbus ReadDoubleWord 0x%X" % self._ctl(REG_COMPARE)])
+            f.write(data)
+        reply = self.cmd_batch(
+            ["sysbus LoadBinary @%s 0x%X" % (name, addr - self.flash.base + EXPECT_BASE),
+             self._set(REG_CMP_FROM, addr), self._set(REG_CMP_LEN, 0 if whole else len(data)),
+             self._set(REG_COMPARE, 1), self._get(REG_COMPARE)])
         return self._values(reply)[-1] or None
+
+    def sample_cpu(self, n=4, interval=0.02):
+        """Let the firmware run and look at the core n times: [(pc, exception number)].
+        Exception 0 is normal thread code; 2 to 6 are NMI and the fault handlers."""
+        lines = []
+        for _ in range(n):
+            lines += [self._run_cmd(interval), "cpu PC", "cpu CPSR"]
+        try:
+            values = self._values(self.cmd_batch(lines, timeout=60 + 120 * n * interval))
+        except TimeoutError:
+            raise MachineHung("emulated time stopped advancing") from None
+        self.virtual_time += n * interval
+        self._pull()
+        if len(values) != 2 * n:
+            raise RuntimeError("asked for %d CPU samples, Renode printed %d values" % (n, len(values)))
+        return [(values[i], values[i + 1] & 0x1FF) for i in range(0, 2 * n, 2)]
 
     # ---- the flash model's cut controls ----------------------------------
 
@@ -467,20 +518,30 @@ class RenodeSession:
         return None
 
     def close(self):
-        try:
-            self.cmd("quit", timeout=5)
-        except Exception:
-            pass
-        for s in (getattr(self, "mon", None), getattr(self, "uart", None)):
+        """Stop Renode. Safe to call at any point, including half-way through start-up
+        and more than once."""
+        _live.discard(self)
+        mon = self.__dict__.pop("mon", None)
+        if mon is not None:
+            try:
+                mon.settimeout(5)
+                mon.sendall(b"quit\n")
+            except OSError:
+                pass
+        for s in (mon, self.__dict__.pop("uart", None)):
             try:
                 s.close()
             except Exception:
                 pass
+        proc = self.__dict__.pop("proc", None)
+        if proc is None:
+            return
         try:
-            self.proc.stdin.close()
-            self.proc.wait(timeout=10)
+            proc.stdin.close()
+            proc.wait(timeout=self.QUIT_WAIT)
         except Exception:
-            self.proc.kill()
+            proc.kill()
+            proc.wait(timeout=10)
 
 
 class RenodeSerial:

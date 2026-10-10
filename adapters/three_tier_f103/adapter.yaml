@@ -37,11 +37,18 @@ driver:
     fbl_bin: build-test/fbl.bin
     version: "2.1.0"                # v2.0.0 refuses an FBL older than itself
 
+# The two approved FBL images come from the driver (it signs the update at run time).
+# A cut before the SBL starts leaves the old FBL, a later one must end with the new.
+oracle:
+  accept: [old_fbl, new_fbl]
+
 scenario:
   name: fbl-self-update
   cut_limit: 30                   # virtual seconds to wait for a cut to fire
   update_time: 6                  # an uninterrupted self-update takes about 2 s on the board
   cuts:
+    # ops 0 to 6: the Boot Manager's state page, before the SBL has touched the FBL
+    - at_ops: {from: 0, to: 6}
     - name: first-sbl-erase
       on_erase: 0x08004000
       expect: {kind: erase, addr: 0x08004000}

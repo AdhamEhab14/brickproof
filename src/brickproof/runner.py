@@ -6,6 +6,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 
+from brickproof import oracle as oracles
 from brickproof import trace as traces
 from brickproof.engine import workdir as wd
 from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
@@ -27,6 +28,7 @@ class CutResult:
     skipped: bool = False       # an at_ops range ran past the end of the update
     baseline: bool = False      # the uninterrupted update, run before any cut
     rewound: bool = False       # a program cut whose halfword had landed and was put back
+    image: str = None           # the approved image the oracle found installed
     message: str = ""
     seconds: float = 0.0
 
@@ -40,7 +42,8 @@ class SelfCheckFailed(RuntimeError):
 class Golden:
     """The uninterrupted update: its operations, and the flash they predict at each one."""
 
-    def __init__(self, adapter, pre):
+    def __init__(self, adapter, pre, oracle=None):
+        self.oracle = oracle
         self.flash = adapter.flash
         self.pre = pre
         self.check = adapter.check_states
@@ -99,8 +102,11 @@ def _rewind_program(session, golden, res):
         res.rewound = True
 
 
-def _verdict(session, driver, adapter, res):
-    """Power up and judge. A reset clears the fault latch, so it is read before each one."""
+def _verdict(session, driver, adapter, res, oracle):
+    """Power up and judge. Three voices, and any one of them can fail the run: what
+    the chip would not have allowed, the oracle (from outside the firmware), and the
+    driver (the firmware's own signs of life). A power cycle clears the fault latch,
+    so it is read before each one."""
     session.power_cycle(settle=adapter.boot_settle)     # RAM gone, flash as it was left
     res.alive = bool(driver.alive())
     fault = _fault_message(session)
@@ -111,11 +117,25 @@ def _verdict(session, driver, adapter, res):
     if not res.alive:
         res.message = "the device did not come back"
         return
+    if oracle:
+        v = oracle.judge(session)
+        res.image = v.image
+        if not v.ok:
+            res.message = v.message
+            return
     res.recovered, msg = driver.check_recovered()
     fault = _fault_message(session)
     if fault:
         res.recovered = False
         msg = fault
+    elif res.recovered and oracle:
+        # the driver's checks may have poked the device (a rollback probe stages an
+        # older image and reboots), so look once more at what it ended up as
+        v = oracle.judge(session)
+        res.image = v.image
+        if not v.ok:
+            res.recovered = False
+            msg = "after the driver's checks: " + v.message
     res.message = msg or ""
     res.passed = res.recovered
 
@@ -144,7 +164,7 @@ def run_cut(session, driver, adapter, cut, golden):
             res.message = _fault_message(session) or ""
             if not res.message:
                 golden.verify(session, len(golden.ops), "after the uninterrupted update")
-                _verdict(session, driver, adapter, res)
+                _verdict(session, driver, adapter, res, golden.oracle)
             return res
 
         if cut.on_erase is not None:
@@ -179,7 +199,7 @@ def run_cut(session, driver, adapter, cut, golden):
             res.message = "cut landed on %s 0x%08X, expected %s 0x%08X" % (
                 res.kind, addr, KIND_NAMES[cut.expect[0]], cut.expect[1])
             return res
-        _verdict(session, driver, adapter, res)
+        _verdict(session, driver, adapter, res, golden.oracle)
         return res
     except MachineHung:
         # a locked-up CPU leaves Renode unusable; start a fresh one for the next cut
@@ -191,7 +211,8 @@ def run_cut(session, driver, adapter, cut, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
-def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline_only=False):
+def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline_only=False,
+             oracle=None):
     """The baseline, then every cut of `adapter`, on a machine that is already up with
     the update staged. Returns (list of CutResult, golden-run trace).
 
@@ -199,7 +220,7 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     pre = session.dump_flash()
     # If the update does not work when nothing interrupts it, no cut result means
     # anything, so that is checked first and a failure ends the run.
-    golden = Golden(adapter, pre)
+    golden = Golden(adapter, pre, oracle)
     results = [run_cut(session, driver, adapter, None, golden)]
     if on_result:
         on_result(results[0])
@@ -238,7 +259,8 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
         driver = adapter.load_driver(session)
         driver.prepare()
         timings["setup_s"] = round(time.time() - t0, 1)
-        results, trace = campaign(session, driver, adapter, on_result, fail_fast, baseline_only)
+        results, trace = campaign(session, driver, adapter, on_result, fail_fast, baseline_only,
+                                  oracles.build(adapter, driver))
         timings["total_s"] = round(time.time() - t0, 1)
         timings["rewound"] = sum(r.rewound for r in results)
         return results, timings, trace

@@ -55,6 +55,7 @@ class FakeDevice:
         self.restarts = 0
         self.was_cut = False
         self.boot_pending = False
+        self.cpu = (SLOT + 4, 0)        # running inside the slot, in thread mode
 
     # ---- the firmware ------------------------------------------------------
 
@@ -179,6 +180,16 @@ class FakeDevice:
 
     def read_bytes(self, addr, n):
         return bytes(self.mem[addr - BASE:addr - BASE + n])
+
+    def image_mismatch(self, data, addr):
+        for i, want in enumerate(data):
+            if self.mem[addr - BASE + i] != want:
+                return addr + i
+        return None
+
+    def sample_cpu(self, n=4, interval=0.02):
+        self.run_for(n * interval)
+        return [self.cpu] * n               # (pc, exception number); tests overwrite it
 
     def restart(self):
         self.restarts += 1

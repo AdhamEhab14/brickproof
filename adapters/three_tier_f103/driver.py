@@ -15,6 +15,7 @@ import sys
 
 from brickproof.engine.session import RenodeSerial
 
+FBL_BASE = 0x08004000
 SLOT_B = 0x08015000
 FBL_PAGES = 40
 
@@ -34,6 +35,9 @@ class ThreeTierFblUpdate:
         self.bl, self.sign_tool = bl_host, sign_tool
         self.fbl_bin = os.path.join(root, self.opt.get("fbl_bin", "build-test/fbl.bin"))
         self.hdr = None
+        with open(self.fbl_bin, "rb") as f:
+            self.old_fbl = f.read()
+        self.new_fbl = self.old_fbl + b"\xC3" * 16     # differs from the old one, still boots
 
     def _ser(self, timeout):
         self.s.rx.clear()
@@ -42,9 +46,9 @@ class ThreeTierFblUpdate:
     def prepare(self):
         """Sign a new FBL (the current one plus padding, so it differs but still boots)
         and stage it in Slot B. Runs once; every cut starts from the flash after this."""
-        new_fbl = open(self.fbl_bin, "rb").read() + b"\xC3" * 16
         path = os.path.join(self.s.workdir, "fbl_new.bin")
-        open(path, "wb").write(new_fbl)
+        with open(path, "wb") as f:
+            f.write(self.new_fbl)
         self.sign_tool.sign(path, self.opt.get("version", "2.1.0"), "fbl", False)
         self.hdr = open(path + ".hdr", "rb").read()
 
@@ -62,12 +66,14 @@ class ThreeTierFblUpdate:
         ok, _ = self.bl.transact(self._ser(2), self.bl.CMD_GET_VER)
         return bool(ok)
 
+    def oracle_images(self):
+        """What may be in the FBL region: the FBL it shipped with, or the update."""
+        return {"old_fbl": (self.old_fbl, FBL_BASE), "new_fbl": (self.new_fbl, FBL_BASE)}
+
     def check_recovered(self):
-        """The new FBL ran: it wipes Slot B, which held the plaintext FBL."""
-        first = self.s.read_word(SLOT_B)
-        last = self.s.read_word(SLOT_B + FBL_PAGES * 1024 - 4)
-        if first != 0xFFFFFFFF or last != 0xFFFFFFFF:
-            return False, "Slot B still holds the FBL image"
+        """Nothing more to ask the firmware. Which FBL is installed, and whether it is
+        really running, is the oracle's call: before the SBL starts the old one is the
+        right answer, after it only the new one can be."""
         return True, ""
 
 

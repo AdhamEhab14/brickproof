@@ -56,6 +56,7 @@ class Adapter:
     cut_limit: float
     update_time: float            # virtual seconds an uninterrupted update needs
     check_states: bool            # compare flash at each cut with the golden run replayed
+    oracle: dict = None           # approved images and which ones a cut may leave (see oracle.py)
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -126,6 +127,28 @@ def _read(path, depth=0):
     return d
 
 
+def _parse_oracle(d, target):
+    """The `oracle:` section, with image paths made absolute. None if there is none."""
+    o = d.get("oracle")
+    if not o:
+        return None
+    images = {}
+    for name, spec in (o.get("images") or {}).items():
+        where = "oracle.images.%s" % name
+        path = os.path.normpath(os.path.join(target, _need(spec, "file", where)))
+        images[str(name)] = (path, _need(spec, "at", where))
+    accept = [str(a) for a in _need(o, "accept", "oracle")]
+    if not accept:
+        raise AdapterError("oracle.accept: name at least one image")
+    run_in = o.get("run_in")
+    if run_in is not None:
+        run_in = (_need(run_in, "start", "oracle.run_in"), _need(run_in, "end", "oracle.run_in"))
+        if run_in[0] >= run_in[1]:
+            raise AdapterError("oracle.run_in: start must be below end")
+    return {"images": images, "accept": accept, "run_in": run_in,
+            "samples": int(o.get("samples", 4)), "interval": float(o.get("interval", 0.02))}
+
+
 def load(path, target=None):
     """Read an adapter YAML. `target` overrides the firmware project folder it names.
 
@@ -186,6 +209,7 @@ def load(path, target=None):
         cut_limit=float(scenario.get("cut_limit", 30.0)),
         update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),
         check_states=bool(scenario.get("check_states", True)),
+        oracle=_parse_oracle(d, target),
         driver_file=os.path.join(folder, drv["file"]) if drv.get("file") else None,
         driver_builtin=drv.get("builtin"),
         driver_options=drv.get("options", {}) or {},

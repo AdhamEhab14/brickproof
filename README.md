@@ -30,11 +30,15 @@ every one of the update's flash operations, one per line, after first checking t
 works when nothing interrupts it:
 
 ```
-PASS baseline (no cut)   168 ops                       3.4s
-PASS op-0                op 0     erase 0x0801E400     2.8s
-PASS op-1                op 1     program 0x0801E400   2.1s
+PASS baseline (no cut)   168 ops                       2.2s  runs v2
+PASS op-0                op 0     erase 0x0801E400     1.8s  runs v2
+PASS op-1                op 1     program 0x0801E400   1.7s  runs v2
 ...
 ```
+
+The verdict does not rest on what the firmware says about itself. An oracle checks from
+outside that the bytes installed are exactly an approved image and that the CPU is running
+inside it, not sitting in a fault handler. `runs v2` at the end of a line is its finding.
 
 Each cut lands just before the operation it names. BrickProof checks that itself: after every
 cut it compares the emulated flash, byte for byte, with what the uninterrupted run predicts
@@ -86,7 +90,7 @@ itself failed (including its own flash self-check). `--json FILE` writes the res
 ## Testing your own firmware
 
 Write an adapter: one YAML file that says what to load, the real flash and RAM sizes of the chip,
-and where to cut.
+which images are approved (the `oracle` section), and where to cut.
 If your bootloader applies an image waiting in a staging slot on the next boot (MCUboot's
 overwrite mode, most OTA designs), the built-in `staged_slot` driver does the rest, and the
 demo's [adapter.yaml](examples/demo_ab_bootloader/adapter.yaml) is the template. If the update
@@ -100,6 +104,7 @@ Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103).
 | `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | Flash controller models that count operations and cut power (STM32F1 so far) |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
+| `src/brickproof/oracle.py` | The outside judge: approved image installed, and really running |
 | `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
 | `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
