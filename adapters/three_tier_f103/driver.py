@@ -45,7 +45,7 @@ class ThreeTierFblUpdate:
         new_fbl = open(self.fbl_bin, "rb").read() + b"\xC3" * 16
         path = os.path.join(self.s.workdir, "fbl_new.bin")
         open(path, "wb").write(new_fbl)
-        self.sign_tool.sign(path, self.opt.get("version", "1.6.0"), "fbl", False)
+        self.sign_tool.sign(path, self.opt.get("version", "2.1.0"), "fbl", False)
         self.hdr = open(path + ".hdr", "rb").read()
 
         ser = self._ser(5)

@@ -82,7 +82,9 @@ def run_cut(session, driver, adapter, cut, pre):
         if cut is None:
             driver.start_update()
             session.run_for(adapter.update_time)
-            res.op_index = session.flash_ops() - base      # here: how many operations it has
+            # here: how many operations the update has. Firmware that resets itself when
+            # done also resets the counter, and then the number is unknown, not zero.
+            res.op_index = (session.flash_ops() - base) or None
             res.message = _fault_message(session) or ""
             if not res.message:
                 _verdict(session, driver, adapter, res)
