@@ -74,7 +74,11 @@ class StagedSlot:
         if self.rollback_image:
             self.s.load_binary(self.rollback_image, self.slot)
             self.s.power_cycle(settle=self.settle)
-            if self._wait_for(self.forbidden_re, self.timeout):
+            # wait for whatever boots to say so, then see which image it was. Waiting
+            # for the forbidden banner itself would burn the whole timeout on every pass.
+            if not self._wait_for(self.alive_re, self.timeout):
+                return False, "nothing boots once an older image is staged"
+            if self.forbidden_re.search(self.s.uart_text()):
                 return False, "rollback: the older image was accepted after this cut"
         return True, ""
 
