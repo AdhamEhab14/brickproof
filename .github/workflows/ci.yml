@@ -94,6 +94,9 @@ jobs:
 
       - name: Upload results
         if: always()
+        # the results file is a convenience; GitHub's artifact service timing out
+        # must not turn a passing run red
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: demo-${{ matrix.adapter }}
@@ -151,6 +154,9 @@ jobs:
 
       - name: Upload results
         if: always()
+        # the results file is a convenience; GitHub's artifact service timing out
+        # must not turn a passing run red
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: brickproof-results
