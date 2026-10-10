@@ -76,3 +76,73 @@ we will try them:
    states (cheap to inject) for the rest.
 2. Parallel Renode instances (cuts are already independent).
 3. Move the flash model to C# so Renode snapshots work and restore is instant.
+
+## 2026-10-10: A bundled demo target comes before the W2 tracer (roadmap change)
+
+A new user should not have to clone and build someone else's bootloader to see the tool work.
+`examples/demo_ab_bootloader` is a small A/B bootloader (under 1 KB) and app, committed
+prebuilt, so `pip install` plus one command runs it with no toolchain and no board. Three
+build options put back the three real bugs BrickProof found in the Three-Tier bootloader,
+in the form they would take in an A/B design, so the demo shows a catch, not only a pass.
+It also gives every later feature (tracer, planner, oracle) a second target from day one, so
+none of them gets shaped around one bootloader by accident.
+
+The Three-Tier bootloader stays as the real-world target and its own CI job.
+
+## 2026-10-10: Built-in `staged_slot` driver
+
+Most bootloaders apply an image that waits in a staging slot on the next boot (MCUboot
+overwrite mode, most OTA designs). For those, the driver needs no target code: put the image
+in the slot, reset, read what booted from the UART. Options are regexes (`alive`, `expect`)
+and an optional rollback probe (stage an older image after recovering; it must not run).
+Targets with a protocol-started update still write a `driver.py`.
+
+## 2026-10-10: A reset re-initialises the flash model
+
+Measured: after `machine Reset` the Python flash model's op counter is 0 and its cut point is
+cleared. So for a boot-time update the engine resets with the machine paused (`settle=0`),
+arms the cut, then lets it run. A driver says it needs this with `update_on_boot = True`.
+
+## 2026-10-10: Flash starts erased (0xFF)
+
+Renode's flash memory starts as 0x00; real erased flash reads 0xFF. The session now fills
+flash with 0xFF before loading firmware. Firmware that checks "is this slot empty" would
+otherwise see a state that cannot exist on silicon.
+
+## 2026-10-10: Range cuts and exit codes
+
+`at_ops: {from, to, step}` expands to one cut per operation. Op counts are deterministic, so
+the first cut that never fires ends its range (SKIP), and the rest are not run. Exit codes
+separate "found a problem" (1) from "the tool broke" (3), so CI can expect a bug build to fail
+without a crash looking like a catch.
+
+## 2026-10-10: Demo speed
+
+About 6 s per cut on the demo (vs 45 s on Three-Tier, whose recovery redoes a 40 KB copy).
+Most of it is per-command monitor round trips, not emulation: one cut is about 30 monitor
+commands plus three boots. Worth profiling before the planner work, because it multiplies
+every campaign.
+
+## 2026-10-10: A locked-up CPU is a failed cut, not a crash
+
+Found by the `trust_header` bug build: a cut at op 15 leaves a valid-looking header over an
+erased body, the bootloader jumps to 0xFFFFFFFF, and the core faults while fetching its fault
+vector. Renode's virtual time then stops advancing, so `RunFor` never returns, and BrickProof
+died with a socket timeout (exit 3). On silicon this is a locked-up, dead device.
+
+Now `run_for` has a wall-clock limit (60 s + 120 x the virtual seconds asked for). Past it,
+the session raises `MachineHung`, the runner marks the cut FAIL ("the device locked up"),
+restarts Renode in place (same session object, so drivers keep working) and moves on.
+Cost: about 2 minutes per hung cut. Fine while hangs are rare; revisit if a target hangs a lot.
+
+## 2026-10-10: Demo results (local, Windows 11, Renode 1.17.0)
+
+| Build | Result | First failing cut |
+|---|---|---|
+| correct | 168/168 cuts recovered, 18 min | none |
+| `bug-consume_first` | caught | op 7: floor already raised to 2, staged v2 marked used, v1 refused: no bootable image |
+| `bug-trust_header` | caught | op 15: half-written header trusted, CPU locks up |
+| `bug-naive_floor` | caught | op 158: floor page erased, not yet rewritten; v1 accepted again |
+
+168 is exactly the count the code predicts: floor record 7, Slot A erase 1, body 150,
+header 8, consume 2.

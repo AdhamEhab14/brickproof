@@ -1,0 +1,46 @@
+# BrickProof demo: a small A/B bootloader on an STM32F103RB, updating v1 -> v2.
+# Runs from the committed prebuilt/ files, no toolchain needed:
+#
+#   brickproof run examples/demo_ab_bootloader/adapter.yaml
+#
+# The bug-*.yaml files next to this one swap in a bootloader with a known bug.
+
+name: demo_ab_bootloader
+target: .
+
+platform:
+  base: stm32f103
+
+flash:
+  base: 0x08000000
+  size: 0x20000          # 128 KB
+  page: 0x400            # 1 KB
+  write_unit: 2
+
+# the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
+firmware:
+  - file: prebuilt/bootloader.elf
+  - file: prebuilt/app_v1.img
+    addr: 0x08002000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0801E000
+
+uart: usart2
+boot_settle: 0.3
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x08010000
+    image: prebuilt/app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    rollback:
+      image: prebuilt/app_v1.img
+      forbidden: "APP v1"
+
+scenario:
+  name: update-v1-to-v2
+  cut_limit: 1                       # virtual seconds; the whole install takes far less
+  cuts:
+    - at_ops: {from: 0, to: 400}     # every operation of the update (it has fewer)

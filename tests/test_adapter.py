@@ -68,3 +68,49 @@ def test_raw_binary_needs_an_address(tmp_path):
 def test_flash_size_must_be_whole_pages(tmp_path):
     with pytest.raises(adapters.AdapterError, match="whole number"):
         adapters.load(write(tmp_path, **{"0x10000": "0x10100"}))
+
+
+DEMO = os.path.join(REPO, "examples", "demo_ab_bootloader")
+
+
+def test_at_ops_expands_to_one_cut_per_operation(tmp_path):
+    ad = adapters.load(write(tmp_path, "- at_ops: {from: 3, to: 9, step: 3}\n"))
+    assert [(c.name, c.at_op, c.group) for c in ad.cuts] == [("op-3", 3, 0), ("op-6", 6, 0), ("op-9", 9, 0)]
+
+
+@pytest.mark.parametrize("rng", ["{from: 5, to: 2}", "{from: 0}", "{from: 0, to: 4, step: 0}"])
+def test_bad_ranges_are_rejected(tmp_path, rng):
+    with pytest.raises(adapters.AdapterError, match="at_ops"):
+        adapters.load(write(tmp_path, "- at_ops: %s\n" % rng))
+
+
+def test_driver_needs_exactly_one_of_file_or_builtin(tmp_path):
+    with pytest.raises(adapters.AdapterError, match="exactly one of file or builtin"):
+        adapters.load(write(tmp_path, **{"{file: driver.py}": "{file: d.py, builtin: staged_slot}"}))
+
+
+def test_demo_uses_the_builtin_driver():
+    ad = adapters.load(os.path.join(DEMO, "adapter.yaml"))
+    assert ad.driver_builtin == "staged_slot" and ad.driver_file is None
+    assert ad.target == DEMO
+    assert all(os.path.exists(f) for f, _ in ad.firmware), "prebuilt files are committed"
+
+
+@pytest.mark.parametrize("bug", ["consume_first", "trust_header", "naive_floor"])
+def test_bug_variants_extend_the_demo(bug):
+    base = adapters.load(os.path.join(DEMO, "adapter.yaml"))
+    ad = adapters.load(os.path.join(DEMO, "bug-%s.yaml" % bug))
+    assert ad.firmware[0][0].endswith("bootloader_bug_%s.elf" % bug)
+    assert ad.driver_options == base.driver_options      # merged from the parent
+    assert len(ad.cuts) == len(base.cuts)
+
+
+def test_extends_merges_mappings_and_replaces_lists(tmp_path):
+    (tmp_path / "base.yaml").write_text(MINIMAL + "    - at_op: 1\n")
+    child = tmp_path / "child.yaml"
+    child.write_text("extends: base.yaml\nname: child\nflash: {page: 0x800}\n"
+                     "scenario: {cuts: [{at_op: 7}]}\n")
+    ad = adapters.load(str(child))
+    assert ad.name == "child"
+    assert ad.flash.page == 0x800 and ad.flash.size == 0x10000
+    assert [c.at_op for c in ad.cuts] == [7]

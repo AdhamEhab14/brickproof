@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict, dataclass
 
 from brickproof.engine import workdir as wd
-from brickproof.engine.session import CUT_ERASE, RenodeSession, find_renode
+from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
 
 KIND_NAMES = {0: "none", 1: "erase", 2: "program"}
 
@@ -22,6 +22,7 @@ class CutResult:
     alive: bool = False
     recovered: bool = False
     passed: bool = False
+    skipped: bool = False       # an at_ops range ran past the end of the update
     message: str = ""
     seconds: float = 0.0
 
@@ -40,9 +41,11 @@ def run_cut(session, driver, adapter, cut, pre):
     res = CutResult(cut=cut.name)
     t0 = time.time()
     try:
-        # every cut starts from the same image, right after the update was staged
+        # every cut starts from the same image, right after the update was staged.
+        # A target that updates during boot must be armed before it runs at all.
         session.restore_flash(pre)
-        session.power_cycle(settle=adapter.boot_settle)
+        on_boot = getattr(driver, "update_on_boot", False)
+        session.power_cycle(settle=0 if on_boot else adapter.boot_settle)
         base = session.flash_ops()
         if cut.on_erase is not None:
             session.set_cut_on_erase(cut.on_erase)
@@ -50,7 +53,11 @@ def run_cut(session, driver, adapter, cut, pre):
             session.set_cut(base + cut.at_op)
         driver.start_update()
         if not run_until_cut(session, adapter.cut_limit):
-            res.message = "the cut never fired within %.0f s of virtual time" % adapter.cut_limit
+            if cut.group is not None:
+                res.skipped = True
+                res.message = "the update has fewer operations"
+            else:
+                res.message = "the cut never fired within %.0f s of virtual time" % adapter.cut_limit
             return res
         res.fired = True
         kind, addr = session.cut_info()
@@ -70,12 +77,19 @@ def run_cut(session, driver, adapter, cut, pre):
         res.message = msg or ""
         res.passed = res.recovered
         return res
+    except MachineHung:
+        # a locked-up CPU leaves Renode unusable; start a fresh one for the next cut
+        res.message = ("the device locked up (emulated CPU stopped making progress)" if res.fired
+                       else "the emulator hung before the cut fired")
+        session.restart()
+        return res
     finally:
         res.seconds = round(time.time() - t0, 1)
 
 
-def run(adapter, keep_workdir=False, log=None, on_result=None):
-    """Run every cut of `adapter`. Returns (list of CutResult, timings dict)."""
+def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False):
+    """Run every cut of `adapter` (or up to the first failure with fail_fast).
+    Returns (list of CutResult, timings dict)."""
     exe = find_renode()
     if not exe:
         raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
@@ -95,11 +109,18 @@ def run(adapter, keep_workdir=False, log=None, on_result=None):
         timings["setup_s"] = round(time.time() - t0, 1)
 
         results = []
+        ended = set()                   # range groups that already ran off the end
         for cut in adapter.cuts:
+            if cut.group in ended:
+                continue
             r = run_cut(session, driver, adapter, cut, pre)
+            if r.skipped:
+                ended.add(cut.group)    # op counts are deterministic: later ones won't fire either
             results.append(r)
             if on_result:
                 on_result(r)
+            if fail_fast and not (r.passed or r.skipped):
+                break
         timings["total_s"] = round(time.time() - t0, 1)
         return results, timings
     finally:
@@ -115,7 +136,7 @@ def as_dict(results, timings, adapter):
     return {
         "adapter": adapter.name,
         "target": os.path.basename(adapter.target),
-        "passed": all(r.passed for r in results) and bool(results),
+        "passed": all(r.passed or r.skipped for r in results) and any(r.passed for r in results),
         "timings": timings,
         "cuts": [asdict(r) for r in results],
     }

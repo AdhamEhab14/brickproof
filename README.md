@@ -3,35 +3,61 @@
 Pull the plug on your firmware update, in an emulator, at every flash operation, and check
 that the device still comes back.
 
-BrickProof runs a firmware binary in [Renode](https://renode.io), cuts power just before
-each flash erase and program during an update, reboots, and checks recovery invariants
-with an oracle that shares no code with the firmware under test.
+BrickProof runs your firmware in [Renode](https://renode.io), cuts power just before a flash
+erase or program during an update, powers the device back up, and checks it recovered: some
+valid image runs, the update was not lost, and an older image cannot sneak back in. It does
+that for every flash operation you ask for, and tells you which ones brick the device.
 
-**Status:** early development. The engine is being extracted from the power-cut harness of
+**Status:** early development. The engine came out of the power-cut tests of
 [Three-Tier-STM32-Secure-Bootloader](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader),
-where it found three real bugs.
+where it found three real bugs. STM32F1 targets only for now.
 
-## Try it
+## Quick start
 
-You need Python 3.10+, [Renode 1.17](https://github.com/renode/renode/releases) (set `RENODE_PATH`
-or put `renode` on PATH), and the first target, the Three-Tier bootloader, built with its test keys:
-
-```bash
-git clone https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader
-cd Three-Tier-STM32-Secure-Bootloader
-cmake -S . -B build-test -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" -DBL_TEST_KEYS=ON
-cmake --build build-test
-```
-
-Then, from this repo:
+You need Python 3.10+ and [Renode 1.17](https://github.com/renode/renode/releases)
+(put `renode` on PATH or set `RENODE_PATH`). No toolchain and no board: the demo firmware is
+committed prebuilt.
 
 ```bash
-pip install -e ".[dev]" -r adapters/three_tier_f103/requirements.txt
-brickproof run adapters/three_tier_f103/adapter.yaml --target ../Three-Tier-STM32-Secure-Bootloader
+git clone https://github.com/AdhamEhab14/brickproof
+cd brickproof
+pip install -e .
+brickproof run examples/demo_ab_bootloader/adapter.yaml
 ```
 
-Each line of output is one real power cut during the bootloader's FBL self-update, the flash
-operation it landed on, and whether the device came back.
+The demo is a small A/B bootloader updating its app from v1 to v2. BrickProof cuts power at
+every one of the update's flash operations, one per line:
+
+```
+PASS op-0      op 0     erase 0x0801E400     6.7s
+PASS op-1      op 1     program              6.1s
+...
+```
+
+Now run one of the bug builds. Each puts back a real power-loss bug, and BrickProof should
+catch it:
+
+```bash
+brickproof run examples/demo_ab_bootloader/bug-consume_first.yaml --fail-fast
+```
+
+| Bug build | The mistake | What a cut does |
+|---|---|---|
+| `bug-consume_first` | marks the staged image used before copying it | no valid image left: bricked |
+| `bug-trust_header` | copies the header first and trusts it without a CRC | boots a half-copied image |
+| `bug-naive_floor` | rewrites the anti-rollback floor in place, after the install | v1 can be installed again |
+
+Exit codes: `0` every cut recovered, `1` at least one failed, `2` adapter error, `3` BrickProof
+itself failed. `--json FILE` writes the results for CI.
+
+## Testing your own firmware
+
+Write an adapter: one YAML file that says what to load, the flash geometry and where to cut.
+If your bootloader applies an image waiting in a staging slot on the next boot (MCUboot's
+overwrite mode, most OTA designs), the built-in `staged_slot` driver does the rest, and the
+demo's [adapter.yaml](examples/demo_ab_bootloader/adapter.yaml) is the template. If the update
+is started over a protocol (UART, CAN, UDS), add a small `driver.py`, like the one for the
+Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103).
 
 ## Layout
 
@@ -40,7 +66,9 @@ operation it landed on, and whether the device came back.
 | `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | Flash controller models that count operations and cut power (STM32F1 so far) |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
-| `adapters/` | One folder per target: `adapter.yaml` plus a `driver.py` that knows its update protocol |
+| `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
+| `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
+| `adapters/` | Adapters for real projects (Three-Tier bootloader) |
 | `docs/decisions.md` | Why things are the way they are |
 
 ## Licence
