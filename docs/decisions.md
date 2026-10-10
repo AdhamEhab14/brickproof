@@ -221,3 +221,70 @@ to another repo does to us.
 Run against v2.0.0 with real RAM and the memory guards: baseline + 5/5 cuts, no bus fault.
 The baseline's operation count is blank for this target: the bootloader resets itself after
 the update, which resets the flash model's counter.
+
+## 2026-10-10: Flash model state lives in memory, not in script variables
+
+A firmware reset re-runs the Python model's `IsInit` and wiped its op count, cut point and
+fault latch. For a bootloader that resets itself mid-update that meant: the baseline's op
+count read 0, and a cut could not land after the reset. The test registers (0x100 to 0x124)
+are now backed by a small `bpState` memory at 0x90000000, which Renode keeps across a reset.
+`power_cycle()` clears them on purpose. The hardware registers (CR, keys) still reset, as on
+the chip.
+
+## 2026-10-10: Golden-run tracer
+
+With the trace register set, the flash model appends every operation to a file: `E addr`,
+`P addr value`. An erase knows its address. A program does not: the CPU writes the halfword
+straight into flash memory, so when PG is cleared the model compares flash with a shadow copy
+to find what changed (the page being filled first, then every page by fingerprint, which is
+native code). A program that writes what is already there changes nothing; its address is
+then inferred as "the next halfword" and marked `inferred`.
+
+Cost: demo 168 ops in 1 s. Three-Tier FBL self-update 20,527 ops in 33 s (434 s before the
+fingerprints). Note the count: the SBL copies the whole 40 KB region, padding included, so
+the update is 20,527 operations, not the 11,900 estimated on 2026-10-09 from the image size.
+
+`brickproof trace adapter.yaml` prints the update as phases (runs of operations walking
+forward through flash). The demo is six: erase the spare floor page, write the floor record,
+erase Slot A, copy the body, copy the header, clear the staged magic. Phases are the
+equivalence classes the cut planner will sample from.
+
+Limit: an operation is counted when PG goes from 0 to 1. Firmware that keeps PG set across
+several halfwords would have them counted as one. Both targets clear PG each time (so does
+ST's HAL).
+
+## 2026-10-10: A program cut used to land AFTER its halfword. Now it lands before.
+
+Found when the trace put addresses on cut results. The model halts the CPU when PG is set,
+but Renode finishes the instruction block it is in, and the store of the halfword is in that
+block. Measured on the demo: 17 of 17 program cuts had already written their halfword.
+
+Why it matters: an erase cut stops before the erase. So with program cuts landing after, the
+state "page erased, nothing programmed yet" was never tested, and every result was labelled
+one operation early.
+
+Fix: after a program cut fires, the runner looks up the operation in the golden run. If the
+halfword is in flash, it writes back the value that was there before (`trace.value_before`).
+Every cut now means exactly "just before op N". The state after the last operation is the
+baseline's.
+
+Correction to the entry "Demo results" above: `bug-naive_floor` was said to fail at op 158
+because "the floor page was erased, not yet rewritten". Wrong. In that build ops 151 to 158
+copy the header, 159 and 160 clear the staged magic, and the floor page is erased at 161.
+The cut "at 158" had landed after the last header halfword: install complete, floor still
+at 1, so v1 is accepted again. Same bug, wrong description, and the reason was this landing
+problem.
+
+## 2026-10-10: Every cut is checked against the golden run replayed
+
+From the image before the update plus the trace, `trace.Replay` computes the exact flash just
+before any operation. After each cut (and after the baseline) the runner compares real
+emulated flash with it, on every page the update touches. A difference raises
+`SelfCheckFailed` and ends the run with exit 3: either the tool is wrong (trace, rewind,
+cut model) or the update differs from run to run, and in both cases the results could not be
+trusted. `scenario.check_states: false` turns it off for an update that is not deterministic
+(a random nonce written to flash, for example).
+
+This is the "generated state must equal a real cut, byte for byte" cross-check from the
+original harness, done for every cut instead of one hand-picked case. It also means the
+replay can later stand in for a real cut where that is cheaper.

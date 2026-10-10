@@ -29,6 +29,8 @@ REG_CUT_ADDR = 0x110
 REG_CUT_PAGE = 0x114
 REG_FAULT_ADDR = 0x118
 REG_FAULT_PC = 0x11C
+REG_TRACE = 0x120
+TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program"}
 NEVER = 0xFFFFFFFF
 
 CUT_ERASE = 1
@@ -251,6 +253,17 @@ class RenodeSession:
                 return int(tok, 16)
         return None
 
+    def read_half(self, addr):
+        text = "sysbus ReadWord 0x%X" % addr
+        out = self.cmd(text)
+        for tok in out[out.find(text) + len(text):].split():
+            if tok.startswith("0x"):
+                return int(tok, 16)
+        return None
+
+    def write_half(self, addr, value):
+        self.cmd("sysbus WriteWord 0x%X 0x%X" % (addr, value))
+
     def write_word(self, addr, value):
         self.cmd("sysbus WriteDoubleWord 0x%X 0x%X" % (addr, value))
 
@@ -258,15 +271,18 @@ class RenodeSession:
         """Put a file straight into memory. Path is relative to the work folder."""
         self.cmd("sysbus LoadBinary @%s 0x%X" % (rel_path, addr))
 
-    def dump_flash(self):
-        """The whole flash as bytes (slow: about 10 s for 128 KB)."""
-        f = self.flash
-        out = self.cmd("sysbus ReadBytes 0x%X 0x%X" % (f.base, f.size), timeout=600)
+    def read_bytes(self, addr, n):
+        """n bytes of memory (about 40 ms per KB: it comes back as text)."""
+        out = self.cmd("sysbus ReadBytes 0x%X 0x%X" % (addr, n), timeout=600)
         out = out[out.find("["):]
         data = bytes(int(t, 16) for t in re.findall(r"0x[0-9A-Fa-f]{2}", out))
-        if len(data) != f.size:
-            raise RuntimeError("flash dump returned %d bytes" % len(data))
+        if len(data) != n:
+            raise RuntimeError("read of 0x%X bytes at 0x%X returned %d" % (n, addr, len(data)))
         return data
+
+    def dump_flash(self):
+        """The whole flash as bytes (slow: about 5 s for 128 KB)."""
+        return self.read_bytes(self.flash.base, self.flash.size)
 
     def restore_flash(self, data, name="flash_restore.bin"):
         """Replace the whole flash with `data`. Renode snapshots crash with Python
@@ -300,9 +316,38 @@ class RenodeSession:
 
     def bus_fault(self):
         """(address, pc) if the firmware touched memory the chip does not have since
-        the last reset, else None. A reset clears it, so ask before the next one."""
+        the last power cycle, else None. power_cycle() clears it, so ask before the next one."""
         addr = self.read_word(self._ctl(REG_FAULT_ADDR))
         return (addr, self.read_word(self._ctl(REG_FAULT_PC))) if addr else None
+
+    # ---- the golden-run trace ---------------------------------------------
+
+    TRACE_NAME = "trace.txt"
+
+    def trace_start(self):
+        """Log every flash operation from now on (see the flash model's header)."""
+        open(os.path.join(self.workdir, self.TRACE_NAME), "w").close()
+        self.write_word(self._ctl(REG_TRACE), 1)
+
+    def trace_stop(self):
+        """Stop logging and return the operations as a list of dicts:
+        index, kind (erase / mass_erase / program), addr, and for a program its value.
+        `inferred` marks a program whose address is a guess: it wrote what was already
+        there, so nothing in flash changed."""
+        self.write_word(self._ctl(REG_TRACE), 0)
+        ops = []
+        with open(os.path.join(self.workdir, self.TRACE_NAME)) as f:
+            for line in f:
+                parts = line.split()
+                if not parts:
+                    continue
+                op = {"index": len(ops), "kind": TRACE_KINDS[parts[0]], "addr": int(parts[1], 16)}
+                if parts[0] == "P":
+                    op["value"] = int(parts[2], 16)
+                elif parts[0] == "P?":
+                    op["inferred"] = True
+                ops.append(op)
+        return ops
 
     # ---- reset and power --------------------------------------------------
 
@@ -326,9 +371,12 @@ class RenodeSession:
         ZeroAll, not FillWithConstantByte: the latter takes over a minute here."""
         self.cmd("%s ZeroAll" % self.ram)
         self.cmd("cpu IsHalted false")
+        # the flash model's state outlives resets on purpose, so clear it here
         self.write_word(self._ctl(REG_CUTPOINT), NEVER)
         self.write_word(self._ctl(REG_CUT_PAGE), NEVER)
         self.write_word(self._ctl(REG_OPCOUNT), 0)
+        self.write_word(self._ctl(REG_FAULT_ADDR), 0)
+        self.write_word(self._ctl(REG_FAULT_PC), 0)
         self.reboot(settle=settle)
 
     def pc(self):
