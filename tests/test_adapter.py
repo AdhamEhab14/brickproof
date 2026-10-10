@@ -34,9 +34,12 @@ def write(tmp_path, cuts="", **replace):
 def test_three_tier_adapter_loads():
     ad = adapters.load(THREE_TIER)
     assert ad.flash.page == 0x400 and ad.flash.size == 0x20000
-    assert ad.cuts[0].on_erase == 0x08004000
-    assert ad.cuts[0].expect == (1, 0x08004000)
-    assert all(c.expect == (2, 0) for c in ad.cuts if c.at_op is not None)
+    cuts = {c.name: c for c in ad.cuts}
+    assert [c.at_op for c in ad.cuts[:7]] == list(range(7)), "the state-page cuts come first"
+    assert cuts["first-sbl-erase"].on_erase == 0x08004000
+    assert cuts["first-sbl-erase"].expect == (1, 0x08004000)
+    assert cuts["copy-halfword-100"].expect == (2, 0)
+    assert ad.oracle["accept"] == ["old_fbl", "new_fbl"] and ad.oracle["images"] == {}
     assert ad.firmware[0][0].endswith(os.path.join("build-test", "boot_manager.elf"))
 
 

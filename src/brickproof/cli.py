@@ -21,8 +21,11 @@ def _print_result(r):
         where = ""
         op = "%s ops" % r.op_index if r.op_index is not None else ""
     status = "SKIP" if r.skipped else "PASS" if r.passed else "FAIL"
+    note = r.message
+    if r.passed and r.image:
+        note = "runs %s" % r.image              # what the oracle found installed and running
     print("%-4s %-28s %-9s %-22s %6.1fs  %s" % (
-        status, r.cut, op, where, r.seconds, r.message), flush=True)
+        status, r.cut, op, where, r.seconds, note), flush=True)
 
 
 def _load(args):
@@ -58,6 +61,9 @@ def cmd_run(args):
         return 2
     _make_dirs(args.json, args.renode_log, args.trace)
     print("BrickProof: %s, %d cut(s), target %s" % (ad.name, len(ad.cuts), ad.target), flush=True)
+    if not ad.oracle:
+        print("note: this adapter has no 'oracle' section, so each verdict rests on the "
+              "driver alone (what the firmware says about itself)", flush=True)
     out = _run(ad, args, fail_fast=args.fail_fast)
     if out is None:
         return 3

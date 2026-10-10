@@ -42,6 +42,14 @@ driver:
       image: prebuilt/app_v1.img
       forbidden: "APP v1"
 
+# Judged from outside the firmware: the bytes in Slot A must be exactly one of
+# these images, and the core must be running inside it, not in a fault handler.
+oracle:
+  images:
+    v1: {file: prebuilt/app_v1.img, at: 0x08002000}
+    v2: {file: prebuilt/app_v2.img, at: 0x08002000}
+  accept: [v2]                       # a cut must not lose the update: only the new one will do
+
 scenario:
   name: update-v1-to-v2
   cut_limit: 1                       # virtual seconds; the whole install takes far less

@@ -36,6 +36,8 @@
 #   0x138  resync      write: make the shadow equal to flash (after the engine loads an image)
 #   0x13C  compare     write: compare flash with the image the engine loaded into bpExpect.
 #                      read: first address that differs, 0 if they are equal
+#   0x140  from        the range to compare: first flash address,
+#   0x144  length      and how many bytes (0 = the whole flash)
 #
 # Renode gives Python peripherals no parameters, so the engine rewrites the
 # constant lines below with the target's values when it copies this file.
@@ -53,7 +55,7 @@ SR_PGERR = 0x04
 from System import Array, Byte, Convert
 
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
- TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE) = range(1, 17)
+ TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN) = range(1, 19)
 
 bus = None if request.IsInit else self.GetMachine().SystemBus   # no machine yet at construction
 
@@ -97,11 +99,11 @@ def differs(addr):
     return int(bus.ReadWord(addr)) != int(bus.ReadWord(addr - FLASH_BASE + SHADOW))
 
 
-def all_differences(other=None):
-    # every halfword where flash is not what the shadow (or `other`) says. Pages are
-    # compared as strings first (native code), so a clean flash costs about a millisecond.
+def all_differences():
+    # every halfword where flash is not what the shadow says. Pages are compared
+    # as strings first (native code), so a clean flash costs about a millisecond.
     now = bus.ReadBytes(FLASH_BASE, FLASH_SIZE)
-    was = bus.ReadBytes(SHADOW if other is None else other, FLASH_SIZE)
+    was = bus.ReadBytes(SHADOW, FLASH_SIZE)
     out = []
     if Convert.ToBase64String(now) == Convert.ToBase64String(was):
         return out
@@ -111,6 +113,18 @@ def all_differences(other=None):
                 if now[i] != was[i] or now[i + 1] != was[i + 1]:
                     out.append(FLASH_BASE + i)
     return out
+
+
+def first_difference(addr, n):
+    # first address in [addr, addr+n) where flash is not what bpExpect holds, or 0
+    now = bus.ReadBytes(addr, n)
+    want = bus.ReadBytes(addr - FLASH_BASE + EXPECT, n)
+    if Convert.ToBase64String(now) == Convert.ToBase64String(want):
+        return 0
+    for i in range(n):
+        if now[i] != want[i]:
+            return addr + i
+    return 0
 
 
 def written_halfwords():
@@ -228,9 +242,9 @@ elif request.IsWrite:
     elif o == 0x138:
         resync()
     elif o == 0x13C:
-        diffs = all_differences(EXPECT)
-        st_w(COMPARE, diffs[0] if diffs else 0)
-    elif 0x100 <= o <= 0x134:
+        n = st(CMP_LEN)
+        st_w(COMPARE, first_difference(st(CMP_FROM), n) if n else first_difference(FLASH_BASE, FLASH_SIZE))
+    elif 0x100 <= o <= 0x134 or o in (0x140, 0x144):
         st_w((o - 0x100) // 4 + 1, v)
     else:
         regs[o] = v
@@ -239,5 +253,5 @@ elif request.IsRead:
     o = request.Offset
     if o == 0x0C: request.Value = 0x20 | sr_err   # EOP set, BSY clear, plus any error
     elif o == 0x1C: request.Value = 0x03FFFFFC    # OBR: no read protection
-    elif 0x100 <= o <= 0x13C: request.Value = st((o - 0x100) // 4 + 1)
+    elif 0x100 <= o <= 0x144: request.Value = st((o - 0x100) // 4 + 1)
     else: request.Value = regs.get(o, 0)
