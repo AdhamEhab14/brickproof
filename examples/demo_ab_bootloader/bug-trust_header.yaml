@@ -1,0 +1,10 @@
+# The demo with a known bug put back (see BUG_TRUST_HEADER in bootloader/main.c).
+# BrickProof should fail at least one cut.
+extends: adapter.yaml
+name: demo_ab_bootloader_bug_trust_header
+firmware:
+  - file: prebuilt/bootloader_bug_trust_header.elf
+  - file: prebuilt/app_v1.img
+    addr: 0x08002000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0801E000
