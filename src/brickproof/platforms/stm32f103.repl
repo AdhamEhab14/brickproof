@@ -20,3 +20,9 @@ crc: CRC.STM32_CRC @ sysbus 0x40023000
 
 bitbandPeripherals: Miscellaneous.BitBanding @ sysbus <0x42000000, +0x2000000>
     peripheralBase: 0x40000000
+
+// Where the flash model keeps its test state (op count, cut point, fault latch).
+// Plain memory survives a firmware reset; the model's own variables do not.
+// The address is unused on the chip and outside the guarded holes.
+bpState: Memory.MappedMemory @ sysbus 0x90000000
+    size: 0x1000

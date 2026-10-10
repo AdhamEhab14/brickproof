@@ -6,6 +6,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 
+from brickproof import trace as traces
 from brickproof.engine import workdir as wd
 from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
 
@@ -25,8 +26,49 @@ class CutResult:
     passed: bool = False
     skipped: bool = False       # an at_ops range ran past the end of the update
     baseline: bool = False      # the uninterrupted update, run before any cut
+    rewound: bool = False       # a program cut whose halfword had landed and was put back
     message: str = ""
     seconds: float = 0.0
+
+
+class SelfCheckFailed(RuntimeError):
+    """The emulated flash is not what the golden run says it should be. Either the
+    tool is wrong or the update is not the same from one run to the next; both mean
+    the results cannot be trusted, so the run stops (exit code 3)."""
+
+
+class Golden:
+    """The uninterrupted update: its operations, and the flash they predict at each one."""
+
+    def __init__(self, adapter, pre):
+        self.flash = adapter.flash
+        self.pre = pre
+        self.check = adapter.check_states
+        self.ops = []
+        self.replay = None
+        self.pages = []
+
+    def record(self, ops):
+        f = self.flash
+        self.ops = ops
+        self.replay = traces.Replay(self.pre, ops, f.base, f.page)
+        self.pages = traces.touched_pages(ops, f.page, f.base, f.size)
+
+    def verify(self, session, n, what):
+        """Compare real flash with the replay just before operation n, on every page
+        the update touches."""
+        if not self.check:
+            return
+        want = self.replay.at(n)
+        for page in self.pages:
+            off = page - self.flash.base
+            got = session.read_bytes(page, self.flash.page)
+            if got != want[off:off + self.flash.page]:
+                i = next(i for i in range(self.flash.page) if got[i] != want[off + i])
+                raise SelfCheckFailed(
+                    "%s: flash differs from the golden run replayed to op %d, first at 0x%08X "
+                    "(is 0x%02X, expected 0x%02X). If the update is not deterministic, set "
+                    "scenario.check_states: false" % (what, n, page + i, got[i], want[off + i]))
 
 
 def run_until_cut(session, limit, step=0.01):
@@ -45,6 +87,24 @@ def _fault_message(session):
         return None
     return ("bus fault: the firmware touched 0x%08X (PC 0x%08X), which does not exist on the chip"
             % fault)
+
+
+def _rewind_program(session, golden, res):
+    """Make a program cut land exactly before its halfword.
+
+    The model stops the CPU when PG is set, but Renode finishes the instruction block
+    it is in, and that block usually holds the store too. Left alone, "cut at op N"
+    would mean "after op N", and the state right after an erase, with nothing
+    programmed yet, would never be tested. If the halfword did land, put back what
+    was there before it."""
+    op = golden.ops[res.op_index]
+    if "value" not in op:
+        return                                             # it wrote what was already there
+    f = golden.flash
+    before = traces.value_before(golden.ops, res.op_index, golden.pre, f.base, f.page)
+    if before != op["value"] and session.read_half(res.addr) == op["value"]:
+        session.write_half(res.addr, before)
+        res.rewound = True
 
 
 def _verdict(session, driver, adapter, res):
@@ -68,23 +128,26 @@ def _verdict(session, driver, adapter, res):
     res.passed = res.recovered
 
 
-def run_cut(session, driver, adapter, cut, pre):
-    """One cut, or with cut=None the baseline: the same update left to finish."""
+def run_cut(session, driver, adapter, cut, golden):
+    """One cut, or with cut=None the baseline: the same update left to finish.
+    The baseline records the golden run; cuts use it to say where they landed and to
+    check the flash they left behind."""
     res = CutResult(cut=cut.name if cut else BASELINE, baseline=cut is None)
     t0 = time.time()
     try:
         # every run starts from the same image, right after the update was staged.
         # A target that updates during boot must be armed before it runs at all.
-        session.restore_flash(pre)
+        session.restore_flash(golden.pre)
         on_boot = getattr(driver, "update_on_boot", False)
         session.power_cycle(settle=0 if on_boot else adapter.boot_settle)
         base = session.flash_ops()
         if cut is None:
+            session.trace_start()
             driver.start_update()
             session.run_for(adapter.update_time)
-            # here: how many operations the update has. Firmware that resets itself when
-            # done also resets the counter, and then the number is unknown, not zero.
-            res.op_index = (session.flash_ops() - base) or None
+            golden.record(session.trace_stop())
+            res.op_index = len(golden.ops)                 # here: how many operations it has
+            golden.verify(session, len(golden.ops), "after the uninterrupted update")
             res.message = _fault_message(session) or ""
             if not res.message:
                 _verdict(session, driver, adapter, res)
@@ -109,7 +172,14 @@ def run_cut(session, driver, adapter, cut, pre):
         kind, addr = session.cut_info()
         res.kind, res.addr = KIND_NAMES.get(kind, str(kind)), addr
         res.op_index = session.flash_ops() - base
+        op = golden.ops[res.op_index] if res.op_index < len(golden.ops) else None
+        if op and op["kind"] == res.kind == "program":
+            res.addr = op["addr"]                          # the model never sees it; the golden run did
+            _rewind_program(session, golden, res)
+        if op:
+            golden.verify(session, res.op_index, "cut %s" % cut.name)
         if cut.expect and (kind, addr if kind == CUT_ERASE else 0) != cut.expect:
+            res.addr = addr
             res.message = "cut landed on %s 0x%08X, expected %s 0x%08X" % (
                 res.kind, addr, KIND_NAMES[cut.expect[0]], cut.expect[1])
             return res
@@ -125,9 +195,9 @@ def run_cut(session, driver, adapter, cut, pre):
         res.seconds = round(time.time() - t0, 1)
 
 
-def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False):
+def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, baseline_only=False):
     """Run the baseline, then every cut of `adapter` (or up to the first failure with
-    fail_fast). Returns (list of CutResult, timings dict)."""
+    fail_fast). Returns (list of CutResult, timings dict, golden-run trace)."""
     exe = find_renode()
     if not exe:
         raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
@@ -149,14 +219,15 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False):
 
         # If the update does not work when nothing interrupts it, no cut result means
         # anything, so that is checked first and a failure ends the run.
-        results = [run_cut(session, driver, adapter, None, pre)]
+        golden = Golden(adapter, pre)
+        results = [run_cut(session, driver, adapter, None, golden)]
         if on_result:
             on_result(results[0])
         ended = set()                   # range groups that already ran off the end
-        for cut in adapter.cuts if results[0].passed else []:
+        for cut in adapter.cuts if results[0].passed and not baseline_only else []:
             if cut.group in ended:
                 continue
-            r = run_cut(session, driver, adapter, cut, pre)
+            r = run_cut(session, driver, adapter, cut, golden)
             if r.skipped:
                 ended.add(cut.group)    # op counts are deterministic: later ones won't fire either
             results.append(r)
@@ -165,7 +236,8 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False):
             if fail_fast and not (r.passed or r.skipped):
                 break
         timings["total_s"] = round(time.time() - t0, 1)
-        return results, timings
+        timings["rewound"] = sum(r.rewound for r in results)
+        return results, timings, golden.ops
     finally:
         if session:
             session.close()

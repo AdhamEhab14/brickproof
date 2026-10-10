@@ -26,7 +26,7 @@ def results():
         pytest.skip("Renode not found (set RENODE_PATH)")
     if not os.path.exists(os.path.join(ad.target, "build-test", "fbl.elf")):
         pytest.skip("bootloader not built in %s/build-test" % ad.target)
-    res, _ = runner.run(ad)
+    res, _, _ = runner.run(ad)
     return {r.cut: r for r in res}
 
 

@@ -30,11 +30,33 @@ every one of the update's flash operations, one per line, after first checking t
 works when nothing interrupts it:
 
 ```
-PASS baseline (no cut)   168 ops                    2.9s
-PASS op-0                op 0     erase 0x0801E400  2.0s
-PASS op-1                op 1     program           1.8s
+PASS baseline (no cut)   168 ops                       3.4s
+PASS op-0                op 0     erase 0x0801E400     2.8s
+PASS op-1                op 1     program 0x0801E400   2.1s
 ...
 ```
+
+Each cut lands just before the operation it names. BrickProof checks that itself: after every
+cut it compares the emulated flash, byte for byte, with what the uninterrupted run predicts
+for that point, and stops if they differ.
+
+To see what an update does to flash without cutting anything:
+
+```bash
+brickproof trace examples/demo_ab_bootloader/adapter.yaml
+```
+
+```
+op 0             erase           1  0x0801E400                  spare rollback-floor page
+ops 1-6          program         6  0x0801E400 .. 0x0801E40A    new floor record
+op 7             erase           1  0x08002000                  Slot A
+ops 8-157        program       150  0x08002200 .. 0x0800232A    app body
+ops 158-165      program         8  0x08002000 .. 0x0800200E    header, last
+ops 166-167      program         2  0x08010000 .. 0x08010002    mark the staged image used
+```
+
+(The notes on the right are added here; the tool prints the addresses.) `-o FILE` saves every
+operation as JSON lines.
 
 Now run one of the bug builds. Each puts back a real bug, and BrickProof should catch it:
 
@@ -54,7 +76,7 @@ emulator had passed it, because emulated RAM was far bigger than the chip's. Bri
 gives the emulated chip its real memory sizes and treats any access outside them as a fault.
 
 Exit codes: `0` every cut recovered, `1` at least one failed, `2` adapter error, `3` BrickProof
-itself failed. `--json FILE` writes the results for CI.
+itself failed (including its own flash self-check). `--json FILE` writes the results for CI.
 
 ## Testing your own firmware
 
@@ -73,6 +95,7 @@ Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103).
 | `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | Flash controller models that count operations and cut power (STM32F1 so far) |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
+| `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
 | `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
 | `adapters/` | Adapters for real projects (Three-Tier bootloader) |

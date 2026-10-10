@@ -10,6 +10,7 @@ PLATFORMS = os.path.join(HERE, "platforms")
 
 _GEOMETRY = {"PAGE": "page", "FLASH_BASE": "base", "FLASH_SIZE": "size"}
 FAULT_REG_OFFSET = 0x118        # REG_FAULT_ADDR in session.py
+TRACE_NAME = "trace.txt"        # RenodeSession.TRACE_NAME
 
 # How each base platform names its memories and where they start. Renode's stock
 # platforms are far bigger than the chips (the F103 gets 256 MB of RAM and 512 MB
@@ -54,6 +55,17 @@ def _set_const(model_text, const, value):
     return model_text
 
 
+def _set_trace_file(model_text, path):
+    """Tell a flash model where to log operations. The path is spliced in as plain
+    text, not as a regex replacement, so a backslash in it stays a backslash."""
+    lines = model_text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("TRACE_FILE = "):
+            lines[i] = 'TRACE_FILE = "%s"' % path
+            return "\n".join(lines)
+    raise ValueError("flash model has no 'TRACE_FILE = ...' line")
+
+
 def patch_geometry(model_text, flash):
     """Rewrite the PAGE / FLASH_BASE / FLASH_SIZE lines of a flash model."""
     for const, attr in _GEOMETRY.items():
@@ -88,6 +100,7 @@ def prepare(workdir, adapter):
         text = open(os.path.join(MODELS, name)).read()
         if name.endswith("_flash.py"):
             text = patch_geometry(text, adapter.flash)
+            text = _set_trace_file(text, "%s/%s" % (_slash(workdir), TRACE_NAME))
         with open(os.path.join(models, name), "w", newline="\n") as f:
             f.write(text)
 
