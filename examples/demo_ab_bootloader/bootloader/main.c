@@ -13,8 +13,10 @@
  * Until step 5, Slot B is still a valid image, so a cut anywhere earlier just
  * means the next boot runs the install again.
  *
- * Four build options put back real bugs from another bootloader (three found by
- * BrickProof, one by a real board). Each one should make a run fail:
+ * Build options put back known bugs. The first four are real, from another
+ * bootloader (three found by BrickProof, one by a real board). The last two are
+ * classic flash mistakes that an emulator's plain memory lets through and a chip
+ * does not. Each one should make a run fail:
  *   BUG_CONSUME_FIRST     mark Slot B consumed before copying (cut = no image left)
  *   BUG_TRUST_HEADER      copy the header first and check only its magic, not the CRC
  *                         (cut = a half-copied image that looks valid)
@@ -22,6 +24,10 @@
  *                         the install (cut = floor back to 0, old images accepted again)
  *   BUG_POP_AFTER_SWITCH  pop saved registers after switching to the app's stack
  *                         (no cut needed: it reads past the end of RAM on every boot)
+ *   BUG_NO_ERASE          copy the new image over the old one without erasing first
+ *                         (the chip refuses to program a cell that is not erased)
+ *   BUG_NO_UNLOCK         never unlock the flash controller for the install
+ *                         (the chip ignores every erase and program)
  */
 #include "demo.h"
 
@@ -194,7 +200,9 @@ static void install(void)
     uint32_t pages = (IMG_OFFSET + body + PAGE_SIZE - 1) / PAGE_SIZE;
 
     uart_puts("BL: installing\r\n");
+#ifndef BUG_NO_UNLOCK
     flash_unlock();
+#endif
 #ifndef BUG_NAIVE_FLOOR
     meta_write(version);
 #endif
@@ -202,8 +210,12 @@ static void install(void)
     img_hdr_t h = *hdr(SLOT_B);           /* keep a RAM copy, Slot B is about to lose it */
     consume_staging();
 #endif
+#ifndef BUG_NO_ERASE
     for (uint32_t p = 0; p < pages; p++)
         flash_erase(SLOT_A + p * PAGE_SIZE);
+#else
+    (void)pages;
+#endif
 #ifdef BUG_TRUST_HEADER
     copy_halfwords(SLOT_A, SLOT_B, sizeof(img_hdr_t));
 #endif

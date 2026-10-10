@@ -11,6 +11,8 @@ PLATFORMS = os.path.join(HERE, "platforms")
 _GEOMETRY = {"PAGE": "page", "FLASH_BASE": "base", "FLASH_SIZE": "size"}
 FAULT_REG_OFFSET = 0x118        # REG_FAULT_ADDR in session.py
 TRACE_NAME = "trace.txt"        # RenodeSession.TRACE_NAME
+SHADOW_BASE = 0x91000000        # SHADOW in the flash models
+EXPECT_BASE = 0x92000000        # EXPECT in the flash models: an image to compare flash with
 
 # How each base platform names its memories and where they start. Renode's stock
 # platforms are far bigger than the chips (the F103 gets 256 MB of RAM and 512 MB
@@ -106,6 +108,10 @@ def prepare(workdir, adapter):
 
     repl = platform_text(adapter.platform, models, adapter.platform_extra, adapter.folder,
                          memory_sizes(adapter))
+    # the flash model's two private copies of flash (see its header), as big as the flash
+    for name, base in (("bpShadow", SHADOW_BASE), ("bpExpect", EXPECT_BASE)):
+        repl += "\n%s: Memory.MappedMemory @ sysbus 0x%X\n    size: 0x%X\n" % (
+            name, base, adapter.flash.size)
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):
         text = _set_const(guard, "GUARD_BASE", base)

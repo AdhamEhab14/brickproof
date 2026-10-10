@@ -101,6 +101,11 @@ def cmd_trace(args):
 
 
 def main(argv=None):
+    # a Windows console in a legacy code page cannot print every character a device
+    # may send; show a placeholder rather than die with an encoding error
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog="brickproof", description="Power-fail testing for firmware updates.")
     sub = p.add_subparsers(dest="command", required=True)
 

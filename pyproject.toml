@@ -38,4 +38,3 @@ select = ["E", "F", "W", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["renode: needs Renode and a built target (slow)"]
