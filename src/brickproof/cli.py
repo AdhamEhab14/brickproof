@@ -1,4 +1,8 @@
-"""brickproof run adapter.yaml"""
+"""brickproof run adapter.yaml
+
+Exit codes: 0 every cut recovered, 1 at least one cut failed,
+2 the adapter is wrong, 3 BrickProof itself failed (Renode missing, crashed...).
+"""
 import argparse
 import json
 import os
@@ -11,8 +15,9 @@ from brickproof import runner
 def _print_result(r):
     where = "%s 0x%08X" % (r.kind, r.addr) if r.kind == "erase" else r.kind
     op = "op %s" % r.op_index if r.op_index is not None else "op ?"
+    status = "SKIP" if r.skipped else "PASS" if r.passed else "FAIL"
     print("%-4s %-28s %-8s %-22s %6.1fs  %s" % (
-        "PASS" if r.passed else "FAIL", r.cut, op, where, r.seconds, r.message), flush=True)
+        status, r.cut, op, where, r.seconds, r.message), flush=True)
 
 
 def cmd_run(args):
@@ -28,15 +33,20 @@ def cmd_run(args):
         if out and os.path.dirname(out):
             os.makedirs(os.path.dirname(out), exist_ok=True)
     print("BrickProof: %s, %d cut(s), target %s" % (ad.name, len(ad.cuts), ad.target), flush=True)
-    results, timings = runner.run(ad, keep_workdir=args.keep, log=args.renode_log,
-                                  on_result=_print_result)
+    try:
+        results, timings = runner.run(ad, keep_workdir=args.keep, log=args.renode_log,
+                                      on_result=_print_result, fail_fast=args.fail_fast)
+    except Exception as e:      # the tool broke: not the same thing as a failed cut
+        print("brickproof error: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        return 3
     report = runner.as_dict(results, timings, ad)
     if args.json:
         with open(args.json, "w") as f:
             json.dump(report, f, indent=2)
-    passed = sum(r.passed for r in results)
+    ran = [r for r in results if not r.skipped]
+    passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs)" % (
-        passed, len(results), timings.get("setup_s", 0), timings.get("total_s", 0)))
+        passed, len(ran), timings.get("setup_s", 0), timings.get("total_s", 0)))
     return 0 if report["passed"] else 1
 
 
@@ -47,6 +57,7 @@ def main(argv=None):
     r.add_argument("adapter", help="adapter YAML file")
     r.add_argument("--target", help="firmware project folder (overrides the adapter's 'target')")
     r.add_argument("--json", help="write the results as JSON to this file")
+    r.add_argument("--fail-fast", action="store_true", help="stop at the first cut that fails")
     r.add_argument("--keep", action="store_true", help="keep the Renode work folder")
     r.add_argument("--renode-log", help="write Renode's own output to this file")
     args = p.parse_args(argv)

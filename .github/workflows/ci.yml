@@ -1,5 +1,8 @@
-# unit  - lint and the tests that need no emulator.
-# e2e   - builds the Three-Tier bootloader (the first target), then cuts power
+# unit  - lint, the tests that need no emulator, and a from-source build of the demo.
+# demo  - the bundled demo bootloader from its committed prebuilt files, the way a
+#         new user runs it: the correct one must survive a cut at every flash
+#         operation, and each bug build must be caught (exit code 1, not 0 or 3).
+# e2e   - builds the Three-Tier bootloader (the first real target), then cuts power
 #         during its FBL self-update in Renode and checks it recovers each time.
 name: CI
 
@@ -26,6 +29,73 @@ jobs:
 
       - name: Unit tests
         run: python -m pytest -v
+
+      - name: Demo firmware builds from source
+        run: |
+          # the demo links no C library, so skip the 500 MB of recommended ones
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+          python examples/demo_ab_bootloader/build.py
+
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - adapter: adapter
+            expect: 0
+          - adapter: bug-consume_first
+            expect: 1
+          - adapter: bug-trust_header
+            expect: 1
+          - adapter: bug-naive_floor
+            expect: 1
+    name: demo (${{ matrix.adapter }})
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Cut power during the demo update
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          flags=""
+          if [ "${{ matrix.expect }}" = 1 ]; then flags="--fail-fast"; fi
+          set +e
+          brickproof run examples/demo_ab_bootloader/${{ matrix.adapter }}.yaml $flags \
+            --json brickproof-out/${{ matrix.adapter }}.json
+          code=$?
+          echo "exit code $code, expected ${{ matrix.expect }}"
+          [ "$code" = "${{ matrix.expect }}" ]
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-${{ matrix.adapter }}
+          path: brickproof-out/
 
   e2e:
     runs-on: ubuntu-latest

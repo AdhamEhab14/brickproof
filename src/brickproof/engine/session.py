@@ -33,6 +33,11 @@ CUT_ERASE = 1
 CUT_PROGRAM = 2
 
 
+class MachineHung(RuntimeError):
+    """Emulated time stopped advancing: the firmware locked up (for example a fault
+    while fetching the fault vector). On silicon that is a dead device too."""
+
+
 @dataclass
 class FlashGeometry:
     base: int
@@ -87,14 +92,19 @@ class RenodeSession:
         self.reset_cmds = list(reset_cmds)
         self.ram = ram
         self.uart_name = uart
-        self.mon_port = free_port()
-        self.uart_port = free_port()
+        self.firmware = list(firmware)
+        self.log = log
         self.virtual_time = 0.0
         self.rx = bytearray()
+        self._start()
+
+    def _start(self):
+        self.mon_port = free_port()
+        self.uart_port = free_port()
         self.proc = subprocess.Popen(
-            [exe, "--disable-xwt", "--plain", "--port", str(self.mon_port)],
-            cwd=workdir, stdin=subprocess.PIPE,
-            stdout=open(log, "wb") if log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port)],
+            cwd=self.workdir, stdin=subprocess.PIPE,
+            stdout=open(self.log, "ab") if self.log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
         self.mon = connect(self.mon_port, 90)
         self._buf = b""
         self._drain_banner()
@@ -102,17 +112,26 @@ class RenodeSession:
         self.cmd('emulation CreateServerSocketTerminal %d "term" false' % self.uart_port)
         self.cmd('mach create "target"')
         self.cmd("machine LoadPlatformDescription @platform.repl")
-        for rel, addr in firmware:
+        # Renode's flash starts as 0x00; real erased flash reads 0xFF
+        self.restore_flash(b"\xFF" * self.flash.size, "erased.bin")
+        for rel, addr in self.firmware:
             if rel.lower().endswith(".elf"):
                 self.cmd("sysbus LoadELF @%s" % rel)
             else:
                 self.cmd("sysbus LoadBinary @%s 0x%X" % (rel, addr))
-        self.cmd("cpu VectorTableOffset 0x%X" % vector_table)
-        self.cmd("cpu PerformanceInMips %d" % mips)
-        self.cmd("connector Connect sysbus.%s term" % uart)
+        self.cmd("cpu VectorTableOffset 0x%X" % self.vector_table)
+        self.cmd("cpu PerformanceInMips %d" % self.mips)
+        self.cmd("connector Connect sysbus.%s term" % self.uart_name)
         self.uart = connect(self.uart_port, 10)
         for c in self.reset_cmds:
             self.cmd(c)
+
+    def restart(self):
+        """Throw this Renode away and start a fresh one with the same machine.
+        Flash comes back as first loaded; callers restore what they need."""
+        self.close()
+        self.rx.clear()
+        self._start()
 
     def _drain_banner(self):
         self.mon.settimeout(2)
@@ -164,8 +183,12 @@ class RenodeSession:
     # ---- time and UART ----------------------------------------------------
 
     def run_for(self, seconds):
-        # RunFor wants fixed-point text; scientific notation is rejected
-        self.cmd('emulation RunFor "%.7f"' % seconds)
+        # RunFor wants fixed-point text; scientific notation is rejected. If it does
+        # not come back in generous wall-clock time, the emulated CPU is stuck.
+        try:
+            self.cmd('emulation RunFor "%.7f"' % seconds, timeout=60 + 120 * seconds)
+        except TimeoutError:
+            raise MachineHung("emulated time stopped advancing") from None
         self.virtual_time += seconds
         self._pull()
 
@@ -262,13 +285,19 @@ class RenodeSession:
     # ---- reset and power --------------------------------------------------
 
     def reboot(self, settle=1.5):
-        """Reset the CPU and peripherals; flash contents are kept."""
+        """Reset the CPU and peripherals; flash contents are kept. A reset also
+        re-initialises the flash model, so arm a cut after it, not before.
+        settle=0 leaves the machine paused at the reset vector."""
         self.cmd("machine Reset")
         self.cmd("cpu VectorTableOffset 0x%X" % self.vector_table)
         for c in self.reset_cmds:
             self.cmd(c)
         self.rx.clear()
-        self.run_for(settle)
+        if settle:
+            self.run_for(settle)
+
+    def uart_text(self):
+        return self.rx.decode(errors="replace")
 
     def power_cycle(self, settle=1.5):
         """A real power loss: RAM is lost, flash is kept, everything restarts.
