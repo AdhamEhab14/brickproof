@@ -17,7 +17,8 @@ def every_op(to=UPDATE_OPS + 5):
 def campaign(device, cuts=None, check_states=True, **kw):
     ad = SimpleNamespace(flash=device.flash, check_states=check_states, cut_limit=0.03,
                          update_time=1.0, boot_settle=0.1, cuts=every_op() if cuts is None else cuts)
-    return runner.campaign(device, FakeDriver(device), ad, **kw)
+    out = runner.campaign(device, FakeDriver(device), ad, **kw)
+    return out.results, out.trace
 
 
 def test_a_correct_updater_survives_a_cut_at_every_operation():
@@ -54,7 +55,7 @@ def test_a_program_that_landed_is_put_back_so_the_cut_is_before_it():
 
     ad = SimpleNamespace(flash=device.flash, check_states=True, cut_limit=0.03, update_time=1.0,
                          boot_settle=0.0, cuts=[Cut(name="first-halfword", at_op=1)])
-    results, _ = runner.campaign(device, Spy(device), ad)
+    results = runner.campaign(device, Spy(device), ad).results
     assert results[1].rewound and results[1].passed
     # seen[0] is the baseline. For the cut: op 1 is the first halfword, and just
     # before it the slot is erased and empty
@@ -135,8 +136,8 @@ def test_as_dict_needs_every_cut_to_pass():
     good, _ = campaign(FakeDevice())
     bad, _ = campaign(FakeDevice(no_recovery=True))
     ad = SimpleNamespace(name="fake", target="/x/fake")
-    assert runner.as_dict(good, {}, ad)["passed"] is True
-    assert runner.as_dict(bad, {}, ad)["passed"] is False
+    assert runner.as_dict(runner.Outcome(good, []), ad)["passed"] is True
+    assert runner.as_dict(runner.Outcome(bad, []), ad)["passed"] is False
 
 
 def test_the_fake_really_installs_the_new_image():

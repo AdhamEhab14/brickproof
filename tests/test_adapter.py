@@ -34,11 +34,7 @@ def write(tmp_path, cuts="", **replace):
 def test_three_tier_adapter_loads():
     ad = adapters.load(THREE_TIER)
     assert ad.flash.page == 0x400 and ad.flash.size == 0x20000
-    cuts = {c.name: c for c in ad.cuts}
-    assert [c.at_op for c in ad.cuts[:7]] == list(range(7)), "the state-page cuts come first"
-    assert cuts["first-sbl-erase"].on_erase == 0x08004000
-    assert cuts["first-sbl-erase"].expect == (1, 0x08004000)
-    assert cuts["copy-halfword-100"].expect == (2, 0)
+    assert ad.cuts == [] and ad.plan == {"mode": "phases", "per_phase": 4}
     assert ad.oracle["accept"] == ["old_fbl", "new_fbl"] and ad.oracle["images"] == {}
     assert ad.firmware[0][0].endswith(os.path.join("build-test", "boot_manager.elf"))
 
@@ -107,7 +103,7 @@ def test_bug_variants_extend_the_demo(bug):
     ad = adapters.load(os.path.join(DEMO, "bug-%s.yaml" % bug))
     assert ad.firmware[0][0].endswith("bootloader_bug_%s.elf" % bug)
     assert ad.driver_options == base.driver_options      # merged from the parent
-    assert len(ad.cuts) == len(base.cuts)
+    assert ad.plan == base.plan == {"mode": "every"}
 
 
 def test_extends_merges_mappings_and_replaces_lists(tmp_path):

@@ -25,9 +25,9 @@ pip install -e .
 brickproof run examples/demo_ab_bootloader/adapter.yaml
 ```
 
-The demo is a small A/B bootloader updating its app from v1 to v2. BrickProof cuts power at
-every one of the update's flash operations, one per line, after first checking that the update
-works when nothing interrupts it:
+The demo is a small A/B bootloader updating its app from v1 to v2. BrickProof first checks
+that the update works when nothing interrupts it, then cuts power at every flash state the
+update goes through, one per line:
 
 ```
 PASS baseline (no cut)   168 ops                       2.2s  runs v2
@@ -35,6 +35,12 @@ PASS op-0                op 0     erase 0x0801E400     1.8s  runs v2
 PASS op-1                op 1     program 0x0801E400   1.7s  runs v2
 ...
 ```
+
+Which operations get cut is not guesswork either. After a power loss only flash is left, so
+two cuts that leave the same flash are the same test: BrickProof cuts only at distinct flash
+states, and tells you how many there are and how many it covered. The demo is cut at every
+one (`plan: every`). A long update can be cut at every state of its short phases and sampled
+in its long ones (`plan: phases`), and the report says exactly which phases were sampled.
 
 The verdict does not rest on what the firmware says about itself. An oracle checks from
 outside that the bytes installed are exactly an approved image and that the CPU is running
@@ -44,23 +50,25 @@ Each cut lands just before the operation it names. BrickProof checks that itself
 cut it compares the emulated flash, byte for byte, with what the uninterrupted run predicts
 for that point, and stops if they differ.
 
-To see what an update does to flash without cutting anything:
+To see what an update does to flash, and what a run would cut, without cutting anything:
 
 ```bash
 brickproof trace examples/demo_ab_bootloader/adapter.yaml
 ```
 
 ```
-op 0             erase           1  0x0801E400                  spare rollback-floor page
-ops 1-6          program         6  0x0801E400 .. 0x0801E40A    new floor record
-op 7             erase           1  0x08002000                  Slot A
-ops 8-157        program       150  0x08002200 .. 0x0800232A    app body
-ops 158-165      program         8  0x08002000 .. 0x0800200E    header, last
-ops 166-167      program         2  0x08010000 .. 0x08010002    mark the staged image used
+op 0          erase         1 ops    1 states  cut all   0x0801E400                 spare rollback-floor page
+ops 1-6       program       6 ops    5 states  cut all   0x0801E400 .. 0x0801E40A   new floor record
+op 7          erase         1 ops    1 states  cut all   0x08002000                 Slot A
+ops 8-157     program     150 ops  150 states  cut all   0x08002200 .. 0x0800232A   app body
+ops 158-165   program       8 ops    8 states  cut all   0x08002000 .. 0x0800200E   header, last
+ops 166-167   program       2 ops    2 states  cut all   0x08010000 .. 0x08010002   mark the staged image used
+plan (every): 167 cut(s) over 167 distinct flash states (168 operations): every state is cut
 ```
 
-(The notes on the right are added here; the tool prints the addresses.) `-o FILE` saves every
-operation as JSON lines.
+(The notes on the right are added here; the tool prints the rest.) Operation 0 erases a page
+that is already erased, so cutting after it shows nothing new: 168 operations, 167 states.
+`-o FILE` saves every operation as JSON lines.
 
 Now run one of the bug builds. Each puts back a real bug, and BrickProof should catch it:
 
@@ -104,6 +112,7 @@ Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103).
 | `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | Flash controller models that count operations and cut power (STM32F1 so far) |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
+| `src/brickproof/plan.py` | The cut planner: distinct flash states, exhaustive or sampled |
 | `src/brickproof/oracle.py` | The outside judge: approved image installed, and really running |
 | `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |

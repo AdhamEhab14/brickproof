@@ -4,10 +4,12 @@ import os
 import shutil
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from brickproof import oracle as oracles
+from brickproof import plan as plans
 from brickproof import trace as traces
+from brickproof.adapter import Cut
 from brickproof.engine import workdir as wd
 from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
 
@@ -211,43 +213,71 @@ def run_cut(session, driver, adapter, cut, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+@dataclass
+class Outcome:
+    results: list               # CutResult: the baseline first, then each cut
+    trace: list                 # the golden run's operations
+    plan: object = None         # plan.Plan: what the trace offers and what was chosen
+    timings: dict = field(default_factory=dict)
+
+    @property
+    def passed(self):
+        return all(r.passed or r.skipped for r in self.results) and any(r.passed for r in self.results)
+
+
+def _cuts_to_run(adapter, plan):
+    """The adapter's own cuts, then the planned ones it does not already list."""
+    cuts = list(adapter.cuts)
+    if getattr(adapter, "plan", None):
+        listed = {c.at_op for c in cuts if c.at_op is not None and c.group is None}
+        cuts += [Cut(name="op-%d" % n, at_op=n) for n in plan.cuts if n not in listed]
+    return cuts
+
+
 def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline_only=False,
-             oracle=None):
-    """The baseline, then every cut of `adapter`, on a machine that is already up with
-    the update staged. Returns (list of CutResult, golden-run trace).
+             oracle=None, on_plan=None):
+    """The baseline, then every cut, on a machine that is already up with the update
+    staged. Returns an Outcome.
 
     Kept apart from run() so the logic can be tested against a simulated device."""
     pre = session.dump_flash()
     # If the update does not work when nothing interrupts it, no cut result means
     # anything, so that is checked first and a failure ends the run.
     golden = Golden(adapter, pre, oracle)
-    results = [run_cut(session, driver, adapter, None, golden)]
+    baseline = run_cut(session, driver, adapter, None, golden)
+    out = Outcome(results=[baseline], trace=golden.ops)
     if on_result:
-        on_result(results[0])
+        on_result(out.results[0])
+    if not out.results[0].passed:
+        return out
+    cfg = getattr(adapter, "plan", None) or {}
+    out.plan = plans.make(golden.ops, pre, adapter.flash, **cfg)
+    if on_plan:
+        on_plan(out.plan)
     ended = set()                   # range groups that already ran off the end
-    for cut in adapter.cuts if results[0].passed and not baseline_only else []:
+    for cut in [] if baseline_only else _cuts_to_run(adapter, out.plan):
         if cut.group in ended:
             continue
         r = run_cut(session, driver, adapter, cut, golden)
         if r.skipped:
             ended.add(cut.group)    # op counts are deterministic: later ones won't fire either
-        results.append(r)
+        out.results.append(r)
         if on_result:
             on_result(r)
         if fail_fast and not (r.passed or r.skipped):
             break
-    return results, golden.ops
+    return out
 
 
-def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, baseline_only=False):
+def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, baseline_only=False,
+        on_plan=None):
     """Start Renode, stage the update and run the campaign (up to the first failure
-    with fail_fast). Returns (list of CutResult, timings dict, golden-run trace)."""
+    with fail_fast). Returns an Outcome."""
     exe = find_renode()
     if not exe:
         raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
     work = tempfile.mkdtemp(prefix="brickproof-")
     session = None
-    timings = {}
     try:
         firmware = wd.prepare(work, adapter)
         t0 = time.time()
@@ -258,12 +288,12 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
         session.run_for(adapter.boot_settle)
         driver = adapter.load_driver(session)
         driver.prepare()
-        timings["setup_s"] = round(time.time() - t0, 1)
-        results, trace = campaign(session, driver, adapter, on_result, fail_fast, baseline_only,
-                                  oracles.build(adapter, driver))
-        timings["total_s"] = round(time.time() - t0, 1)
-        timings["rewound"] = sum(r.rewound for r in results)
-        return results, timings, trace
+        setup = round(time.time() - t0, 1)
+        out = campaign(session, driver, adapter, on_result, fail_fast, baseline_only,
+                       oracles.build(adapter, driver), on_plan)
+        out.timings = {"setup_s": setup, "total_s": round(time.time() - t0, 1),
+                       "rewound": sum(r.rewound for r in out.results)}
+        return out
     finally:
         if session:
             session.close()
@@ -273,11 +303,12 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
             shutil.rmtree(work, ignore_errors=True)
 
 
-def as_dict(results, timings, adapter):
+def as_dict(outcome, adapter):
     return {
         "adapter": adapter.name,
         "target": os.path.basename(adapter.target),
-        "passed": all(r.passed or r.skipped for r in results) and any(r.passed for r in results),
-        "timings": timings,
-        "cuts": [asdict(r) for r in results],
+        "passed": outcome.passed,
+        "coverage": outcome.plan.as_dict() if outcome.plan else None,
+        "timings": outcome.timings,
+        "cuts": [asdict(r) for r in outcome.results],
     }
