@@ -42,6 +42,14 @@ def _make_dirs(*paths):
             os.makedirs(os.path.dirname(out), exist_ok=True)
 
 
+def _print_plan(plan):
+    print()
+    for line in plan.lines():
+        print(line)
+    print("plan (%s): %s" % (plan.mode, plan.summary()))
+    print(flush=True)
+
+
 def _run(ad, args, **kw):
     """runner.run, with a tool failure turned into a message. Returns None on failure."""
     try:
@@ -56,31 +64,36 @@ def cmd_run(args):
     ad = _load(args)
     if ad is None:
         return 2
-    if not ad.cuts:
-        print("adapter has no cuts in scenario.cuts", file=sys.stderr)
+    if args.plan:
+        ad.plan = dict(ad.plan or {}, mode=args.plan)
+    if args.per_phase is not None:
+        ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
+    if not ad.cuts and not ad.plan:
+        print("nothing to cut: the adapter has no scenario.cuts and no scenario.plan "
+              "(or pass --plan phases)", file=sys.stderr)
         return 2
     _make_dirs(args.json, args.renode_log, args.trace)
-    print("BrickProof: %s, %d cut(s), target %s" % (ad.name, len(ad.cuts), ad.target), flush=True)
+    print("BrickProof: %s, target %s" % (ad.name, ad.target), flush=True)
     if not ad.oracle:
         print("note: this adapter has no 'oracle' section, so each verdict rests on the "
               "driver alone (what the firmware says about itself)", flush=True)
-    out = _run(ad, args, fail_fast=args.fail_fast)
+    out = _run(ad, args, fail_fast=args.fail_fast, on_plan=_print_plan if ad.plan else None)
     if out is None:
         return 3
-    results, timings, trace = out
-    report = runner.as_dict(results, timings, ad)
     if args.json:
         with open(args.json, "w") as f:
-            json.dump(report, f, indent=2)
+            json.dump(runner.as_dict(out, ad), f, indent=2)
     if args.trace:
-        traces.write_jsonl(trace, args.trace)
-    if not results[0].passed:
+        traces.write_jsonl(out.trace, args.trace)
+    if not out.results[0].passed:
         print("the update fails even with no power cut, so no cuts were run")
-    ran = [r for r in results if not (r.skipped or r.baseline)]
+    ran = [r for r in out.results if not (r.skipped or r.baseline)]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs)" % (
-        passed, len(ran), timings.get("setup_s", 0), timings.get("total_s", 0)))
-    return 0 if report["passed"] else 1
+        passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0)))
+    if ad.plan and out.plan:
+        print("coverage: %s" % out.plan.summary())
+    return 0 if out.passed else 1
 
 
 def cmd_trace(args):
@@ -92,10 +105,9 @@ def cmd_trace(args):
     out = _run(ad, args, baseline_only=True)
     if out is None:
         return 3
-    results, _, trace = out
-    print()
-    for line in traces.describe(trace, ad.flash.page, ad.flash.write_unit):
-        print(line)
+    results, trace = out.results, out.trace
+    if out.plan:
+        _print_plan(out.plan)
     guessed = sum(1 for op in trace if op.get("inferred"))
     if guessed:
         print("%d program(s) wrote what was already there; their addresses are inferred "
@@ -126,6 +138,11 @@ def main(argv=None):
     r.add_argument("--json", help="write the results as JSON to this file")
     r.add_argument("--trace", help="write the golden-run trace (JSONL) to this file")
     r.add_argument("--fail-fast", action="store_true", help="stop at the first cut that fails")
+    r.add_argument("--plan", choices=("phases", "every"),
+                   help="let the planner choose the cuts: every distinct flash state, or "
+                        "(phases) all of them in short phases and samples in long ones")
+    r.add_argument("--per-phase", type=int, metavar="N",
+                   help="samples inside a long phase when planning by phases (default 8)")
     r.set_defaults(func=cmd_run)
 
     t = sub.add_parser("trace", help="run the update uninterrupted and show its flash operations")

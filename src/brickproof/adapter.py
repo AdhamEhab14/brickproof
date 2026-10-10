@@ -57,6 +57,7 @@ class Adapter:
     update_time: float            # virtual seconds an uninterrupted update needs
     check_states: bool            # compare flash at each cut with the golden run replayed
     oracle: dict = None           # approved images and which ones a cut may leave (see oracle.py)
+    plan: dict = None             # let the planner choose cuts from the golden run (see plan.py)
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -125,6 +126,30 @@ def _read(path, depth=0):
             raise AdapterError("%s: 'extends' nests too deep" % path)
         d = _merge(_read(os.path.join(os.path.dirname(path), parent), depth + 1), d)
     return d
+
+
+def _parse_plan(scenario):
+    """scenario.plan: a mode name, or {mode, per_phase, small}. None if absent."""
+    p = scenario.get("plan")
+    if p is None:
+        return None
+    if isinstance(p, str):
+        p = {"mode": p}
+    if not isinstance(p, dict):
+        raise AdapterError("scenario.plan: give a mode (phases, every) or a mapping")
+    unknown = set(p) - {"mode", "per_phase", "small"}
+    if unknown:
+        raise AdapterError("scenario.plan: unknown key(s) %s" % ", ".join(sorted(unknown)))
+    mode = p.get("mode", "phases")
+    if mode not in ("phases", "every"):
+        raise AdapterError("scenario.plan.mode: use phases or every, not %r" % mode)
+    out = {"mode": mode}
+    for key in ("per_phase", "small"):
+        if key in p:
+            if not isinstance(p[key], int) or p[key] < 0:
+                raise AdapterError("scenario.plan.%s: a whole number, 0 or more" % key)
+            out[key] = p[key]
+    return out
 
 
 def _parse_oracle(d, target):
@@ -210,6 +235,7 @@ def load(path, target=None):
         update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),
         check_states=bool(scenario.get("check_states", True)),
         oracle=_parse_oracle(d, target),
+        plan=_parse_plan(scenario),
         driver_file=os.path.join(folder, drv["file"]) if drv.get("file") else None,
         driver_builtin=drv.get("builtin"),
         driver_options=drv.get("options", {}) or {},

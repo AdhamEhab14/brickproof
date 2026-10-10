@@ -85,7 +85,8 @@ def test_accept_must_name_known_images(accept):
 def campaign(device, oracle, cuts, driver=None):
     ad = SimpleNamespace(flash=device.flash, check_states=True, cut_limit=0.03, update_time=1.0,
                          boot_settle=0.1, cuts=cuts)
-    return runner.campaign(device, driver or FakeDriver(device), ad, oracle=oracle)
+    out = runner.campaign(device, driver or FakeDriver(device), ad, oracle=oracle)
+    return out.results, out.trace
 
 
 class TrustingDriver(FakeDriver):
