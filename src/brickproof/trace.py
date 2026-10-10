@@ -69,20 +69,10 @@ def value_before(ops, index, pre, flash_base, page):
         if op["kind"] == "program":
             if op["addr"] == addr and "value" in op:
                 return op["value"]
-        elif op["kind"] == "mass_erase" or op["addr"] == addr & ~(page - 1):
+        elif op["kind"] == "mass_erase" or (op["kind"] == "erase" and op["addr"] == addr & ~(page - 1)):
             return 0xFFFF
     off = addr - flash_base
     return pre[off] | (pre[off + 1] << 8)
-
-
-def touched_pages(ops, page, flash_base, flash_size):
-    """Page addresses the update erases or programs, in order."""
-    pages = set()
-    for op in ops:
-        if op["kind"] == "mass_erase":
-            return list(range(flash_base, flash_base + flash_size, page))
-        pages.add(op["addr"] & ~(page - 1))
-    return sorted(pages)
 
 
 class Replay:
@@ -108,7 +98,7 @@ class Replay:
                 self.image[off:off + self.page] = b"\xFF" * self.page
             elif op["kind"] == "mass_erase":
                 self.image[:] = b"\xFF" * len(self.image)
-            elif "value" in op:
+            elif op["kind"] == "program" and "value" in op:     # a refused one changes nothing
                 self.image[off] = op["value"] & 0xFF
                 self.image[off + 1] = op["value"] >> 8
         self.n = n

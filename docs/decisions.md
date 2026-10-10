@@ -288,3 +288,73 @@ trusted. `scenario.check_states: false` turns it off for an update that is not d
 This is the "generated state must equal a real cut, byte for byte" cross-check from the
 original harness, done for every cut instead of one hand-picked case. It also means the
 replay can later stand in for a real cut where that is cheaper.
+
+## 2026-10-10: The flash model enforces the chip's programming rules
+
+Audit question: where else is the emulator more forgiving than silicon? Flash. Renode's flash
+is plain memory, and the CPU writes into it directly:
+- program a halfword that is not erased: silicon refuses (PGERR, cell unchanged, unless the
+  value is 0x0000); Renode stores it.
+- store into flash with PG clear or the controller locked: silicon ignores it; Renode stores it.
+
+So "forgot to erase" and "forgot to unlock" pass in a plain emulator and brick a board.
+
+The model now keeps a shadow copy of flash in a hidden memory (`bpShadow`) that only real
+operations update. When PG is cleared it finds the halfword(s) written by comparing flash with
+the shadow, and applies the rule: a refused program gets its old value written back and PGERR
+set in SR, like the chip, and is counted. Any other difference between flash and shadow is a
+write with no operation behind it; an audit register reports the first such address.
+
+The runner reads both at the same points as the bus-fault latch and fails the run:
+- `flash rule broken: 4 program(s) over cells that were not erased, first at 0x0800224E`
+- `flash changed at 0x08002004 with no flash operation behind it`
+
+The engine has to declare its own writes (image load, restore, rewind) with a resync, or they
+would look like stray writes.
+
+Costs measured in the model: whole-flash compare 0.8 ms, the usual one-halfword check 26 us.
+
+Side effects that are improvements:
+- firmware that keeps PG set across several sequential halfwords now has each one found,
+  counted and traced (was: one operation);
+- the trace no longer needs its own shadow; it logs what the rule check already found.
+
+Two more demo bug builds prove the rules: `bug-no_erase` and `bug-no_unlock`, both caught at
+the baseline. The Three-Tier bootloader v2.0.0 passes with enforcement on: no refused program,
+no stray write, on the update path and on the recovery paths of its five cuts.
+
+Not modelled, stated plainly: write protection (WRP option bytes), read protection, the option
+bytes themselves, flash timing (every operation is instant), and wear.
+
+## 2026-10-10: The runner is tested without an emulator
+
+`runner.campaign()` (baseline, cuts, rewind, self-check, skip and fail-fast rules, lock-up
+handling) is separate from `run()` (start Renode, stage the update). `tests/fake_device.py`
+is a simulated device with the session's interface and a tiny correct updater that can be
+broken on purpose (no recovery, bus fault, lock-up, different writes on the second run).
+17 tests in `tests/test_runner.py` run in a fraction of a second, on Python 3.10, 3.12 and
+3.13 (new `compat` CI job).
+
+Removed `tests/test_three_tier_e2e.py`: it was skipped by default, CI never ran it, and it had
+drifted from the code. The CI `e2e` job runs the same thing through the CLI.
+
+## 2026-10-10: Renode charges per monitor line, so commands share lines
+
+Profiled again after the flash checks pushed a demo cut from 1.9 s to 3.9 s. Measured:
+every monitor line costs 40 to 60 ms in Renode whatever it holds (a RAM write, `version`,
+a register read), sending many lines in one socket write changes nothing, but several
+commands on ONE line separated by `;` cost about the same as one (8 writes: 77 ms, not 500).
+Reading memory back as text is slow on top of that: 128 ms per KB.
+
+So:
+- `cmd_batch` joins commands with `;` (40 per line). A power cycle is one line instead of ten.
+  UART injection, which is two commands per byte, gains the most.
+- status is read in groups: `cut_status()`, `violations()`, `run_until_cut()` (run and check
+  in one line).
+- the per-cut self-check no longer reads pages back. The expected image is loaded into a
+  hidden memory (`bpExpect`, a file load is fast) and the flash model compares natively. It
+  now covers the whole flash, not only the pages the update touches, and is quicker.
+
+Demo cut: 3.9 s -> 1.7 s with every check on (whole-flash compare, rule enforcement, audit).
+What is left is mostly emulation itself (`RunFor`, about 0.28 s per boot with the model's
+per-access overhead) plus the one-off flash dump at setup (about 7 s).

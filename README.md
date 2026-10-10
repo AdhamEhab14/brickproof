@@ -70,10 +70,15 @@ brickproof run examples/demo_ab_bootloader/bug-consume_first.yaml --fail-fast
 | `bug-trust_header` | copies the header first and trusts it without a CRC | boots a half-copied image |
 | `bug-naive_floor` | rewrites the anti-rollback floor in place, after the install | v1 can be installed again |
 | `bug-pop_after_switch` | pops saved registers after switching to the app's stack | reads past the end of RAM: bus fault on every boot, no cut needed |
+| `bug-no_erase` | copies the new image over the old one without erasing | the chip refuses to program cells that are not erased |
+| `bug-no_unlock` | never unlocks the flash controller | the chip ignores every write: the update silently does nothing |
 
-The last one is not a power-loss bug. A real board found it in another bootloader after the
-emulator had passed it, because emulated RAM was far bigger than the chip's. BrickProof now
-gives the emulated chip its real memory sizes and treats any access outside them as a fault.
+The last three are not power-loss bugs. They are mistakes a plain emulator lets through and a
+real chip does not, so they fail before any cut is made. The stack one was found by a real
+board in another bootloader after the emulator had passed it, because emulated RAM was far
+bigger than the chip's. BrickProof gives the emulated chip its real memory sizes, treats any
+access outside them as a fault, and makes flash behave like flash: a cell that is not erased
+cannot be programmed, and a write with the controller locked does nothing.
 
 Exit codes: `0` every cut recovered, `1` at least one failed, `2` adapter error, `3` BrickProof
 itself failed (including its own flash self-check). `--json FILE` writes the results for CI.
