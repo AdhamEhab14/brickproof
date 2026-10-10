@@ -32,7 +32,8 @@ jobs:
 
       - name: Demo firmware builds from source
         run: |
-          sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+          # the demo links no C library, so skip the 500 MB of recommended ones
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
           python examples/demo_ab_bootloader/build.py
 
   demo:
