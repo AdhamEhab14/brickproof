@@ -1,0 +1,22 @@
+// STM32F103 base platform for BrickProof.
+// Renode's stock F103 has no RCC, flash controller, CRC or bit-banding. The flash
+// controller is the one that counts operations and cuts power. @MODELS@ is replaced
+// with the models folder when the engine writes the run's platform file.
+// A target adapter can append its own lines (extra peripherals, clock fixes).
+using "platforms/cpus/stm32f103.repl"
+
+rcc: Python.PythonPeripheral @ sysbus 0x40021000
+    size: 0x400
+    initable: true
+    filename: "@MODELS@/stm32f1_rcc.py"
+
+flashctl: Python.PythonPeripheral @ sysbus 0x40022000
+    size: 0x400
+    initable: true
+    filename: "@MODELS@/stm32f1_flash.py"
+
+crc: CRC.STM32_CRC @ sysbus 0x40023000
+    series: STM32Series.F4
+
+bitbandPeripherals: Miscellaneous.BitBanding @ sysbus <0x42000000, +0x2000000>
+    peripheralBase: 0x40000000

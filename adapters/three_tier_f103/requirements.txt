@@ -1,0 +1,3 @@
+# what the bootloader's host tools (host/bl_host.py, host/sign_tool.py) import
+pynacl
+pyserial

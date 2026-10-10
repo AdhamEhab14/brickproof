@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brickproof-fw"
+version = "0.0.1"
+description = "Power-fail testing for firmware updates: cut power at every flash operation in Renode and check the device recovers"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Adham Ehab" }]
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+brickproof = "brickproof.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/AdhamEhab14/brickproof"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# the flash/RCC models run inside Renode, so they ship as data, not modules
+brickproof = ["models/*.py", "platforms/*.repl"]
+
+[tool.ruff]
+line-length = 110
+extend-exclude = ["src/brickproof/models", "adapters/*/can_stub.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["renode: needs Renode and a built target (slow)"]

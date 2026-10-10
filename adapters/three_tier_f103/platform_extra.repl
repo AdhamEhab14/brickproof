@@ -1,0 +1,24 @@
+// Three-Tier bootloader extras on top of the BrickProof F103 base platform.
+// @ADAPTER@ is replaced with this adapter's folder.
+
+can1: Python.PythonPeripheral @ sysbus 0x40006400
+    size: 0x400
+    initable: true
+    filename: "@ADAPTER@/can_stub.py"
+
+// Registers the bootloader only pokes while polling. Plain memory is enough
+// (SPI status reads as "nothing received", watchdog keys are accepted) and
+// avoids Renode's slow unimplemented-register path.
+spi2: Memory.MappedMemory @ sysbus 0x40003800
+    size: 0x400
+
+iwdg: Memory.MappedMemory @ sysbus 0x40003000
+    size: 0x400
+
+// The stock model assumes an 8 MHz peripheral clock. The firmware programs its
+// baud-rate registers for 36 MHz (USART2/3 on APB1) and 72 MHz (USART1 on APB2).
+usart1:
+    frequency: 72000000
+
+usart2:
+    frequency: 36000000
