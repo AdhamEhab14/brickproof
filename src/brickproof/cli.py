@@ -11,11 +11,14 @@ import sys
 
 from brickproof import adapter as adapters
 from brickproof import runner
+from brickproof import torn as torns
 from brickproof import trace as traces
 
 
 def _print_result(r):
     where = "%s 0x%08X" % (r.kind, r.addr) if r.addr else r.kind
+    if r.torn:
+        where = "torn at 0x%08X" % r.addr       # the shape is already in the cut's name
     op = "op %s" % r.op_index if r.op_index is not None else "op ?"
     if r.baseline:
         where = ""
@@ -66,6 +69,8 @@ def cmd_run(args):
         return 2
     if args.plan:
         ad.plan = dict(ad.plan or {}, mode=args.plan)
+    if args.torn:
+        ad.torn = list(torns.KINDS)
     if args.per_phase is not None:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
     if not ad.cuts and not ad.plan:
@@ -87,10 +92,14 @@ def cmd_run(args):
         traces.write_jsonl(out.trace, args.trace)
     if not out.results[0].passed:
         print("the update fails even with no power cut, so no cuts were run")
-    ran = [r for r in out.results if not (r.skipped or r.baseline)]
+    ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn)]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs)" % (
         passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0)))
+    torn = [r for r in out.results if r.torn]
+    if torn:
+        print("%d/%d torn states survived (modelled shapes of a half-done erase or program, "
+              "not yet calibrated against silicon)" % (sum(r.passed for r in torn), len(torn)))
     if ad.plan and out.plan:
         print("coverage: %s" % out.plan.summary())
     return 0 if out.passed else 1
@@ -141,6 +150,8 @@ def main(argv=None):
     r.add_argument("--plan", choices=("phases", "every"),
                    help="let the planner choose the cuts: every distinct flash state, or "
                         "(phases) all of them in short phases and samples in long ones")
+    r.add_argument("--torn", action="store_true",
+                   help="also boot from torn states: each cut's operation left half done")
     r.add_argument("--per-phase", type=int, metavar="N",
                    help="samples inside a long phase when planning by phases (default 8)")
     r.set_defaults(func=cmd_run)

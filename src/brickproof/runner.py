@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 
 from brickproof import oracle as oracles
 from brickproof import plan as plans
+from brickproof import torn as torns
 from brickproof import trace as traces
 from brickproof.adapter import Cut
 from brickproof.engine import workdir as wd
@@ -31,6 +32,7 @@ class CutResult:
     baseline: bool = False      # the uninterrupted update, run before any cut
     rewound: bool = False       # a program cut whose halfword had landed and was put back
     image: str = None           # the approved image the oracle found installed
+    torn: str = None            # set for a torn state: which shape (see torn.py)
     message: str = ""
     seconds: float = 0.0
 
@@ -213,6 +215,25 @@ def run_cut(session, driver, adapter, cut, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+def run_torn(session, driver, adapter, state, golden):
+    """Boot the device from one torn state and judge it. Nothing is cut here: the
+    state is the golden run replayed to just before an operation, with that operation
+    left half done."""
+    res = CutResult(cut="op-%d %s" % (state.op_index, state.kind), fired=True, kind=state.kind,
+                    addr=state.addr, op_index=state.op_index, torn=state.kind)
+    t0 = time.time()
+    try:
+        session.restore_flash(state.image)
+        _verdict(session, driver, adapter, res, golden.oracle)
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        res.seconds = round(time.time() - t0, 1)
+
+
 @dataclass
 class Outcome:
     results: list               # CutResult: the baseline first, then each cut
@@ -265,7 +286,20 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
         if on_result:
             on_result(r)
         if fail_fast and not (r.passed or r.skipped):
-            break
+            return out
+    # Torn states come after the clean cuts, at the same operations: the half-done
+    # versions of each operation a clean cut was made in front of.
+    kinds = getattr(adapter, "torn", None)
+    ops = sorted({r.op_index for r in out.results[1:] if r.fired and r.op_index < len(golden.ops)})
+    for n in ops if kinds and not baseline_only else []:
+        before = bytes(golden.replay.at(n))
+        for state in torns.states(golden.ops[n], before, adapter.flash, kinds, adapter.torn_seed):
+            r = run_torn(session, driver, adapter, state, golden)
+            out.results.append(r)
+            if on_result:
+                on_result(r)
+            if fail_fast and not r.passed:
+                return out
     return out
 
 

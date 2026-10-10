@@ -28,6 +28,10 @@
  *                         (the chip refuses to program a cell that is not erased)
  *   BUG_NO_UNLOCK         never unlock the flash controller for the install
  *                         (the chip ignores every erase and program)
+ *   BUG_RESUME_COPY       after an interrupted install, skip the erase and write only
+ *                         the halfwords still missing. Survives every clean cut. A cut
+ *                         inside a program leaves one cell half written, and the chip
+ *                         will not program that cell again without an erase.
  */
 #include "demo.h"
 
@@ -189,8 +193,13 @@ static void meta_write(uint32_t floor)
 
 static void copy_halfwords(uint32_t dst, uint32_t src, uint32_t n)
 {
-    for (uint32_t i = 0; i < n; i += 2)
+    for (uint32_t i = 0; i < n; i += 2) {
+#ifdef BUG_RESUME_COPY
+        if (*(const uint16_t *)(dst + i) == *(const uint16_t *)(src + i))
+            continue;                     /* already there from the interrupted attempt */
+#endif
         flash_half(dst + i, *(const uint16_t *)(src + i));
+    }
 }
 
 static void install(void)
@@ -200,6 +209,11 @@ static void install(void)
     uint32_t pages = (IMG_OFFSET + body + PAGE_SIZE - 1) / PAGE_SIZE;
 
     uart_puts("BL: installing\r\n");
+#ifdef BUG_RESUME_COPY
+    /* The floor already names this version and Slot A has no header: an install was
+     * interrupted after its erase. Carry on from there instead of starting over. */
+    int resume = meta_floor() == version && hdr(SLOT_A)->magic == 0xFFFFFFFFu;
+#endif
 #ifndef BUG_NO_UNLOCK
     flash_unlock();
 #endif
@@ -211,6 +225,9 @@ static void install(void)
     consume_staging();
 #endif
 #ifndef BUG_NO_ERASE
+#ifdef BUG_RESUME_COPY
+    if (!resume)
+#endif
     for (uint32_t p = 0; p < pages; p++)
         flash_erase(SLOT_A + p * PAGE_SIZE);
 #else

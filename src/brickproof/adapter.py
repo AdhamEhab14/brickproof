@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import yaml
 
 from brickproof.engine.session import FlashGeometry
+from brickproof.torn import KINDS as TORN_KINDS
 
 PLATFORMS = ("stm32f103",)
 
@@ -58,6 +59,8 @@ class Adapter:
     check_states: bool            # compare flash at each cut with the golden run replayed
     oracle: dict = None           # approved images and which ones a cut may leave (see oracle.py)
     plan: dict = None             # let the planner choose cuts from the golden run (see plan.py)
+    torn: list = None             # torn-operation shapes to try at each cut (see torn.py)
+    torn_seed: int = 0
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -152,6 +155,18 @@ def _parse_plan(scenario):
     return out
 
 
+def _parse_torn(scenario):
+    """scenario.torn: true for every shape, or a list of shape names. None if off."""
+    t = scenario.get("torn")
+    if not t:
+        return None
+    if t is True:
+        return list(TORN_KINDS)
+    if not isinstance(t, list) or any(k not in TORN_KINDS for k in t):
+        raise AdapterError("scenario.torn: true, or a list from: %s" % ", ".join(TORN_KINDS))
+    return list(t)
+
+
 def _parse_oracle(d, target):
     """The `oracle:` section, with image paths made absolute. None if there is none."""
     o = d.get("oracle")
@@ -236,6 +251,8 @@ def load(path, target=None):
         check_states=bool(scenario.get("check_states", True)),
         oracle=_parse_oracle(d, target),
         plan=_parse_plan(scenario),
+        torn=_parse_torn(scenario),
+        torn_seed=int(scenario.get("torn_seed", 0)),
         driver_file=os.path.join(folder, drv["file"]) if drv.get("file") else None,
         driver_builtin=drv.get("builtin"),
         driver_options=drv.get("options", {}) or {},
