@@ -83,7 +83,8 @@ class RenodeSession:
     """
 
     def __init__(self, exe, workdir, flash, firmware, uart="usart2",
-                 vector_table=0x08000000, mips=72, reset_cmds=(), ram="sram", log=None):
+                 vector_table=0x08000000, mips=72, reset_cmds=(), ram="sram", log=None,
+                 memory_sizes=None):
         self.exe = exe
         self.workdir = workdir
         self.flash = flash
@@ -93,6 +94,7 @@ class RenodeSession:
         self.ram = ram
         self.uart_name = uart
         self.firmware = list(firmware)
+        self.memory_sizes = dict(memory_sizes or {})
         self.log = log
         self.virtual_time = 0.0
         self.rx = bytearray()
@@ -112,6 +114,7 @@ class RenodeSession:
         self.cmd('emulation CreateServerSocketTerminal %d "term" false' % self.uart_port)
         self.cmd('mach create "target"')
         self.cmd("machine LoadPlatformDescription @platform.repl")
+        self._check_memory_sizes()
         # Renode's flash starts as 0x00; real erased flash reads 0xFF
         self.restore_flash(b"\xFF" * self.flash.size, "erased.bin")
         for rel, addr in self.firmware:
@@ -125,6 +128,17 @@ class RenodeSession:
         self.uart = connect(self.uart_port, 10)
         for c in self.reset_cmds:
             self.cmd(c)
+
+    def _check_memory_sizes(self):
+        """Refuse to run on a machine whose RAM or flash is not the size the adapter
+        says the chip has: every result would be about a different device."""
+        for name, want in self.memory_sizes.items():
+            text = "sysbus.%s Size" % name
+            out = self.cmd(text)
+            got = [int(t, 16) for t in out[out.find(text) + len(text):].split() if t.startswith("0x")]
+            if not got or got[0] != want:
+                raise RuntimeError("memory '%s' is %s in Renode, the adapter says 0x%X"
+                                   % (name, hex(got[0]) if got else "unreadable", want))
 
     def restart(self):
         """Throw this Renode away and start a fresh one with the same machine.

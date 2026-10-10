@@ -45,6 +45,8 @@ class Adapter:
     platform: str
     platform_extra: str
     flash: FlashGeometry
+    ram_base: int
+    ram_size: int
     firmware: list
     uart: str
     vector_table: int
@@ -148,6 +150,13 @@ def load(path, target=None):
     if flash.size % flash.page:
         raise AdapterError("flash.size must be a whole number of pages")
 
+    # RAM size is not optional: an emulator with more RAM than the chip hides
+    # real faults (a stack access past the end of RAM just works)
+    ram = _need(d, "ram", path)
+    ram_size = _need(ram, "size", "ram")
+    if ram_size <= 0:
+        raise AdapterError("ram.size must be positive")
+
     firmware = []
     for i, fw in enumerate(_need(d, "firmware", path)):
         file = _need(fw, "file", "firmware[%d]" % i)
@@ -166,7 +175,7 @@ def load(path, target=None):
     return Adapter(
         name=name, folder=folder, target=target,
         platform=base, platform_extra=os.path.join(folder, extra) if extra else None,
-        flash=flash, firmware=firmware,
+        flash=flash, ram_base=ram.get("base", 0x20000000), ram_size=ram_size, firmware=firmware,
         uart=d.get("uart", "usart2"),
         vector_table=cpu.get("vector_table", flash.base),
         mips=cpu.get("mips", 72),

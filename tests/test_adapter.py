@@ -13,6 +13,7 @@ name: demo
 target: fw
 platform: {base: stm32f103}
 flash: {base: 0x08000000, size: 0x10000, page: 0x400}
+ram: {size: 0x5000}
 firmware:
   - file: app.elf
 driver: {file: driver.py}
@@ -114,3 +115,8 @@ def test_extends_merges_mappings_and_replaces_lists(tmp_path):
     assert ad.name == "child"
     assert ad.flash.page == 0x800 and ad.flash.size == 0x10000
     assert [c.at_op for c in ad.cuts] == [7]
+
+
+def test_ram_size_is_required(tmp_path):
+    with pytest.raises(adapters.AdapterError, match="ram"):
+        adapters.load(write(tmp_path, **{"ram: {size: 0x5000}\n": ""}))

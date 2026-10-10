@@ -55,3 +55,19 @@ def test_prepare_names_the_missing_firmware(tmp_path):
     ad = adapters.load(THREE_TIER, target=str(tmp_path))
     with pytest.raises(FileNotFoundError, match="boot_manager.elf"):
         wd.prepare(str(tmp_path), ad)
+
+
+def test_platform_gets_the_chips_real_memory_sizes(tmp_path):
+    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
+    assert wd.memory_sizes(ad) == {"sram": 0x5000, "flash": 0x08020000}
+    wd.prepare(str(tmp_path), ad)
+    repl = (tmp_path / "platform.repl").read_text()
+    assert "\nsram:\n    size: 0x5000\n" in repl
+    assert "\nflash:\n    size: 0x8020000\n" in repl
+
+
+def test_ram_base_must_match_the_platform():
+    ad = adapters.load(THREE_TIER)
+    ad.ram_base = 0x10000000
+    with pytest.raises(ValueError, match="ram.base"):
+        wd.memory_sizes(ad)

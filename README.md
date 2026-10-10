@@ -52,7 +52,8 @@ itself failed. `--json FILE` writes the results for CI.
 
 ## Testing your own firmware
 
-Write an adapter: one YAML file that says what to load, the flash geometry and where to cut.
+Write an adapter: one YAML file that says what to load, the real flash and RAM sizes of the chip,
+and where to cut.
 If your bootloader applies an image waiting in a staging slot on the next boot (MCUboot's
 overwrite mode, most OTA designs), the built-in `staged_slot` driver does the rest, and the
 demo's [adapter.yaml](examples/demo_ab_bootloader/adapter.yaml) is the template. If the update

@@ -101,7 +101,8 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False):
         t0 = time.time()
         session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
                                 vector_table=adapter.vector_table, mips=adapter.mips,
-                                reset_cmds=adapter.reset_cmds, log=log)
+                                reset_cmds=adapter.reset_cmds, log=log,
+                                memory_sizes=wd.memory_sizes(adapter))
         session.run_for(adapter.boot_settle)
         driver = adapter.load_driver(session)
         driver.prepare()
