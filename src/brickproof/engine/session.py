@@ -27,6 +27,8 @@ REG_CUT_FIRED = 0x108
 REG_CUT_KIND = 0x10C
 REG_CUT_ADDR = 0x110
 REG_CUT_PAGE = 0x114
+REG_FAULT_ADDR = 0x118
+REG_FAULT_PC = 0x11C
 NEVER = 0xFFFFFFFF
 
 CUT_ERASE = 1
@@ -295,6 +297,12 @@ class RenodeSession:
     def cut_info(self):
         """(kind, page address): kind 1 = erase cut before it ran, 2 = program, 0 = none."""
         return self.read_word(self._ctl(REG_CUT_KIND)), self.read_word(self._ctl(REG_CUT_ADDR))
+
+    def bus_fault(self):
+        """(address, pc) if the firmware touched memory the chip does not have since
+        the last reset, else None. A reset clears it, so ask before the next one."""
+        addr = self.read_word(self._ctl(REG_FAULT_ADDR))
+        return (addr, self.read_word(self._ctl(REG_FAULT_PC))) if addr else None
 
     # ---- reset and power --------------------------------------------------
 

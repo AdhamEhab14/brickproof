@@ -97,7 +97,7 @@ def test_demo_uses_the_builtin_driver():
     assert all(os.path.exists(f) for f, _ in ad.firmware), "prebuilt files are committed"
 
 
-@pytest.mark.parametrize("bug", ["consume_first", "trust_header", "naive_floor"])
+@pytest.mark.parametrize("bug", ["consume_first", "trust_header", "naive_floor", "pop_after_switch"])
 def test_bug_variants_extend_the_demo(bug):
     base = adapters.load(os.path.join(DEMO, "adapter.yaml"))
     ad = adapters.load(os.path.join(DEMO, "bug-%s.yaml" % bug))

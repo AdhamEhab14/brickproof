@@ -45,5 +45,6 @@ driver:
 scenario:
   name: update-v1-to-v2
   cut_limit: 1                       # virtual seconds; the whole install takes far less
+  update_time: 0.5
   cuts:
     - at_ops: {from: 0, to: 400}     # every operation of the update (it has fewer)

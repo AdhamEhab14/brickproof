@@ -15,6 +15,9 @@ from brickproof import runner
 def _print_result(r):
     where = "%s 0x%08X" % (r.kind, r.addr) if r.kind == "erase" else r.kind
     op = "op %s" % r.op_index if r.op_index is not None else "op ?"
+    if r.baseline:
+        where = ""
+        op = "%s ops" % r.op_index if r.op_index is not None else ""
     status = "SKIP" if r.skipped else "PASS" if r.passed else "FAIL"
     print("%-4s %-28s %-8s %-22s %6.1fs  %s" % (
         status, r.cut, op, where, r.seconds, r.message), flush=True)
@@ -43,7 +46,9 @@ def cmd_run(args):
     if args.json:
         with open(args.json, "w") as f:
             json.dump(report, f, indent=2)
-    ran = [r for r in results if not r.skipped]
+    if not results[0].passed:
+        print("the update fails even with no power cut, so no cuts were run")
+    ran = [r for r in results if not (r.skipped or r.baseline)]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs)" % (
         passed, len(ran), timings.get("setup_s", 0), timings.get("total_s", 0)))

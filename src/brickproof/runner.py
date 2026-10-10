@@ -10,6 +10,7 @@ from brickproof.engine import workdir as wd
 from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
 
 KIND_NAMES = {0: "none", 1: "erase", 2: "program"}
+BASELINE = "baseline (no cut)"
 
 
 @dataclass
@@ -23,6 +24,7 @@ class CutResult:
     recovered: bool = False
     passed: bool = False
     skipped: bool = False       # an at_ops range ran past the end of the update
+    baseline: bool = False      # the uninterrupted update, run before any cut
     message: str = ""
     seconds: float = 0.0
 
@@ -37,23 +39,65 @@ def run_until_cut(session, limit, step=0.01):
     return False
 
 
+def _fault_message(session):
+    fault = session.bus_fault()
+    if not fault:
+        return None
+    return ("bus fault: the firmware touched 0x%08X (PC 0x%08X), which does not exist on the chip"
+            % fault)
+
+
+def _verdict(session, driver, adapter, res):
+    """Power up and judge. A reset clears the fault latch, so it is read before each one."""
+    session.power_cycle(settle=adapter.boot_settle)     # RAM gone, flash as it was left
+    res.alive = bool(driver.alive())
+    fault = _fault_message(session)
+    if fault:
+        res.alive = False
+        res.message = fault
+        return
+    if not res.alive:
+        res.message = "the device did not come back"
+        return
+    res.recovered, msg = driver.check_recovered()
+    fault = _fault_message(session)
+    if fault:
+        res.recovered = False
+        msg = fault
+    res.message = msg or ""
+    res.passed = res.recovered
+
+
 def run_cut(session, driver, adapter, cut, pre):
-    res = CutResult(cut=cut.name)
+    """One cut, or with cut=None the baseline: the same update left to finish."""
+    res = CutResult(cut=cut.name if cut else BASELINE, baseline=cut is None)
     t0 = time.time()
     try:
-        # every cut starts from the same image, right after the update was staged.
+        # every run starts from the same image, right after the update was staged.
         # A target that updates during boot must be armed before it runs at all.
         session.restore_flash(pre)
         on_boot = getattr(driver, "update_on_boot", False)
         session.power_cycle(settle=0 if on_boot else adapter.boot_settle)
         base = session.flash_ops()
+        if cut is None:
+            driver.start_update()
+            session.run_for(adapter.update_time)
+            res.op_index = session.flash_ops() - base      # here: how many operations it has
+            res.message = _fault_message(session) or ""
+            if not res.message:
+                _verdict(session, driver, adapter, res)
+            return res
+
         if cut.on_erase is not None:
             session.set_cut_on_erase(cut.on_erase)
         else:
             session.set_cut(base + cut.at_op)
         driver.start_update()
         if not run_until_cut(session, adapter.cut_limit):
-            if cut.group is not None:
+            fault = _fault_message(session)
+            if fault:
+                res.message = fault
+            elif cut.group is not None:
                 res.skipped = True
                 res.message = "the update has fewer operations"
             else:
@@ -67,20 +111,12 @@ def run_cut(session, driver, adapter, cut, pre):
             res.message = "cut landed on %s 0x%08X, expected %s 0x%08X" % (
                 res.kind, addr, KIND_NAMES[cut.expect[0]], cut.expect[1])
             return res
-
-        session.power_cycle(settle=adapter.boot_settle)     # RAM gone, flash as the cut left it
-        res.alive = bool(driver.alive())
-        if not res.alive:
-            res.message = "the device did not come back"
-            return res
-        res.recovered, msg = driver.check_recovered()
-        res.message = msg or ""
-        res.passed = res.recovered
+        _verdict(session, driver, adapter, res)
         return res
     except MachineHung:
         # a locked-up CPU leaves Renode unusable; start a fresh one for the next cut
-        res.message = ("the device locked up (emulated CPU stopped making progress)" if res.fired
-                       else "the emulator hung before the cut fired")
+        res.message = ("the device locked up (emulated CPU stopped making progress)"
+                       if res.fired or res.baseline else "the emulator hung before the cut fired")
         session.restart()
         return res
     finally:
@@ -88,8 +124,8 @@ def run_cut(session, driver, adapter, cut, pre):
 
 
 def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False):
-    """Run every cut of `adapter` (or up to the first failure with fail_fast).
-    Returns (list of CutResult, timings dict)."""
+    """Run the baseline, then every cut of `adapter` (or up to the first failure with
+    fail_fast). Returns (list of CutResult, timings dict)."""
     exe = find_renode()
     if not exe:
         raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
@@ -109,9 +145,13 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False):
         pre = session.dump_flash()
         timings["setup_s"] = round(time.time() - t0, 1)
 
-        results = []
+        # If the update does not work when nothing interrupts it, no cut result means
+        # anything, so that is checked first and a failure ends the run.
+        results = [run_cut(session, driver, adapter, None, pre)]
+        if on_result:
+            on_result(results[0])
         ended = set()                   # range groups that already ran off the end
-        for cut in adapter.cuts:
+        for cut in adapter.cuts if results[0].passed else []:
             if cut.group in ended:
                 continue
             r = run_cut(session, driver, adapter, cut, pre)

@@ -51,6 +51,8 @@ jobs:
             expect: 1
           - adapter: bug-naive_floor
             expect: 1
+          - adapter: bug-pop_after_switch
+            expect: 1
     name: demo (${{ matrix.adapter }})
     env:
       RENODE_VERSION: "1.17.0"

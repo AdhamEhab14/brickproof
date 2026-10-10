@@ -179,3 +179,33 @@ So:
 General rule this adds: any place the emulator is more forgiving than silicon is a place a
 bug can hide. RAM size was one. Still open: unmapped reads return 0 in Renode, where silicon
 bus-faults.
+
+## 2026-10-10: Real RAM size was not enough: memory guards
+
+Experiment: the demo bootloader with the bench bug put back (`ldmia sp!, {r4, lr}` right
+after `msr msp`, the same instruction the other bootloader had) boots its app with 256 MB of
+RAM, and ALSO with the real 20 KB. Renode answers a read of unmapped memory with 0 and
+carries on. Silicon bus-faults. So shrinking RAM is necessary but does not catch the bug.
+
+Fix: every range that does not exist on the chip gets a `mem_guard` Python peripheral
+(F103: end of RAM up to 0x22000000, end of flash up to 0x1FFF0000). Any access stops the CPU
+and latches the address and PC in the flash model's test registers (0x118, 0x11C). The runner
+reads the latch before each reset (a reset clears it) and fails the run with
+"bus fault: the firmware touched 0x20005000 (PC 0x080000C4)".
+
+Limits, stated plainly:
+- Stopping the CPU is not what silicon does (it takes the BusFault/HardFault vector). Firmware
+  that recovers from bus faults on purpose would be judged wrongly. None of our targets does.
+- Only the holes next to RAM and flash are guarded. A peripheral that Renode does not model
+  is NOT a hole (it exists on the chip), so it is not guarded.
+
+## 2026-10-10: Baseline run before any cut
+
+The run now starts with the same update left to finish (`baseline (no cut)`), judged like a
+cut. If it fails, no cuts are run and the exit code is 1. Reasons: a broken update makes
+every cut result meaningless, and a bug that needs no power cut (like the stack one, which
+faults on every boot) has to be reported somewhere. It also prints the update's operation
+count. New scenario field `update_time`: virtual seconds an uninterrupted update needs.
+
+Demo bug builds are now four: three power-loss bugs BrickProof found, plus
+`bug-pop_after_switch`, the one a board found first.

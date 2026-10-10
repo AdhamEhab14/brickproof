@@ -71,3 +71,17 @@ def test_ram_base_must_match_the_platform():
     ad.ram_base = 0x10000000
     with pytest.raises(ValueError, match="ram.base"):
         wd.memory_sizes(ad)
+
+
+def test_every_hole_in_the_address_space_gets_a_guard(tmp_path):
+    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
+    assert wd.holes(ad) == [("ramGuard", 0x20005000, 0x22000000 - 0x20005000),
+                            ("flashGuard", 0x08020000, 0x1FFF0000 - 0x08020000)]
+    wd.prepare(str(tmp_path), ad)
+    repl = (tmp_path / "platform.repl").read_text()
+    assert "ramGuard: Python.PythonPeripheral @ sysbus 0x20005000" in repl
+    assert "flashGuard: Python.PythonPeripheral @ sysbus 0x8020000" in repl
+    guard = (tmp_path / "models" / "ramGuard.py").read_text()
+    assert "\nGUARD_BASE = 0x20005000\n" in guard
+    assert "\nFAULT_REG = 0x40022118\n" in guard         # the flash model's fault latch
+    assert not (tmp_path / "models" / "mem_guard.py").exists()   # only the patched copies

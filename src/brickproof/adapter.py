@@ -54,6 +54,7 @@ class Adapter:
     reset_cmds: list
     boot_settle: float
     cut_limit: float
+    update_time: float            # virtual seconds an uninterrupted update needs
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -182,6 +183,7 @@ def load(path, target=None):
         reset_cmds=list(d.get("reset", [])),
         boot_settle=float(d.get("boot_settle", 1.5)),
         cut_limit=float(scenario.get("cut_limit", 30.0)),
+        update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),
         driver_file=os.path.join(folder, drv["file"]) if drv.get("file") else None,
         driver_builtin=drv.get("builtin"),
         driver_options=drv.get("options", {}) or {},
