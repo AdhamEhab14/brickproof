@@ -28,6 +28,7 @@ BOOTLOADERS = {
     "bootloader_bug_consume_first": ["-DBUG_CONSUME_FIRST"],
     "bootloader_bug_trust_header": ["-DBUG_TRUST_HEADER"],
     "bootloader_bug_naive_floor": ["-DBUG_NAIVE_FLOOR"],
+    "bootloader_bug_pop_after_switch": ["-DBUG_POP_AFTER_SWITCH"],
 }
 APP_VERSIONS = (1, 2)
 META_MAGIC = 0x4D455441

@@ -13,13 +13,15 @@
  * Until step 5, Slot B is still a valid image, so a cut anywhere earlier just
  * means the next boot runs the install again.
  *
- * Three build options put back real bugs found by BrickProof in another
- * bootloader. Each one should make at least one cut fail:
- *   BUG_CONSUME_FIRST  mark Slot B consumed before copying (cut = no image left)
- *   BUG_TRUST_HEADER   copy the header first and check only its magic, not the CRC
- *                      (cut = a half-copied image that looks valid)
- *   BUG_NAIVE_FLOOR    keep the floor in one page, erase it and rewrite it after
- *                      the install (cut = floor back to 0, old images accepted again)
+ * Four build options put back real bugs from another bootloader (three found by
+ * BrickProof, one by a real board). Each one should make a run fail:
+ *   BUG_CONSUME_FIRST     mark Slot B consumed before copying (cut = no image left)
+ *   BUG_TRUST_HEADER      copy the header first and check only its magic, not the CRC
+ *                         (cut = a half-copied image that looks valid)
+ *   BUG_NAIVE_FLOOR       keep the floor in one page, erase it and rewrite it after
+ *                         the install (cut = floor back to 0, old images accepted again)
+ *   BUG_POP_AFTER_SWITCH  pop saved registers after switching to the app's stack
+ *                         (no cut needed: it reads past the end of RAM on every boot)
  */
 #include "demo.h"
 
@@ -222,11 +224,28 @@ static void install(void)
 
 /* ---- boot ----------------------------------------------------------------- */
 
+/* Switch to the app's stack and go. Naked, so the compiler adds nothing around the
+ * two instructions: once MSP has moved, anything that still uses the old frame
+ * (a saved-register pop, a tail-call epilogue) reads from the wrong stack. */
+__attribute__((naked, noreturn)) static void switch_stack_and_go(uint32_t sp, uint32_t pc)
+{
+    (void)sp;
+    (void)pc;
+#ifdef BUG_POP_AFTER_SWITCH
+    /* what an optimised tail call did in the other bootloader: restore the caller's
+     * registers after the switch, from the new stack. The app's stack starts at the
+     * very top of RAM, so this reads past the end of it. */
+    __asm volatile("push {r4, lr}\n msr msp, r0\n pop {r4, lr}\n bx r1");
+#else
+    __asm volatile("msr msp, r0\n bx r1");
+#endif
+}
+
 static void jump(uint32_t slot)
 {
     const uint32_t *vt = (const uint32_t *)(slot + IMG_OFFSET);
     SCB_VTOR = (uint32_t)vt;
-    __asm volatile("msr msp, %0\n bx %1" : : "r"(vt[0]), "r"(vt[1]));
+    switch_stack_and_go(vt[0], vt[1]);
 }
 
 int main(void)

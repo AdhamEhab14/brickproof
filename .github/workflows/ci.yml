@@ -51,6 +51,8 @@ jobs:
             expect: 1
           - adapter: bug-naive_floor
             expect: 1
+          - adapter: bug-pop_after_switch
+            expect: 1
     name: demo (${{ matrix.adapter }})
     env:
       RENODE_VERSION: "1.17.0"
@@ -109,6 +111,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: AdhamEhab14/Three-Tier-STM32-Secure-Bootloader
+          ref: v2.0.0          # pinned: the adapter is written for this release
           path: target
 
       - name: Install toolchain

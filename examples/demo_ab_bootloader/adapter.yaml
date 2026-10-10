@@ -17,6 +17,9 @@ flash:
   page: 0x400            # 1 KB
   write_unit: 2
 
+ram:
+  size: 0x5000         # 20 KB. Not optional: extra emulated RAM hides stack faults
+
 # the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
 firmware:
   - file: prebuilt/bootloader.elf
@@ -42,5 +45,6 @@ driver:
 scenario:
   name: update-v1-to-v2
   cut_limit: 1                       # virtual seconds; the whole install takes far less
+  update_time: 0.5
   cuts:
     - at_ops: {from: 0, to: 400}     # every operation of the update (it has fewer)

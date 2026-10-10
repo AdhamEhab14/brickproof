@@ -13,6 +13,7 @@ name: demo
 target: fw
 platform: {base: stm32f103}
 flash: {base: 0x08000000, size: 0x10000, page: 0x400}
+ram: {size: 0x5000}
 firmware:
   - file: app.elf
 driver: {file: driver.py}
@@ -96,7 +97,7 @@ def test_demo_uses_the_builtin_driver():
     assert all(os.path.exists(f) for f, _ in ad.firmware), "prebuilt files are committed"
 
 
-@pytest.mark.parametrize("bug", ["consume_first", "trust_header", "naive_floor"])
+@pytest.mark.parametrize("bug", ["consume_first", "trust_header", "naive_floor", "pop_after_switch"])
 def test_bug_variants_extend_the_demo(bug):
     base = adapters.load(os.path.join(DEMO, "adapter.yaml"))
     ad = adapters.load(os.path.join(DEMO, "bug-%s.yaml" % bug))
@@ -114,3 +115,8 @@ def test_extends_merges_mappings_and_replaces_lists(tmp_path):
     assert ad.name == "child"
     assert ad.flash.page == 0x800 and ad.flash.size == 0x10000
     assert [c.at_op for c in ad.cuts] == [7]
+
+
+def test_ram_size_is_required(tmp_path):
+    with pytest.raises(adapters.AdapterError, match="ram"):
+        adapters.load(write(tmp_path, **{"ram: {size: 0x5000}\n": ""}))

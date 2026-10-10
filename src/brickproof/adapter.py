@@ -45,6 +45,8 @@ class Adapter:
     platform: str
     platform_extra: str
     flash: FlashGeometry
+    ram_base: int
+    ram_size: int
     firmware: list
     uart: str
     vector_table: int
@@ -52,6 +54,7 @@ class Adapter:
     reset_cmds: list
     boot_settle: float
     cut_limit: float
+    update_time: float            # virtual seconds an uninterrupted update needs
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -148,6 +151,13 @@ def load(path, target=None):
     if flash.size % flash.page:
         raise AdapterError("flash.size must be a whole number of pages")
 
+    # RAM size is not optional: an emulator with more RAM than the chip hides
+    # real faults (a stack access past the end of RAM just works)
+    ram = _need(d, "ram", path)
+    ram_size = _need(ram, "size", "ram")
+    if ram_size <= 0:
+        raise AdapterError("ram.size must be positive")
+
     firmware = []
     for i, fw in enumerate(_need(d, "firmware", path)):
         file = _need(fw, "file", "firmware[%d]" % i)
@@ -166,13 +176,14 @@ def load(path, target=None):
     return Adapter(
         name=name, folder=folder, target=target,
         platform=base, platform_extra=os.path.join(folder, extra) if extra else None,
-        flash=flash, firmware=firmware,
+        flash=flash, ram_base=ram.get("base", 0x20000000), ram_size=ram_size, firmware=firmware,
         uart=d.get("uart", "usart2"),
         vector_table=cpu.get("vector_table", flash.base),
         mips=cpu.get("mips", 72),
         reset_cmds=list(d.get("reset", [])),
         boot_settle=float(d.get("boot_settle", 1.5)),
         cut_limit=float(scenario.get("cut_limit", 30.0)),
+        update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),
         driver_file=os.path.join(folder, drv["file"]) if drv.get("file") else None,
         driver_builtin=drv.get("builtin"),
         driver_options=drv.get("options", {}) or {},

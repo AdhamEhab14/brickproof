@@ -1,4 +1,4 @@
-# Three-Tier secure bootloader (STM32F103RB), FBL self-update.
+# Three-Tier secure bootloader (STM32F103RB), FBL self-update. Written for v2.0.0.
 # https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader
 #
 # Build the target first, with the published TEST keys:
@@ -19,6 +19,9 @@ flash:
   page: 0x400            # 1 KB
   write_unit: 2          # halfword programming
 
+ram:
+  size: 0x5000         # 20 KB. Not optional: extra emulated RAM hides stack faults
+
 firmware:
   - file: build-test/boot_manager.elf
   - file: build-test/fbl.elf
@@ -32,11 +35,12 @@ driver:
   file: driver.py
   options:
     fbl_bin: build-test/fbl.bin
-    version: "1.6.0"
+    version: "2.1.0"                # v2.0.0 refuses an FBL older than itself
 
 scenario:
   name: fbl-self-update
   cut_limit: 30                   # virtual seconds to wait for a cut to fire
+  update_time: 6                  # an uninterrupted self-update takes about 2 s on the board
   cuts:
     - name: first-sbl-erase
       on_erase: 0x08004000
@@ -45,13 +49,14 @@ scenario:
       on_erase: 0x08009000
       expect: {kind: erase, addr: 0x08009000}
     # the SBL's first erase is op 7 of the update, so after its 40 erases the
-    # copy loop starts at op 47, one program per halfword (11848 of them)
+    # copy loop starts at op 47, one program per halfword (about 11,800 of them;
+    # the exact count follows the FBL's size)
     - name: copy-first-halfword
       at_op: 47
       expect: {kind: program}
     - name: copy-halfword-100
       at_op: 147
       expect: {kind: program}
-    - name: copy-last-halfword
-      at_op: 11894
+    - name: copy-near-the-end
+      at_op: 11800
       expect: {kind: program}

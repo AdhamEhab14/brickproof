@@ -12,6 +12,8 @@
 #   0x10C  cut kind    read: 1 = erase, 2 = program, 0 = none
 #   0x110  cut addr    read: page address of the erase that was cut (0 for a program)
 #   0x114  cut page    pause when an erase of this page is about to start (0xFFFFFFFF = never)
+#   0x118  fault addr  written by mem_guard.py: an address that does not exist on the chip
+#   0x11C  fault pc    and where the CPU was when it touched it (both 0 = no fault)
 #
 # Renode gives Python peripherals no parameters, so the engine rewrites the three
 # geometry lines below with the target's values when it copies this file.
