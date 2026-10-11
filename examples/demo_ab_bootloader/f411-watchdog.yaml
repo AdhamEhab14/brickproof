@@ -1,0 +1,7 @@
+# The correct F411 demo on a device with a hardware watchdog. A 128 KB sector erase
+# takes a second and the watchdog waits half a second after reset, so the bootloader
+# gives it a longer timeout before it erases. Every cut must still recover.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_watchdog
+flash:
+  hardware_watchdog: true

@@ -235,7 +235,7 @@ def test_sectors_must_add_up_and_fit_the_chip(tmp_path):
 
 def test_the_f411_demo_and_its_bug_builds_load():
     names = [n for n in os.listdir(DEMO) if n.startswith("f411") and n.endswith(".yaml")]
-    assert len(names) == 10
+    assert len(names) == 12
     for n in names:
         ad = adapters.load(os.path.join(DEMO, n))
         assert ad.platform == "stm32f411" and ad.flash.sectors
@@ -249,3 +249,20 @@ def test_flash_timing_is_typical_unless_the_adapter_says_otherwise(tmp_path):
     assert f411(tmp_path, ", timing: none").timing == 0
     with pytest.raises(adapters.AdapterError, match="flash.timing"):
         f411(tmp_path, ", timing: fast")
+
+
+def test_a_hardware_watchdog_clears_wdg_sw_in_the_user_byte(tmp_path):
+    f1 = option_bytes(tmp_path, ", hardware_watchdog: true").option_bytes
+    assert f1[2] == 0xFE and f1[3] == 0x01, "USER with bit 0 cleared, then its complement"
+    assert option_bytes(tmp_path).option_bytes[2] == 0xFF
+    f4 = f411(tmp_path, ", hardware_watchdog: true").option_bytes
+    assert f4[0] == 0xCF and f4[2] == 0x30, "USER with bit 5 cleared, then its complement"
+    assert f411(tmp_path).option_bytes[0] == 0xEF
+
+
+def test_the_watchdog_demos_ship_with_a_hardware_watchdog():
+    demos = (("watchdog.yaml", 0x01), ("f411-watchdog.yaml", 0x20), ("f411-bug-watchdog.yaml", 0x20))
+    for name, bit in demos:
+        ad = adapters.load(os.path.join(DEMO, name))
+        user = ad.flash.option_bytes[2 if bit == 1 else 0]
+        assert not user & bit, name

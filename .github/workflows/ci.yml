@@ -91,6 +91,8 @@ jobs:
             expect: 1
           - adapter: bug-self_lock     # option bytes rewritten in the field: a cut wipes the chip
             expect: 1
+          - adapter: watchdog          # the correct build under a hardware watchdog
+            expect: 0
           # the same demo on an STM32F411: sector erase, word programming, other option bytes
           - adapter: f411
             expect: 0
@@ -113,6 +115,10 @@ jobs:
           - adapter: f411-bug-protected_slot
             expect: 1
           - adapter: f411-bug-self_lock
+            expect: 1
+          - adapter: f411-watchdog     # a one-second erase under a half-second watchdog, done right
+            expect: 0
+          - adapter: f411-bug-watchdog   # and done wrong: reset in the middle of every erase
             expect: 1
     name: demo (${{ matrix.adapter }})
     env:

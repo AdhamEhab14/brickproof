@@ -26,6 +26,9 @@
 # reset, and going from level 1 back to level 0 makes the chip mass-erase the main
 # flash first. That mass erase is an operation too.
 #
+# The USER byte's WDG_SW bit is honoured: when it is cleared the independent watchdog
+# starts by itself at every reset, as on the chip, and the firmware cannot stop it.
+#
 # Operations take the time they take on the chip (TIMING below). The CPU runs from
 # flash, and flash cannot be read while it is being erased or programmed, so the chip
 # simply stops for that long. The model skips the same amount of virtual time: timers,
@@ -64,6 +67,7 @@ T_ERASE_US = {
 T_MASS_US = ((0, 0, 0, 0), (8000000, 5500000, 4000000, 4000000), (16000000, 11000000, 8000000, 8000000))
 # rewriting the option bytes: no figure in the datasheet, taken as one small-sector erase
 T_OPTION_US = (0, 250000, 500000)
+IWDG_KR = 0x40003000        # writing 0xCCCC here starts the independent watchdog
 NEVER = 0xFFFFFFFF
 MAGIC = 0xB81C0004          # state word 0: set once the defaults below are in place
 SR_WRPERR = 0x10
@@ -96,6 +100,17 @@ def ensure_state():
         st_w(CUT_PAGE, NEVER)
         resync()
         st_w(0, MAGIC)
+        self.GetMachine().MachineReset += start_hardware_watchdog
+
+
+def start_hardware_watchdog(machine, ob=OB_BASE, kr=IWDG_KR):
+    # Runs after every reset of the machine, for as long as this emulator lives. With
+    # WDG_SW (bit 5 of the USER byte) cleared the watchdog is a hardware one: it is
+    # running before the first instruction, with its reset timeout of about 0.5 s.
+    # The values come in as defaults because this outlives the script that defined it.
+    b = machine.SystemBus
+    if not int(b.ReadByte(ob)) & 0x20:
+        b.WriteDoubleWord(kr, 0xCCCC)
 
 
 def log(text):

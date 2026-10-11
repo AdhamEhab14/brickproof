@@ -24,8 +24,9 @@ the device back up, and checks that it recovered.
   the CPU must be running inside it, not in a fault handler.
 - The chip's rules, which a plain emulator does not have: real RAM and flash sizes, a bus fault
   for memory that is not there, erase before program, write protection, option bytes
-  (including the mass erase when read protection is removed), and how long erases and
-  programs take, during which the CPU stands still.
+  (including the mass erase when read protection is removed), how long erases and
+  programs take, during which the CPU stands still, a hardware watchdog set in the option
+  bytes, and a proper reboot after a reset the firmware or a watchdog causes.
 - The firmware's own signs of life, through the adapter's driver.
 
 **What you get**
@@ -41,4 +42,4 @@ the device back up, and checks that it recovered.
 double-word programming, option bytes through OPTCR).
 
 **Not modelled yet.** Torn-operation shapes are a model until compared with real hardware.
-Flash timing uses datasheet figures, not measurements. The USER option byte has no effect.
+Flash timing uses datasheet figures, not measurements. Low-power modes.

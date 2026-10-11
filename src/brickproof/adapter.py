@@ -89,7 +89,7 @@ def _protected_ranges(flash, protected):
     return out
 
 
-def stm32f1_option_bytes(flash, protected, read_protected):
+def stm32f1_option_bytes(flash, protected, read_protected, hardware_watchdog=False):
     """The 16 option bytes of an STM32F1 as the chip holds them: RDP, USER, Data0,
     Data1, WRP0..WRP3, each followed by its complement. `protected` is a list of
     {from, size} ranges to write-protect; a cleared WRP bit protects its unit."""
@@ -105,13 +105,14 @@ def stm32f1_option_bytes(flash, protected, read_protected):
                                    "to the end of flash, all or nothing" % (where, flash.base + 31 * unit))
             wrp &= ~(1 << min(u, 31))
     out = bytearray()
-    for data in (0x00 if read_protected else 0xA5, 0xFF, 0xFF, 0xFF,
+    user = 0xFE if hardware_watchdog else 0xFF      # WDG_SW is bit 0, cleared = hardware
+    for data in (0x00 if read_protected else 0xA5, user, 0xFF, 0xFF,
                  wrp & 0xFF, (wrp >> 8) & 0xFF, (wrp >> 16) & 0xFF, (wrp >> 24) & 0xFF):
         out += bytes([data, ~data & 0xFF])
     return bytes(out)
 
 
-def stm32f4_option_bytes(flash, protected, read_protected):
+def stm32f4_option_bytes(flash, protected, read_protected, hardware_watchdog=False):
     """The option bytes of an STM32F4 as the chip shows them: USER and RDP in one
     halfword, the nWRP bits in another, each followed by its complement. Write
     protection is one bit per sector, and a cleared bit protects its sector."""
@@ -125,7 +126,8 @@ def stm32f4_option_bytes(flash, protected, read_protected):
         for s in range(starts.index(start), ends.index(start + size) + 1):
             nwrp &= ~(1 << s)
     out = bytearray()
-    for half in (((0x55 if read_protected else 0xAA) << 8) | 0xEF, 0xF000 | nwrp):
+    user = 0xCF if hardware_watchdog else 0xEF      # WDG_SW is bit 5, cleared = hardware
+    for half in (((0x55 if read_protected else 0xAA) << 8) | user, 0xF000 | nwrp):
         out += bytes([half & 0xFF, half >> 8, ~half & 0xFF, (~half >> 8) & 0xFF]) + bytes([0xFF]) * 4
     return bytes(out)
 
@@ -347,7 +349,8 @@ def load(path, target=None):
     if chip["model"] == "stm32f4_flash.py" and flash.sectors is None:
         raise AdapterError("flash: an %s erases by sector; list them in flash.sectors" % base)
     flash.option_bytes = chip["option_bytes"](flash, fl.get("write_protected") or [],
-                                              bool(fl.get("read_protected", False)))
+                                              bool(fl.get("read_protected", False)),
+                                              bool(fl.get("hardware_watchdog", False)))
 
     # RAM size is not optional: an emulator with more RAM than the chip hides
     # real faults (a stack access past the end of RAM just works)

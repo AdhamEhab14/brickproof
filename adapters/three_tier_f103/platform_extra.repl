@@ -6,13 +6,10 @@ can1: Python.PythonPeripheral @ sysbus 0x40006400
     initable: true
     filename: "@ADAPTER@/can_stub.py"
 
-// Registers the bootloader only pokes while polling. Plain memory is enough
-// (SPI status reads as "nothing received", watchdog keys are accepted) and
-// avoids Renode's slow unimplemented-register path.
+// A register the bootloader only pokes while polling. Plain memory is enough
+// (SPI status reads as "nothing received") and avoids Renode's slow
+// unimplemented-register path. The watchdog is a real one, from the base platform.
 spi2: Memory.MappedMemory @ sysbus 0x40003800
-    size: 0x400
-
-iwdg: Memory.MappedMemory @ sysbus 0x40003000
     size: 0x400
 
 // The stock model assumes an 8 MHz peripheral clock. The firmware programs its

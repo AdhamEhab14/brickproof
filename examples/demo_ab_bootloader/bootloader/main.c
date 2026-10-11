@@ -43,6 +43,11 @@
  *                         when the next boot writes "unprotected" again the chip
  *                         answers by mass-erasing the flash.
  *
+ *   BUG_WATCHDOG          feed the watchdog between flash operations, but leave it at
+ *                         its reset timeout of half a second. On a device with a
+ *                         hardware watchdog, a sector erase that takes a second gets
+ *                         the chip reset in the middle of it, on every attempt.
+ *
  * The same source builds for an STM32F103 and, with -DSTM32F4, for an STM32F411. What
  * differs between them (the flash map, how to erase and program, the option bytes)
  * is in common/chip_*.h.
@@ -161,6 +166,7 @@ static void meta_write(uint32_t floor)
 static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
 {
     for (uint32_t i = 0; i < n; i += CELL) {
+        wdg_feed();
 #ifdef BUG_RESUME_COPY
         if (*(const cell_t *)(dst + i) == *(const cell_t *)(src + i))
             continue;                     /* already there from the interrupted attempt */
@@ -175,6 +181,10 @@ static void install(void)
     uint32_t body = (hdr(SLOT_B)->size + CELL - 1u) & ~(CELL - 1u);
 
     uart_puts("BL: installing\r\n");
+#ifndef BUG_WATCHDOG
+    wdg_stretch();                        /* the erases ahead outlast the reset timeout */
+#endif
+    wdg_feed();
 #ifdef BUG_RESUME_COPY
     /* The floor already names this version and Slot A has no header: an install was
      * interrupted after its erase. Carry on from there instead of starting over. */

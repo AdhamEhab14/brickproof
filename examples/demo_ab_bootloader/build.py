@@ -23,7 +23,8 @@ CFLAGS = ["-mthumb", "-Os", "-g", "-Wall", "-Wextra", "-Werror",
           "-ffreestanding", "-nostdlib", "-ffunction-sections", "-Icommon"]
 # per chip: file name prefix, compiler flags, linker script suffix, bugs that do not apply
 CHIPS = [
-    ("", ["-mcpu=cortex-m3"], "", ()),
+    # an F1 page erase is far shorter than the watchdog's timeout: no bug to show there
+    ("", ["-mcpu=cortex-m3"], "", ("bootloader_bug_watchdog",)),
     # an F4 lets a half-written cell be programmed again, so resuming a copy is fine there
     ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",)),
 ]
@@ -41,6 +42,7 @@ BOOTLOADERS = {
     "bootloader_bug_resume_copy": ["-DBUG_RESUME_COPY"],
     "bootloader_bug_retry_limit": ["-DBUG_RETRY_LIMIT"],
     "bootloader_bug_self_lock": ["-DBUG_SELF_LOCK"],
+    "bootloader_bug_watchdog": ["-DBUG_WATCHDOG"],
 }
 APP_VERSIONS = (1, 2)
 META_MAGIC = 0x4D455441

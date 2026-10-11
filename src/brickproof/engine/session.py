@@ -259,6 +259,10 @@ class RenodeSession:
             else:
                 self.cmd("sysbus LoadBinary @%s 0x%X" % (rel, addr))
         self.cmd("cpu VectorTableOffset 0x%X" % self.vector_table)
+        # Renode runs this macro after every reset of the machine, including the ones the
+        # firmware or a watchdog causes. Without it such a reset leaves the vector table
+        # at address 0, where an STM32 has its flash aliased and Renode has nothing.
+        self.cmd('macro reset "%s"' % "; ".join(self._after_reset()))
         self.cmd("cpu PerformanceInMips %d" % self.mips)
         self.cmd("connector Connect sysbus.%s term" % self.uart_name)
         self.uart = connect(self.uart_port, 10)
@@ -630,8 +634,12 @@ class RenodeSession:
         if settle:
             self.run_for(settle)
 
+    def _after_reset(self):
+        """What a reset must be followed by: boot from flash, and the adapter's own lines."""
+        return ["cpu VectorTableOffset 0x%X" % self.vector_table] + list(self.reset_cmds)
+
     def _reset_lines(self):
-        return ["machine Reset", "cpu VectorTableOffset 0x%X" % self.vector_table] + self.reset_cmds
+        return ["machine Reset"] + self._after_reset()
 
     def uart_text(self):
         return self.rx.decode(errors="replace")

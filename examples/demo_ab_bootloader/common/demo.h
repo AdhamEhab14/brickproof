@@ -34,6 +34,29 @@ typedef struct {
 #define USART2_CR1     REG(0x4000440Cu)
 #define SCB_VTOR       REG(0xE000ED08u)
 
+/* ---- independent watchdog (in the same place on both chips) ------------------ */
+#define IWDG_KR        REG(0x40003000u)
+#define IWDG_PR        REG(0x40003004u)
+#define IWDG_SR        REG(0x4000300Cu)
+
+/* On a device whose option bytes make the watchdog a hardware one, it runs from
+ * reset and resets the chip unless this is called in time. Harmless otherwise. */
+static inline void wdg_feed(void)
+{
+    IWDG_KR = 0xAAAAu;
+}
+
+/* Give the watchdog its longest timeout, about half a minute. The chip stands still
+ * while it erases, and a big sector takes longer than the watchdog waits after reset. */
+static inline void wdg_stretch(void)
+{
+    IWDG_KR = 0x5555u;                /* allow writing the prescaler */
+    IWDG_PR = 6u;                     /* divide by 256 */
+    while (IWDG_SR & 1u)              /* until it has taken the new value */
+        ;
+    IWDG_KR = 0xAAAAu;
+}
+
 /* ---- uart.c -------------------------------------------------------------- */
 void uart_init(void);
 void uart_puts(const char *s);

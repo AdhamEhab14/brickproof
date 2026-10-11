@@ -10,6 +10,7 @@ int main(void)
 {
     uart_init();
     for (;;) {
+        wdg_feed();
         uart_puts("APP v");
         uart_putc('0' + APP_VERSION);
         uart_puts("\r\n");

@@ -27,6 +27,8 @@
 # are erased and programmed through OPTER and OPTPG (after the OPTKEYR keys), and those
 # are operations like any other: counted, traced, and a power cut can fall on them.
 # For the shadow and the compare the option bytes sit right after the flash image.
+# The USER byte's WDG_SW bit is honoured: when it is cleared the independent watchdog
+# starts by itself at every reset, as on the chip, and the firmware cannot stop it.
 # One consequence is modelled because a power cut can trigger it: erasing the option
 # bytes leaves the read-protection byte erased, which the chip reads as "protected"
 # at the next reset, and writing the unprotected value back while protection is in
@@ -76,6 +78,7 @@ OB_SIZE = 16
 TIMING = 0
 T_PROGRAM_US = (0, 53, 70)
 T_ERASE_US = (0, 30000, 40000)
+IWDG_KR = 0x40003000        # writing 0xCCCC here starts the independent watchdog
 NEVER = 0xFFFFFFFF
 MAGIC = 0xB81C0003          # state word 0: set once the defaults below are in place
 SR_PGERR = 0x04
@@ -107,6 +110,17 @@ def ensure_state():
         st_w(CUT_PAGE, NEVER)
         resync()
         st_w(0, MAGIC)
+        self.GetMachine().MachineReset += start_hardware_watchdog
+
+
+def start_hardware_watchdog(machine, ob=OB_BASE, kr=IWDG_KR):
+    # Runs after every reset of the machine, for as long as this emulator lives. With
+    # WDG_SW cleared in the USER option byte the watchdog is a hardware one: it is
+    # running before the first instruction, with its reset timeout of about 0.4 s.
+    # The values come in as defaults because this outlives the script that defined it.
+    b = machine.SystemBus
+    if not int(b.ReadByte(ob + 2)) & 1:
+        b.WriteDoubleWord(kr, 0xCCCC)
 
 
 def log(text):
@@ -145,10 +159,13 @@ def fill_ff(addr, size):
 
 def load_option_bytes():
     # what the chip does at reset: WRPR and OBR are loaded from the option bytes.
-    # Returns (wrpr, read protected). A set bit in WRPR means "not protected".
+    # Returns (wrpr, read protected, obr). A set bit in WRPR means "not protected".
+    # OBR shows RDPRT in bit 1, then the USER byte, Data0 and Data1.
     ob = bus.ReadBytes(OB_BASE, OB_SIZE)
     wrpr = int(ob[8]) | (int(ob[10]) << 8) | (int(ob[12]) << 16) | (int(ob[14]) << 24)
-    return wrpr, int(ob[0]) != 0xA5
+    protected = int(ob[0]) != 0xA5
+    obr = (int(ob[6]) << 18) | (int(ob[4]) << 10) | (int(ob[2]) << 2) | (2 if protected else 0)
+    return wrpr, protected, obr
 
 
 def is_protected(addr):
@@ -302,16 +319,17 @@ if request.IsInit:
     sr_err = 0
     wrpr = None             # loaded from the option bytes on first use after this reset
     rdp = False
+    obr = 0
     option_pending = False
 elif request.IsWrite or request.IsRead:
     ensure_state()
     if wrpr is None:
-        wrpr, rdp = load_option_bytes()
+        wrpr, rdp, obr = load_option_bytes()
     o = request.Offset
 
     if request.IsRead:
         if o == 0x0C: request.Value = 0x20 | sr_err   # EOP set, BSY clear, plus any error
-        elif o == 0x1C: request.Value = 0x03FFFFFC | (2 if rdp else 0)   # OBR: RDPRT, no option error
+        elif o == 0x1C: request.Value = obr           # no option byte error is ever raised
         elif o == 0x20: request.Value = wrpr
         elif 0x100 <= o <= 0x14C: request.Value = st((o - 0x100) // 4 + 1)
         else: request.Value = regs.get(o, 0)

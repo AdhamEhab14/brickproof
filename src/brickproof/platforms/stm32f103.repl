@@ -1,5 +1,5 @@
 // STM32F103 base platform for BrickProof.
-// Renode's stock F103 has no RCC, flash controller, CRC or bit-banding. The flash
+// Renode's stock F103 has no RCC, flash controller, CRC, watchdog or bit-banding. The flash
 // controller is the one that counts operations and cuts power. @MODELS@ is replaced
 // with the models folder when the engine writes the run's platform file.
 // A target adapter can append its own lines (extra peripherals, clock fixes).
@@ -14,6 +14,12 @@ flashctl: Python.PythonPeripheral @ sysbus 0x40022000
     size: 0x400
     initable: true
     filename: "@MODELS@/stm32f1_flash.py"
+
+// the independent watchdog, clocked by the 40 kHz LSI
+iwdg: Timers.STM32_IndependentWatchdog @ sysbus 0x40003000
+    frequency: 40000
+    windowOption: false
+    defaultPrescaler: 0x4
 
 crc: CRC.STM32_CRC @ sysbus 0x40023000
     series: STM32Series.F4
