@@ -81,6 +81,45 @@ def describe(ops, flash):
     return lines
 
 
+def cost(ops, flash):
+    """What one update costs the flash: the time the chip spends erasing and programming
+    (the CPU waits for all of it), and wear. Wear is counted where it is worst: the
+    page or sector that is erased most often in one update."""
+    erased = {}
+    for op in ops:
+        if op["kind"] == "erase" and op["addr"] < flash.base + flash.size:
+            start = erase_start(op["addr"], flash)
+            erased[start] = erased.get(start, 0) + 1
+        elif op["kind"] == "mass_erase":
+            for start, _ in flash.units():
+                erased[start] = erased.get(start, 0) + 1
+    out = {"flash_time_s": round(sum(op.get("us", 0) for op in ops) / 1e6, 6),
+           "erases": sum(erased.values()), "most_erased": None, "updates_to_wear_out": None}
+    if erased:
+        addr = max(sorted(erased), key=lambda a: erased[a])
+        out["most_erased"] = {"addr": addr, "erases_per_update": erased[addr]}
+        endurance = getattr(flash, "endurance", 0)
+        if endurance:
+            out["updates_to_wear_out"] = endurance // erased[addr]
+            out["endurance"] = endurance
+    return out
+
+
+def describe_cost(c, timing=1):
+    """The same as two lines of text."""
+    lines = []
+    if timing:
+        lines.append("flash time: the chip spends %.3f s erasing and programming (%s datasheet timings)"
+                     % (c["flash_time_s"], "typical" if timing == 1 else "slowest"))
+    worst = c["most_erased"]
+    if worst and c.get("updates_to_wear_out"):
+        lines.append("wear: 0x%08X is erased %d time(s) per update, the most of any page or sector; "
+                     "at the %d cycles the datasheet promises that is %d updates"
+                     % (worst["addr"], worst["erases_per_update"], c["endurance"],
+                        c["updates_to_wear_out"]))
+    return lines
+
+
 def write_jsonl(ops, path):
     """One operation per line: index, kind, addr, and value for a program. Addresses
     and values are hex strings, so the file reads well and diffs well."""
@@ -91,6 +130,8 @@ def write_jsonl(ops, path):
                 row["value"] = "0x%0*X" % (2 * op.get("size", 2), op["value"])
             if op.get("inferred"):
                 row["inferred"] = True
+            if op.get("us"):
+                row["us"] = op["us"]
             f.write(json.dumps(row) + "\n")
 
 

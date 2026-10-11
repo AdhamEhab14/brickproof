@@ -241,3 +241,11 @@ def test_the_f411_demo_and_its_bug_builds_load():
         assert ad.platform == "stm32f411" and ad.flash.sectors
         for path, _ in ad.firmware:
             assert os.path.exists(path), path
+
+
+def test_flash_timing_is_typical_unless_the_adapter_says_otherwise(tmp_path):
+    assert f411(tmp_path).timing == 1 and f411(tmp_path).endurance == 10000
+    assert f411(tmp_path, ", timing: max").timing == 2
+    assert f411(tmp_path, ", timing: none").timing == 0
+    with pytest.raises(adapters.AdapterError, match="flash.timing"):
+        f411(tmp_path, ", timing: fast")

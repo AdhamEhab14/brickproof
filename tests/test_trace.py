@@ -187,3 +187,32 @@ def test_jsonl_shows_a_value_at_its_own_width(tmp_path):
     path = tmp_path / "t.jsonl"
     traces.write_jsonl([op(0, "program", 0x08004000, value=0x12, size=4)], str(path))
     assert json.loads(path.read_text())["value"] == "0x00000012"
+
+
+def test_the_cost_of_an_update_is_its_flash_time_and_its_most_erased_unit():
+    flash = FlashGeometry(base=0x08000000, size=0x20000, page=PAGE, endurance=10000)
+    ops = [op(0, "erase", 0x0801E400, us=30000), op(1, "erase", 0x08002000, us=30000),
+           op(2, "program", 0x08002000, value=1, us=53), op(3, "erase", 0x08002000, us=30000),
+           op(4, "refused", 0x08002002)]
+    c = traces.cost(ops, flash)
+    assert c["flash_time_s"] == 0.090053 and c["erases"] == 3
+    assert c["most_erased"] == {"addr": 0x08002000, "erases_per_update": 2}
+    assert c["updates_to_wear_out"] == 5000
+    lines = traces.describe_cost(c)
+    assert "0.090 s" in lines[0] and "typical" in lines[0]
+    assert "0x08002000 is erased 2 time(s)" in lines[1] and "5000 updates" in lines[1]
+    assert len(traces.describe_cost(c, timing=0)) == 1, "no time line when timing is off"
+
+
+def test_a_mass_erase_wears_every_unit_and_an_update_without_erases_wears_none():
+    flash = FlashGeometry(base=0x08000000, size=0x1000, page=PAGE, endurance=10000)
+    c = traces.cost([op(0, "mass_erase", 0x08000000), op(1, "erase", 0x08000400)], flash)
+    assert c["erases"] == 5 and c["most_erased"] == {"addr": 0x08000400, "erases_per_update": 2}
+    none = traces.cost([op(0, "program", 0x08000000, value=0)], flash)
+    assert none["most_erased"] is None and traces.describe_cost(none, timing=0) == []
+
+
+def test_the_time_of_an_operation_is_kept_in_the_jsonl(tmp_path):
+    path = tmp_path / "t.jsonl"
+    traces.write_jsonl([op(0, "erase", 0x08002000, us=30000)], str(path))
+    assert json.loads(path.read_text())["us"] == 30000

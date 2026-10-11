@@ -56,6 +56,19 @@ def _print_plan(plan):
     print(flush=True)
 
 
+def _hint_time(trace, ad):
+    """A baseline can fail just because the adapter gives the update too little time."""
+    spent = traces.cost(trace, ad.flash)["flash_time_s"] if trace else 0
+    if spent > ad.update_time:
+        print("note: the flash operations seen so far take %.2f s on the chip, more than "
+              "scenario.update_time (%.2f s). Give the update more time." % (spent, ad.update_time))
+
+
+def _print_cost(trace, flash):
+    for line in traces.describe_cost(traces.cost(trace, flash), flash.timing):
+        print(line)
+
+
 def _jobs(args):
     """--jobs N, or 'auto' for one emulator per core, leaving one core free."""
     j = getattr(args, "jobs", None)
@@ -122,6 +135,7 @@ def cmd_run(args):
         traces.write_jsonl(out.trace, args.trace)
     if not out.results[0].passed:
         print("the update fails even with no power cut, so no cuts were run")
+        _hint_time(out.trace, ad)
     ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn) and r.depth == 1]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs%s)" % (
@@ -145,6 +159,8 @@ def cmd_run(args):
                   out.depth["skipped_known"], note))
     if ad.plan and out.plan:
         print("coverage: %s" % out.plan.summary())
+    if out.trace:
+        _print_cost(out.trace, ad.flash)
     return 0 if out.passed else 1
 
 
@@ -188,6 +204,10 @@ def cmd_trace(args):
     results, trace = out.results, out.trace
     if out.plan:
         _print_plan(out.plan)
+    if trace:
+        _print_cost(trace, ad.flash)
+    if not results[0].passed:
+        _hint_time(trace, ad)
     guessed = sum(1 for op in trace if op.get("inferred"))
     if guessed:
         print("%d program(s) wrote what was already there; their addresses are inferred "

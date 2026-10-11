@@ -10,7 +10,11 @@
 #     protect is refused and WRPRTERR is set;
 #   notices flash changing with no flash operation behind it (a store with PG
 #     clear, or with the controller locked): silicon ignores those, Renode stores them;
-#   can log each operation to a file (the golden-run trace).
+#   can log each operation to a file (the golden-run trace);
+#   makes each operation take the time it takes on the chip (TIMING below). The CPU
+#     runs from flash, and flash cannot be read while it is being erased or programmed,
+#     so the chip simply stops for that long. The model skips the same amount of
+#     virtual time: timers, watchdogs and timeouts see a 30 ms erase as 30 ms.
 #
 # An operation starts when software sets STRT (erase) or sets PG (program). The
 # halfword itself is written by the CPU straight into flash memory, so the model
@@ -66,6 +70,12 @@ EXPECT = 0x92000000
 TRACE_FILE = ""
 OB_BASE = 0x1FFFF800
 OB_SIZE = 16
+# How long operations take: 0 = no time at all, 1 = typical, 2 = the slowest the datasheet
+# allows. DS5319 table 28: programming 16 bits takes 40 to 70 us (52.5 typical), a page or
+# mass erase 20 to 40 ms. No typical erase time is given, so the middle is used.
+TIMING = 0
+T_PROGRAM_US = (0, 53, 70)
+T_ERASE_US = (0, 30000, 40000)
 NEVER = 0xFFFFFFFF
 MAGIC = 0xB81C0003          # state word 0: set once the defaults below are in place
 SR_PGERR = 0x04
@@ -73,6 +83,7 @@ SR_WRPRTERR = 0x10
 CR_PG, CR_PER, CR_MER, CR_OPTPG, CR_OPTER, CR_STRT, CR_LOCK, CR_OPTWRE = 1, 2, 4, 0x10, 0x20, 0x40, 0x80, 0x200
 
 from System import Array, Byte, Convert
+from Antmicro.Renode.Time import TimeInterval
 
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
@@ -103,6 +114,14 @@ def log(text):
         f = open(TRACE_FILE, "a")
         f.write(text + chr(10))
         f.close()
+
+
+def spend(us):
+    # the chip is busy for this long and the CPU, which runs from flash, waits
+    if us:
+        for c in bus.GetCPUs():
+            c.SkipTime(TimeInterval.FromMicroseconds(us))
+    return us
 
 
 def resync():
@@ -217,7 +236,7 @@ def settle_program():
         last = st(LAST)
         if last:
             st_w(LAST, last + 2)
-        log("P? 0x%08X" % (last + 2 if last else 0))
+        log("P? 0x%08X @%d" % (last + 2 if last else 0, T_PROGRAM_US[TIMING]))
     for n, a in enumerate(found):
         if n:
             st_w(OPCOUNT, st(OPCOUNT) + 1)      # PG stayed set: each further halfword is an operation
@@ -235,7 +254,9 @@ def settle_program():
             log("X 0x%08X 0x%04X 0x%04X" % (a, new, old))
         else:
             bus.WriteWord(shadow_of(a), new)
-            log("P 0x%08X 0x%04X" % (a, new))
+            log("P 0x%08X 0x%04X @%d" % (a, new, T_PROGRAM_US[TIMING]))
+        if n:
+            spend(T_PROGRAM_US[TIMING])         # the first one was paid for when PG was set
         st_w(LAST, a)
 
 
@@ -246,7 +267,7 @@ def settle_option_program():
     st_w(PENDING, 0)
     found = option_differences()
     if not found:
-        log("P? 0x%08X" % OB_BASE)
+        log("P? 0x%08X @%d" % (OB_BASE, T_PROGRAM_US[TIMING]))
     for n, a in enumerate(found):
         if n:
             st_w(OPCOUNT, st(OPCOUNT) + 1)
@@ -263,13 +284,15 @@ def settle_option_program():
             stored = data | ((~data & 0xFF) << 8)
             bus.WriteWord(a, stored)
             bus.WriteWord(shadow_of(a), stored)
-            log("P 0x%08X 0x%04X" % (a, stored))
+            log("P 0x%08X 0x%04X @%d" % (a, stored, T_PROGRAM_US[TIMING]))
+            if n:
+                spend(T_PROGRAM_US[TIMING])
             if a == OB_BASE and data == 0xA5 and rdp:
                 # Read protection was in force (loaded at reset) and is being removed.
                 # The chip answers that by erasing the whole main flash.
                 st_w(OPCOUNT, st(OPCOUNT) + 1)
                 fill_ff(FLASH_BASE, FLASH_SIZE)
-                log("M 0x%08X" % FLASH_BASE)
+                log("M 0x%08X @%d" % (FLASH_BASE, spend(T_ERASE_US[TIMING])))
 
 
 if request.IsInit:
@@ -343,7 +366,7 @@ elif request.IsWrite or request.IsRead:
                     st_w(OPCOUNT, opcount + 1)
                     if starting_opt_erase:
                         fill_ff(OB_BASE, OB_SIZE)
-                        log("E 0x%08X" % OB_BASE)
+                        log("E 0x%08X @%d" % (OB_BASE, spend(T_ERASE_US[TIMING])))
                     elif starting_erase and (v & CR_PER):
                         a = page_now
                         if not FLASH_BASE <= a < FLASH_BASE + FLASH_SIZE:
@@ -352,16 +375,17 @@ elif request.IsWrite or request.IsRead:
                             refuse_protected(a)
                         else:
                             fill_ff(a, PAGE)
-                            log("E 0x%08X" % a)
+                            log("E 0x%08X @%d" % (a, spend(T_ERASE_US[TIMING])))
                     elif starting_erase:             # MER: not done if any page is protected
                         if rdp or wrpr != 0xFFFFFFFF:
                             refuse_protected(FLASH_BASE)
                         else:
                             fill_ff(FLASH_BASE, FLASH_SIZE)
-                            log("M 0x%08X" % FLASH_BASE)
+                            log("M 0x%08X @%d" % (FLASH_BASE, spend(T_ERASE_US[TIMING])))
                     else:
                         option_pending = bool(starting_opt_prog)
                         st_w(PENDING, 1)
+                        spend(T_PROGRAM_US[TIMING])
         elif o == 0x0C:
             sr_err &= ~v                     # error flags are write-1-to-clear
         elif o == 0x104 or o == 0x114:       # arming a cut clears the last one's result

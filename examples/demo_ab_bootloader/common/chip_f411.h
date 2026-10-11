@@ -76,7 +76,8 @@ static inline void flash_erase(uint32_t addr, uint32_t size)
         uint32_t start = n ? sector_end(n - 1) : 0x08000000u;
         if (sector_end(n) <= addr || start >= addr + size)
             continue;
-        FLASH_CR = (FLASH_CR & ~CR_SNB(0xF)) | CR_SER | CR_SNB(n);
+        /* PSIZE counts for an erase too: at 32 bits it is the fastest the chip does */
+        FLASH_CR = (FLASH_CR & ~(CR_SNB(0xF) | (3u << 8))) | CR_PSIZE_32 | CR_SER | CR_SNB(n);
         FLASH_CR |= CR_STRT;
         flash_wait();
         FLASH_CR &= ~(CR_SER | CR_SNB(0xF));

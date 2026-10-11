@@ -24,7 +24,8 @@ the device back up, and checks that it recovered.
   the CPU must be running inside it, not in a fault handler.
 - The chip's rules, which a plain emulator does not have: real RAM and flash sizes, a bus fault
   for memory that is not there, erase before program, write protection, option bytes
-  (including the mass erase when read protection is removed).
+  (including the mass erase when read protection is removed), and how long erases and
+  programs take, during which the CPU stands still.
 - The firmware's own signs of life, through the adapter's driver.
 
 **What you get**
@@ -32,10 +33,12 @@ the device back up, and checks that it recovered.
   it, the firmware hashes, and where the evidence fits in UN R156 and the EU Cyber Resilience Act.
 - A bundled demo (`brickproof demo`): a small A/B bootloader and ten builds with a known bug,
   each of which a run catches. The same demo builds for the STM32F411 (`brickproof demo f411`).
+- What the update costs the flash: time spent erasing and programming, and the most-erased
+  page or sector against the datasheet's endurance.
 - A GitHub Action and a Docker image.
 
 **Supported chips.** STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte to
 double-word programming, option bytes through OPTCR).
 
 **Not modelled yet.** Torn-operation shapes are a model until compared with real hardware.
-The USER and Data option bytes have no effect. Flash timing and wear.
+Flash timing uses datasheet figures, not measurements. The USER option byte has no effect.

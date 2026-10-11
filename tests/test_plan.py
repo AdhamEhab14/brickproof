@@ -111,7 +111,7 @@ def test_a_planned_campaign_cuts_every_state_of_the_simulated_update():
     cut = [r.op_index for r in out.results[1:]]
     assert cut == out.plan.cuts == list(range(10))
     assert all(r.passed for r in out.results) and out.plan.exhaustive
-    assert runner.as_dict(out, SimpleNamespace(name="f", target="/f"))["coverage"]["cuts"] == 10
+    assert runner.as_dict(out, SimpleNamespace(name="f", target="/f", flash=FLASH))["coverage"]["cuts"] == 10
 
 
 def test_a_listed_cut_is_not_run_twice_when_the_plan_also_has_it():
