@@ -107,4 +107,6 @@ def test_the_flash_model_gets_a_shadow_as_big_as_the_flash(tmp_path):
     assert "bpOptionBytes: Memory.MappedMemory @ sysbus 0x1FFFF800" in repl
     model = (tmp_path / "models" / "stm32f1_flash.py").read_text()
     assert "\nOB_BASE = 0x1FFFF800\n" in model and "\nWRP_UNIT = 0x1000\n" in model
+    assert "\nTIMING = 0x1\n" in model, "operations take their typical time unless told otherwise"
+    assert not (tmp_path / "models" / "stm32f4_flash.py").exists(), "only this chip's controller"
     assert 'TRACE_FILE = "%s/trace.txt"' % str(tmp_path).replace("\\", "/") in model

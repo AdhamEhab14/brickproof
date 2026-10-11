@@ -79,6 +79,8 @@ class FlashGeometry:
     sectors: list = None
     controller: int = 0x40022000
     model: str = "stm32f1_flash.py"      # the flash controller model in models/
+    timing: int = 0             # how long operations take: 0 none, 1 typical, 2 slowest
+    endurance: int = 0          # erase cycles the datasheet promises per unit (0: unknown)
     # Option bytes, where the chip has them: their address, and what they hold when a
     # test starts. A flash image is then the flash followed by these bytes, so a change
     # to them is saved, restored, replayed and compared like any other.
@@ -515,10 +517,14 @@ class RenodeSession:
     def cut_fired(self):
         return self.read_word(self._ctl(REG_CUT_FIRED)) == 1
 
-    def run_until_cut(self, limit, step=0.01):
-        """Advance until the armed cut fires. True if it did within `limit` virtual seconds."""
+    def run_until_cut(self, limit, step=0.01, longest=0.16):
+        """Advance until the armed cut fires. True if it did within `limit` virtual seconds.
+        The steps grow: a cut a few milliseconds in is noticed at once, and one behind a
+        second-long sector erase does not cost a hundred round trips to the emulator.
+        Looking late is harmless, a cut stops the CPU where it fired."""
         waited = 0.0
         while waited < limit:
+            step = min(step, limit - waited)
             try:
                 reply = self.cmd_batch([self._run_cmd(step), self._get(REG_CUT_FIRED)],
                                        timeout=self.hang_limit(step))
@@ -529,6 +535,7 @@ class RenodeSession:
             if self._values(reply)[-1] == 1:
                 self._pull()
                 return True
+            step = min(step * 2, longest)
         self._pull()
         return False
 
@@ -595,6 +602,9 @@ class RenodeSession:
                 parts = line.split()
                 if not parts:
                     continue
+                # a trailing @N is how many microseconds the chip spent on the operation
+                us = [int(t[1:]) for t in parts if t.startswith("@")]
+                parts = [t for t in parts if not t.startswith("@")]
                 op = {"index": len(ops), "kind": TRACE_KINDS[parts[0]], "addr": int(parts[1], 16)}
                 if parts[0] in ("P", "X"):
                     # the number of hex digits says how many bytes the program wrote
@@ -604,6 +614,8 @@ class RenodeSession:
                     op["old"] = int(parts[3], 16)
                 elif parts[0] == "P?":
                     op["inferred"] = True
+                if us:
+                    op["us"] = us[0]
                 ops.append(op)
         return ops
 
@@ -674,19 +686,24 @@ class RenodeSession:
 class RenodeSerial:
     """pyserial-like view of the emulated UART, so a target's real host tool runs unchanged."""
 
-    def __init__(self, session, timeout=20, step=0.01):
+    def __init__(self, session, timeout=20, step=0.01, longest=0.08):
         self.s = session
         self.timeout = timeout
         self.step = step
+        self.longest = longest
 
     def write(self, data):
         self.s.uart_write(bytes(data))
 
     def read(self, n):
-        waited = 0.0
+        # the steps grow while nothing arrives: a prompt answer is read at once, and a
+        # device that stays silent does not cost a round trip to the emulator every 10 ms
+        waited, step = 0.0, self.step
         while len(self.s.rx) < n and waited < self.timeout:
-            self.s.run_for(self.step)
-            waited += self.step
+            step = min(step, self.timeout - waited)
+            self.s.run_for(step)
+            waited += step
+            step = min(step * 2, self.longest)
         out = bytes(self.s.rx[:n])
         del self.s.rx[:n]
         return out

@@ -617,6 +617,8 @@ def as_dict(outcome, adapter):
         "passed": outcome.passed,
         "jobs": outcome.jobs,
         "coverage": outcome.plan.as_dict() if outcome.plan else None,
+        "update": dict(traces.cost(outcome.trace, adapter.flash), timing=adapter.flash.timing)
+        if outcome.trace else None,
         "depth": outcome.depth,
         "timings": outcome.timings,
         "cuts": [asdict(r) for r in outcome.results],

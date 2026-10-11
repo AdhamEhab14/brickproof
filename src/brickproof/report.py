@@ -6,6 +6,8 @@ the three can never disagree.
 import html
 from xml.sax.saxutils import escape, quoteattr
 
+from brickproof import trace as traces
+
 
 def group(cut):
     """Which part of a run a result belongs to."""
@@ -231,6 +233,9 @@ def html_page(report):
         out.append(_coverage(report["coverage"]))
     else:
         out.append("<p>No plan: the update did not pass uninterrupted, or no golden run exists.</p>")
+    if report.get("update"):
+        out += ["<p>%s</p>" % _e(line[0].upper() + line[1:] + ".")
+                for line in traces.describe_cost(report["update"], report["update"]["timing"])]
     if report["depth"]:
         d = report["depth"]
         out.append("<p>Cuts during recovery: up to %d in a row, %d new flash states tested, %d more "

@@ -137,13 +137,19 @@ def stm32f4_option_bytes(flash, protected, read_protected):
 #   option_bytes  builds them from an adapter's write_protected / read_protected
 #   wrp_unit      how much flash one write-protection bit covers (None: one per sector)
 #   write_unit    bytes a program usually writes
+#   endurance     erase cycles per page or sector the datasheet promises
 CHIPS = {
     "stm32f103": dict(model="stm32f1_flash.py", controller=0x40022000, ob_base=0x1FFFF800,
-                      option_bytes=stm32f1_option_bytes, wrp_unit=0x1000, write_unit=2),
+                      option_bytes=stm32f1_option_bytes, wrp_unit=0x1000, write_unit=2,
+                      endurance=10000),
     "stm32f411": dict(model="stm32f4_flash.py", controller=0x40023C00, ob_base=0x1FFFC000,
-                      option_bytes=stm32f4_option_bytes, wrp_unit=None, write_unit=4),
+                      option_bytes=stm32f4_option_bytes, wrp_unit=None, write_unit=4,
+                      endurance=10000),
 }
 PLATFORMS = tuple(CHIPS)
+
+# flash.timing: how long erases and programs take in the emulator
+TIMINGS = {"none": 0, "typical": 1, "max": 2}
 
 
 def _need(d, key, where):
@@ -317,7 +323,11 @@ def load(path, target=None):
     flash = FlashGeometry(base=_need(fl, "base", "flash"), size=_need(fl, "size", "flash"),
                           page=fl.get("page"), write_unit=fl.get("write_unit", chip["write_unit"]),
                           controller=chip["controller"], model=chip["model"], ob_base=chip["ob_base"],
-                          wrp_unit=chip["wrp_unit"])
+                          wrp_unit=chip["wrp_unit"], endurance=chip["endurance"])
+    timing = fl.get("timing", "typical")
+    if timing not in TIMINGS:
+        raise AdapterError("flash.timing: unknown '%s' (have: %s)" % (timing, ", ".join(TIMINGS)))
+    flash.timing = TIMINGS[timing]
     if (flash.page is None) == ("sectors" not in fl):
         raise AdapterError("flash: give exactly one of page (one erase size everywhere) "
                            "or sectors (a list of sizes)")

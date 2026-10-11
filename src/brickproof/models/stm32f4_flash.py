@@ -26,6 +26,11 @@
 # reset, and going from level 1 back to level 0 makes the chip mass-erase the main
 # flash first. That mass erase is an operation too.
 #
+# Operations take the time they take on the chip (TIMING below). The CPU runs from
+# flash, and flash cannot be read while it is being erased or programmed, so the chip
+# simply stops for that long. The model skips the same amount of virtual time: timers,
+# watchdogs and timeouts see a one-second sector erase as one second.
+#
 # Not modelled: PGPERR and PGAERR (the model cannot see how wide a store was), PCROP
 # (SPRMOD is kept but the nWRP bits always mean write protection), and RDP level 2.
 #
@@ -44,6 +49,21 @@ TRACE_FILE = ""
 OB_BASE = 0x1FFFC000
 OB_SIZE = 16
 CHUNK = 0x400               # flash is compared with its shadow in pieces of this size
+# How long operations take: 0 = no time at all, 1 = typical, 2 = the slowest the datasheet
+# allows. From the flash memory programming table of the STM32F411xC/xE datasheet, in
+# microseconds. An erase depends on the size of the sector and on PSIZE (8, 16, 32 bits;
+# 64 needs an external supply and is given the 32-bit figures). Programming a cell takes
+# 16 us, at most 100.
+TIMING = 0
+T_PROGRAM_US = (0, 16, 100)
+T_ERASE_US = {
+    0x4000: ((0, 0, 0, 0), (400000, 300000, 250000, 250000), (800000, 600000, 500000, 500000)),
+    0x10000: ((0, 0, 0, 0), (1200000, 700000, 550000, 550000), (2400000, 1400000, 1100000, 1100000)),
+    0x20000: ((0, 0, 0, 0), (2000000, 1300000, 1000000, 1000000), (4000000, 2600000, 2000000, 2000000)),
+}
+T_MASS_US = ((0, 0, 0, 0), (8000000, 5500000, 4000000, 4000000), (16000000, 11000000, 8000000, 8000000))
+# rewriting the option bytes: no figure in the datasheet, taken as one small-sector erase
+T_OPTION_US = (0, 250000, 500000)
 NEVER = 0xFFFFFFFF
 MAGIC = 0xB81C0004          # state word 0: set once the defaults below are in place
 SR_WRPERR = 0x10
@@ -52,6 +72,7 @@ OPTCR_OPTLOCK, OPTCR_OPTSTRT = 1, 2
 RDP_LEVEL_0 = 0xAA
 
 from System import Array, Byte, Convert
+from Antmicro.Renode.Time import TimeInterval
 
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
@@ -82,6 +103,21 @@ def log(text):
         f = open(TRACE_FILE, "a")
         f.write(text + chr(10))
         f.close()
+
+
+def spend(us):
+    # the chip is busy for this long and the CPU, which runs from flash, waits
+    if us:
+        for c in bus.GetCPUs():
+            c.SkipTime(TimeInterval.FromMicroseconds(us))
+    return us
+
+
+def erase_time(size, psize):
+    # a sector of a size the table does not have takes as long as its share of 128 KB
+    if size in T_ERASE_US:
+        return T_ERASE_US[size][TIMING][psize]
+    return T_ERASE_US[0x20000][TIMING][psize] * size // 0x20000
 
 
 def resync():
@@ -226,7 +262,7 @@ def settle_program(size):
         last = st(LAST)
         if last:
             st_w(LAST, last + size)
-        log("P? 0x%08X" % (last + size if last else 0))
+        log("P? 0x%08X @%d" % (last + size if last else 0, T_PROGRAM_US[TIMING]))
     for n, a in enumerate(found):
         if n:
             st_w(OPCOUNT, st(OPCOUNT) + 1)      # PG stayed set: each further cell is an operation
@@ -239,7 +275,9 @@ def settle_program(size):
             stored = old & new                  # a program clears bits, it cannot set them
             put(a, size, stored)
             put(shadow_of(a), size, stored)
-            log("P 0x%08X 0x%0*X" % (a, 2 * size, stored))
+            log("P 0x%08X 0x%0*X @%d" % (a, 2 * size, stored, T_PROGRAM_US[TIMING]))
+        if n:
+            spend(T_PROGRAM_US[TIMING])         # the first one was paid for when PG was set
         st_w(LAST, a)
 
 
@@ -273,17 +311,17 @@ def program_option_bytes(value):
         if not begin(True, FLASH_BASE):
             return
         fill_ff(FLASH_BASE, FLASH_SIZE)
-        log("M 0x%08X" % FLASH_BASE)
+        log("M 0x%08X @%d" % (FLASH_BASE, spend(T_MASS_US[TIMING][(cr >> 8) & 3])))
     if not begin(True, OB_BASE):
         return
     fill_ff(OB_BASE, OB_SIZE)
-    log("E 0x%08X" % OB_BASE)
+    log("E 0x%08X @%d" % (OB_BASE, spend(T_OPTION_US[TIMING])))
     for a, half in ((OB_BASE, user_rdp), (OB_BASE + 8, wrp)):
         if not begin(False, a):
             return
         put(a, 4, with_complement(half))
         put(shadow_of(a), 4, with_complement(half))
-        log("P 0x%08X 0x%08X" % (a, with_complement(half)))
+        log("P 0x%08X 0x%08X @%d" % (a, with_complement(half), spend(T_PROGRAM_US[TIMING])))
 
 
 if request.IsInit:
@@ -345,17 +383,18 @@ elif request.IsWrite or request.IsRead:
                             refuse_protected(a)
                         else:
                             fill_ff(a, SECTORS[sector][1])
-                            log("E 0x%08X" % a)
+                            log("E 0x%08X @%d" % (a, spend(erase_time(SECTORS[sector][1], (v >> 8) & 3))))
             elif unlocked and (v & CR_STRT) and (v & CR_MER):
                 if begin(True, FLASH_BASE):
                     if [s for s in range(len(SECTORS)) if not (nwrp >> s) & 1]:
                         refuse_protected(FLASH_BASE)    # not done if any sector is protected
                     else:
                         fill_ff(FLASH_BASE, FLASH_SIZE)
-                        log("M 0x%08X" % FLASH_BASE)
+                        log("M 0x%08X @%d" % (FLASH_BASE, spend(T_MASS_US[TIMING][(v >> 8) & 3])))
             elif unlocked and (v & CR_PG) and not (old & CR_PG):
                 if begin(False, 0):
                     st_w(PENDING, 1)
+                    spend(T_PROGRAM_US[TIMING])
         elif o == 0x14:
             if not optcr & OPTCR_OPTLOCK:
                 optcr = v & ~OPTCR_OPTSTRT            # OPTSTRT clears itself

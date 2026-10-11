@@ -89,6 +89,13 @@ cuts again. A flash state already tested is skipped.
 **The chip's rules.** A plain emulator is more forgiving than silicon. BrickProof gives the
 emulated chip its real RAM and flash sizes, faults on memory that is not there, refuses to
 program a cell that is not erased, enforces write protection, and models the option bytes.
+Erases and programs take the time the datasheet gives them (a 128 KB sector erase is a second
+during which the CPU stands still), so watchdogs and timeouts behave as on the board.
+`flash.timing: max` in the adapter uses the slowest figures the datasheet allows.
+
+**What the update costs the flash.** Each run reports how long the chip spends erasing and
+programming, and which page or sector is erased most often per update, set against the
+endurance the datasheet promises.
 
 **An outside judge.** The verdict does not rest on what the firmware says about itself. An
 oracle checks that the bytes installed are exactly an approved image and that the CPU is
@@ -195,7 +202,9 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 - Flash is modelled for STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte
   to double-word programming). Another family needs a model of its flash controller in
   `src/brickproof/models/`; the engine itself no longer assumes either chip.
-- Not modelled: the USER and Data option bytes, flash timing, wear.
+- Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
+  vary with temperature, voltage or age. Wear is counted per update, not simulated.
+- Not modelled: the USER option byte (hardware watchdog, reset behaviour in low-power modes).
 
 ## Licence
 

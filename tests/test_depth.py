@@ -112,7 +112,7 @@ def test_three_levels_go_deeper_than_two():
 
 def test_the_report_carries_what_was_explored():
     out = run(FakeDevice(retry_limit=True))
-    d = runner.as_dict(out, SimpleNamespace(name="f", target="/f"))
+    d = runner.as_dict(out, SimpleNamespace(name="f", target="/f", flash=FakeDevice().flash))
     assert d["depth"]["levels"] == 2 and d["depth"]["states"] == len(deep(out))
     assert any(c["depth"] == 2 for c in d["cuts"])
 

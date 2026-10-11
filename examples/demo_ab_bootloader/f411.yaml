@@ -42,6 +42,7 @@ driver:
     image: prebuilt/f411_app_v2.img
     alive: "APP v[0-9]"
     expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    boot_timeout: 5                  # a recovery erases 128 KB again, and that alone is a second
     rollback:
       image: prebuilt/f411_app_v1.img
       forbidden: "APP v1"
@@ -56,6 +57,6 @@ oracle:
 
 scenario:
   name: update-v1-to-v2
-  cut_limit: 1                       # virtual seconds; the whole install takes far less
-  update_time: 0.5
+  cut_limit: 4                       # virtual seconds; the two sector erases take 1.25 s
+  update_time: 3
   plan: every                        # cut at every distinct flash state the update goes through

@@ -51,12 +51,16 @@ class StagedSlot:
         return name
 
     def _wait_for(self, pattern, seconds):
-        waited = 0.0
+        # the steps grow: a quick boot is seen at once, and a recovery that starts with a
+        # second-long erase does not cost a round trip to the emulator every 50 ms
+        waited, step = 0.0, 0.05
         while waited < seconds:
             if pattern.search(self.s.uart_text()):
                 return True
-            self.s.run_for(0.05)
-            waited += 0.05
+            step = min(step, seconds - waited)
+            self.s.run_for(step)
+            waited += step
+            step = min(step * 2, 0.2)
         return bool(pattern.search(self.s.uart_text()))
 
     def prepare(self):
