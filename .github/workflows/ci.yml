@@ -65,9 +65,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - adapter: adapter       # the correct build: every clean cut and every torn state
-            expect: 0
+          - adapter: adapter       # the correct build: every clean cut, every torn state,
+            expect: 0              # and a second cut during recovery
             torn: true
+            depth: 2
           - adapter: bug-consume_first
             expect: 1
           - adapter: bug-trust_header
@@ -81,6 +82,8 @@ jobs:
           - adapter: bug-no_unlock
             expect: 1
           - adapter: bug-resume_copy   # passes every clean cut; only torn states catch it
+            expect: 1
+          - adapter: bug-retry_limit   # passes any single cut; only two in a row catch it
             expect: 1
     name: demo (${{ matrix.adapter }})
     env:
@@ -115,6 +118,7 @@ jobs:
           flags=""
           if [ "${{ matrix.expect }}" = 1 ]; then flags="--fail-fast"; fi
           if [ "${{ matrix.torn }}" = true ]; then flags="$flags --torn"; fi
+          if [ -n "${{ matrix.depth }}" ]; then flags="$flags --depth ${{ matrix.depth }}"; fi
           set +e
           brickproof run examples/demo_ab_bootloader/${{ matrix.adapter }}.yaml $flags \
             --json brickproof-out/${{ matrix.adapter }}.json

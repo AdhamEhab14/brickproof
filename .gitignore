@@ -9,3 +9,6 @@ dist/
 
 # run output
 brickproof-out/
+
+# scratch adapters for local experiments
+_*.yaml

@@ -32,15 +32,16 @@ class FakeDevice:
     fault_at        bus fault when the update reaches this operation
     hang_on_boot    the CPU locks up on the boot after a cut
     nondeterministic  the second and later runs write a different halfword
+    retry_limit     gives up on the update after two attempts that did not finish
     """
 
     def __init__(self, lands_after=True, no_recovery=False, fault_at=None, hang_on_boot=False,
-                 nondeterministic=False, refuse=False, stray=False):
+                 nondeterministic=False, refuse=False, stray=False, retry_limit=False):
         self.flash = FlashGeometry(base=BASE, size=4 * PAGE, page=PAGE)
         self.mem = bytearray(staged_flash())
         self.opt = dict(lands_after=lands_after, no_recovery=no_recovery, fault_at=fault_at,
                         hang_on_boot=hang_on_boot, nondeterministic=nondeterministic,
-                        refuse=refuse, stray=stray)
+                        refuse=refuse, stray=stray, retry_limit=retry_limit)
         self.opcount = 0
         self.cutpoint = NEVER
         self.cut_page = NEVER
@@ -69,6 +70,13 @@ class FakeDevice:
 
     def _update_ops(self):
         ops = [("erase", SLOT)]
+        if self.opt["retry_limit"]:
+            # two marks next to the marker count the attempts. Both set: give up,
+            # which means dropping the update whatever state the slot is in.
+            first, second = self._half(MARKER + 4), self._half(MARKER + 6)
+            if first == 0 and second == 0:
+                return [("program", MARKER, 0)]
+            ops.insert(0, ("program", MARKER + (4 if first else 6), 0))
         for i in range(0, len(NEW_IMAGE), 2):
             ops.append(("program", SLOT + i, NEW_IMAGE[i] | (NEW_IMAGE[i + 1] << 8)))
         ops.append(("program", MARKER, 0))
