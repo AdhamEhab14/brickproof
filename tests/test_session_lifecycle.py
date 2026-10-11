@@ -18,6 +18,7 @@ class Standin(RenodeSession):
     """Starts a process that never opens a monitor port, so start-up fails."""
     STARTUP_WAIT = 0.5
     QUIT_WAIT = 0.5
+    START_TRIES = 1
     started = None
 
     def _bring_up(self):
@@ -62,3 +63,20 @@ def test_the_hang_limit_has_a_floor_a_ceiling_and_follows_the_machine():
     assert S.hang_limit(6.0, 2.0) == 240.0
     slow, fast = S.hang_limit(2.0, 8.0), S.hang_limit(2.0, 2.0)
     assert slow > fast, "a slower machine gets more time"
+
+
+def test_a_failed_start_is_tried_again(tmp_path):
+    class Flaky(RenodeSession):
+        QUIT_WAIT = 0.5
+        tries = 0
+
+        def _bring_up(self):
+            Flaky.tries += 1
+            self.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                         stdin=subprocess.PIPE)
+            if Flaky.tries == 1:
+                raise RuntimeError("Renode rejected something")
+
+    s = Flaky("unused", str(tmp_path), FLASH, [])
+    assert Flaky.tries == 2 and s.proc.poll() is None
+    s.close()

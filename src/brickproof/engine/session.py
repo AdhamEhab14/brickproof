@@ -158,16 +158,27 @@ class RenodeSession:
 
     STARTUP_WAIT = 90           # seconds to wait for Renode's monitor to answer
     QUIT_WAIT = 10              # seconds to let it exit by itself before it is killed
+    START_TRIES = 3
 
     def _start(self):
         """Bring Renode up. If anything on the way fails (a platform it rejects, memory
         sizes that do not match), the process must not be left running behind us."""
-        _live.add(self)
-        try:
-            self._bring_up()
-        except BaseException:
-            self.close()
-            raise
+        # One Renode is brought up at a time: several initialising at once collide (on
+        # the history file before it was moved, on Renode's temporary-files manager,
+        # "Access is denied"). The collision is in start-up only; once machines exist
+        # they run side by side. A failed start is tried again before giving up.
+        for attempt in range(self.START_TRIES):
+            _live.add(self)
+            try:
+                with _launch_lock:
+                    self._bring_up()
+                return
+            except BaseException as e:
+                self.close()
+                last = attempt == self.START_TRIES - 1
+                if last or not isinstance(e, (OSError, RuntimeError)):
+                    raise
+                time.sleep(1.0)
 
     def _bring_up(self):
         self.mon_port = free_port()
@@ -180,17 +191,22 @@ class RenodeSession:
         with open(config, "w") as f:
             f.write("[general]" + chr(10) + "history-path = %s" % os.path.join(self.workdir, "history")
                     + chr(10))
-        # one process at a time until its monitor answers: several Renodes starting in
-        # the same instant trip over each other. Everything after this runs in parallel.
-        with _launch_lock:
-            self.proc = subprocess.Popen(
-                [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port),
-                 "--config", config],
-                cwd=self.workdir, stdin=subprocess.PIPE,
-                stdout=open(self.log, "ab") if self.log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
-            self.mon = connect(self.mon_port, self.STARTUP_WAIT)
-            self._buf = b""
-            self._drain_banner()
+        # Its own temp folder too. Renode keeps `renode-<pid>` folders in the temp
+        # directory, and on start-up looks up the process of every one it finds there.
+        # A folder left by a Renode that was killed can carry a pid Windows has since
+        # given to a protected process, and then that look-up fails ("Access is denied")
+        # and the new Renode dies. Alone in its own folder it finds nothing to trip on,
+        # and what it leaves behind goes when the work folder does.
+        tmp = os.path.join(self.workdir, "tmp")
+        os.makedirs(tmp, exist_ok=True)
+        env = dict(os.environ, TMP=tmp, TEMP=tmp, TMPDIR=tmp)
+        self.proc = subprocess.Popen(
+            [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port), "--config", config],
+            cwd=self.workdir, stdin=subprocess.PIPE, env=env,
+            stdout=open(self.log, "ab") if self.log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        self.mon = connect(self.mon_port, self.STARTUP_WAIT)
+        self._buf = b""
+        self._drain_banner()
         self.cmd("logLevel 3")
         self.cmd('emulation CreateServerSocketTerminal %d "term" false' % self.uart_port)
         self.cmd('mach create "target"')
