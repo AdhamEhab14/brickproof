@@ -18,6 +18,8 @@ flash:
   size: 0x20000          # 128 KB
   page: 0x400            # 1 KB
   write_unit: 2          # halfword programming
+  write_protected:       # as deployed after the bootloader's "lock Boot Manager" command
+    - {from: 0x08000000, size: 0x4000}
 
 ram:
   size: 0x5000         # 20 KB. Not optional: extra emulated RAM hides stack faults

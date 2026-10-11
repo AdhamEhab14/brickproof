@@ -59,7 +59,24 @@ def write_jsonl(ops, path):
             f.write(json.dumps(row) + "\n")
 
 
-def value_before(ops, index, pre, flash_base, page):
+def locate(addr, flash):
+    """(offset, erase size) of an address in a flash image. The image is the flash,
+    then the option bytes where the chip has them; erasing those wipes all of them."""
+    ob = getattr(flash, "ob_base", None)
+    if ob is not None and addr >= ob:
+        return flash.size + (addr - ob), flash.ob_size
+    return addr - flash.base, flash.page
+
+
+def erase_start(addr, flash):
+    """The address an erase of the unit holding `addr` starts at."""
+    ob = getattr(flash, "ob_base", None)
+    if ob is not None and addr >= ob:
+        return ob
+    return addr & ~(flash.page - 1)
+
+
+def value_before(ops, index, pre, flash):
     """The halfword at ops[index]'s address as it was just before that operation:
     what the last earlier program put there, 0xFFFF if its page was erased since,
     else what the flash image `pre` held before the update started."""
@@ -69,9 +86,11 @@ def value_before(ops, index, pre, flash_base, page):
         if op["kind"] == "program":
             if op["addr"] == addr and "value" in op:
                 return op["value"]
-        elif op["kind"] == "mass_erase" or (op["kind"] == "erase" and op["addr"] == addr & ~(page - 1)):
+        elif op["kind"] == "mass_erase" and addr < flash.base + flash.size:
             return 0xFFFF
-    off = addr - flash_base
+        elif op["kind"] == "erase" and op["addr"] == erase_start(addr, flash):
+            return 0xFFFF
+    off, _ = locate(addr, flash)
     return pre[off] | (pre[off + 1] << 8)
 
 
@@ -82,10 +101,11 @@ class Replay:
 
     A program stores its value as the emulator does. Real flash can only clear bits,
     but firmware only programs erased cells (or writes 0), where the two agree.
+    Operations the chip refused (not erased, or write-protected) change nothing.
     """
 
-    def __init__(self, pre, ops, flash_base, page):
-        self.pre, self.ops, self.base, self.page = pre, ops, flash_base, page
+    def __init__(self, pre, ops, flash):
+        self.pre, self.ops, self.flash = pre, ops, flash
         self.n = 0
         self.image = bytearray(pre)
 
@@ -93,12 +113,13 @@ class Replay:
         if n < self.n:
             self.n, self.image = 0, bytearray(self.pre)
         for op in self.ops[self.n:n]:
-            off = op["addr"] - self.base
             if op["kind"] == "erase":
-                self.image[off:off + self.page] = b"\xFF" * self.page
+                off, size = locate(op["addr"], self.flash)
+                self.image[off:off + size] = bytes([0xFF]) * size
             elif op["kind"] == "mass_erase":
-                self.image[:] = b"\xFF" * len(self.image)
-            elif op["kind"] == "program" and "value" in op:     # a refused one changes nothing
+                self.image[:self.flash.size] = bytes([0xFF]) * self.flash.size
+            elif op["kind"] == "program" and "value" in op:
+                off, _ = locate(op["addr"], self.flash)
                 self.image[off] = op["value"] & 0xFF
                 self.image[off + 1] = op["value"] >> 8
         self.n = n

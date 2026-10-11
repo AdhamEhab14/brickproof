@@ -78,27 +78,28 @@ class Plan:
                             "distinct_states": p.distinct, "cuts": len(p.cuts)} for p in self.phases]}
 
 
-def changes(ops, pre, flash_base, page):
+def changes(ops, pre, flash):
     """For each operation: did it change flash? Replays the update on the image from
     before it, so an erase of an erased page and a program of the value already there
     both count as no change."""
     image = bytearray(pre)
-    erased = b"\xFF" * page
     out = []
     for op in ops:
-        off = op["addr"] - flash_base
         if op["kind"] == "erase":
-            out.append(image[off:off + page] != erased)
-            image[off:off + page] = erased
+            off, size = traces.locate(op["addr"], flash)
+            erased = bytes([0xFF]) * size
+            out.append(image[off:off + size] != erased)
+            image[off:off + size] = erased
         elif op["kind"] == "mass_erase":
-            out.append(any(b != 0xFF for b in image))
-            image[:] = b"\xFF" * len(image)
+            out.append(any(b != 0xFF for b in image[:flash.size]))
+            image[:flash.size] = bytes([0xFF]) * flash.size
         elif op["kind"] == "program" and "value" in op:
+            off, _ = traces.locate(op["addr"], flash)
             lo, hi = op["value"] & 0xFF, op["value"] >> 8
             out.append(image[off] != lo or image[off + 1] != hi)
             image[off], image[off + 1] = lo, hi
         else:
-            out.append(False)           # refused, or it wrote what was already there
+            out.append(False)           # refused, protected, or it wrote what was already there
     return out
 
 
@@ -121,7 +122,7 @@ def make(ops, pre, flash, mode="phases", per_phase=8, small=12):
     """
     if mode not in MODES:
         raise ValueError("plan mode must be one of %s, not %r" % (", ".join(MODES), mode))
-    changed = changes(ops, pre, flash.base, flash.page)
+    changed = changes(ops, pre, flash)
     # cutting before op n shows a new state only if op n-1 changed something
     # (op 0 always does: it is the flash the update started from)
     new_state = [n == 0 or changed[n - 1] for n in range(len(ops))]

@@ -33,6 +33,7 @@ BOOTLOADERS = {
     "bootloader_bug_no_unlock": ["-DBUG_NO_UNLOCK"],
     "bootloader_bug_resume_copy": ["-DBUG_RESUME_COPY"],
     "bootloader_bug_retry_limit": ["-DBUG_RETRY_LIMIT"],
+    "bootloader_bug_self_lock": ["-DBUG_SELF_LOCK"],
 }
 APP_VERSIONS = (1, 2)
 META_MAGIC = 0x4D455441

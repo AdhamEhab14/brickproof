@@ -98,7 +98,7 @@ def test_demo_uses_the_builtin_driver():
 
 @pytest.mark.parametrize("bug", ["consume_first", "trust_header", "naive_floor", "pop_after_switch",
                                  "no_erase", "no_unlock", "resume_copy",
-                                 "retry_limit"])
+                                 "retry_limit", "self_lock"])
 def test_bug_variants_extend_the_demo(bug):
     base = adapters.load(os.path.join(DEMO, "adapter.yaml"))
     ad = adapters.load(os.path.join(DEMO, "bug-%s.yaml" % bug))
@@ -121,3 +121,51 @@ def test_extends_merges_mappings_and_replaces_lists(tmp_path):
 def test_ram_size_is_required(tmp_path):
     with pytest.raises(adapters.AdapterError, match="ram"):
         adapters.load(write(tmp_path, **{"ram: {size: 0x5000}\n": ""}))
+
+
+# ---- option bytes and write protection ------------------------------------------
+
+def option_bytes(tmp_path, flash_extra=""):
+    text = MINIMAL.replace("flash: {base: 0x08000000, size: 0x10000, page: 0x400}",
+                           "flash: {base: 0x08000000, size: 0x20000, page: 0x400%s}" % flash_extra)
+    p = tmp_path / "adapter.yaml"
+    p.write_text(text)
+    return adapters.load(str(p)).flash
+
+
+def test_option_bytes_default_to_an_unprotected_chip(tmp_path):
+    f = option_bytes(tmp_path)
+    assert f.ob_base == 0x1FFFF800 and f.ob_size == 16 and f.image_size == 0x20000 + 16
+    assert f.option_bytes == bytes([0xA5, 0x5A, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
+                                    0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00])
+
+
+def test_write_protected_ranges_clear_their_wrp_bits(tmp_path):
+    f = option_bytes(tmp_path, ", write_protected: [{from: 0x08000000, size: 0x2000}, "
+                               "{from: 0x08008000, size: 0x1000}]")
+    wrp = f.option_bytes[8] | f.option_bytes[10] << 8 | f.option_bytes[12] << 16 | f.option_bytes[14] << 24
+    assert wrp == 0xFFFFFFFF & ~0b11 & ~(1 << 8)
+    for i in range(0, 16, 2):
+        assert f.option_bytes[i] ^ f.option_bytes[i + 1] == 0xFF, "each byte has its complement"
+
+
+def test_read_protection_changes_the_rdp_byte(tmp_path):
+    assert option_bytes(tmp_path, ", read_protected: true").option_bytes[0] != 0xA5
+
+
+@pytest.mark.parametrize("ranges,text", [
+    ("[{from: 0x08000400, size: 0x1000}]", "units of 0x1000"),
+    ("[{from: 0x08000000, size: 0x0800}]", "units of 0x1000"),
+    ("[{from: 0x08020000, size: 0x1000}]", "outside the flash"),
+    ("[{from: 0x08000000}]", "size"),
+])
+def test_bad_write_protection_is_rejected(tmp_path, ranges, text):
+    with pytest.raises(adapters.AdapterError, match=text):
+        option_bytes(tmp_path, ", write_protected: %s" % ranges)
+
+
+def test_the_demo_ships_with_its_bootloader_locked_and_one_variant_unlocked():
+    wrp0 = adapters.load(os.path.join(DEMO, "adapter.yaml")).flash.option_bytes[8]
+    assert wrp0 == 0xFC
+    unlocked = adapters.load(os.path.join(DEMO, "bug-self_lock.yaml")).flash.option_bytes[8]
+    assert unlocked == 0xFF

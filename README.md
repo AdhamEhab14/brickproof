@@ -94,6 +94,8 @@ brickproof run examples/demo_ab_bootloader/bug-consume_first.yaml --fail-fast
 | `bug-no_erase` | copies the new image over the old one without erasing | the chip refuses to program cells that are not erased |
 | `bug-no_unlock` | never unlocks the flash controller | the chip ignores every write: the update silently does nothing |
 | `bug-resume_copy` | after an interrupted install, skips the erase and writes only what is missing | survives all 167 clean cuts; a torn state leaves a half-written cell the chip will not program again |
+| `bug-protected_slot` | (a device setting, not code) the app slot is write-protected | the chip refuses every erase and program there; the update cannot happen |
+| `bug-self_lock` | write-protects its own pages from the bootloader, in the field | a cut between erasing and rewriting the option bytes leaves the chip read-protected, and the retry mass-erases the flash |
 | `bug-retry_limit` | gives up on an update after two interrupted attempts | survives any single cut, clean or torn; two cuts in a row leave no image |
 
 The last three are not power-loss bugs. They are mistakes a plain emulator lets through and a
