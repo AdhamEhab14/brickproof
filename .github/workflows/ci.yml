@@ -85,6 +85,10 @@ jobs:
             expect: 1
           - adapter: bug-retry_limit   # passes any single cut; only two in a row catch it
             expect: 1
+          - adapter: bug-protected_slot   # the app slot write-protected by mistake
+            expect: 1
+          - adapter: bug-self_lock     # option bytes rewritten in the field: a cut wipes the chip
+            expect: 1
     name: demo (${{ matrix.adapter }})
     env:
       RENODE_VERSION: "1.17.0"

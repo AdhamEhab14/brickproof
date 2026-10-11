@@ -36,13 +36,13 @@ def test_an_operation_that_changes_nothing_adds_no_state():
     # erase a used page, erase an already-erased page, program data, program 0xFFFF over erased
     ops = [erase(0, BASE + PAGE), erase(1, BASE + 2 * PAGE),
            prog(2, BASE + PAGE, 0xBEEF), prog(3, BASE + PAGE + 2, 0xFFFF)]
-    assert plans.changes(ops, bytes(pre), BASE, PAGE) == [True, False, True, False]
+    assert plans.changes(ops, bytes(pre), FLASH) == [True, False, True, False]
 
 
 def test_refused_and_inferred_programs_change_nothing():
     ops = [{"index": 0, "kind": "refused", "addr": BASE, "value": 1, "old": 2},
            {"index": 1, "kind": "program", "addr": BASE + 2, "inferred": True}]
-    assert plans.changes(ops, blank(), BASE, PAGE) == [False, False]
+    assert plans.changes(ops, blank(), FLASH) == [False, False]
 
 
 def test_every_cuts_each_distinct_state_and_nothing_else():

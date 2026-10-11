@@ -35,6 +35,11 @@
  *   BUG_RETRY_LIMIT       give up on an update after two interrupted attempts. Survives
  *                         any single power cut. Two cuts in a row, the second during
  *                         the recovery from the first, leave no image at all.
+ *   BUG_SELF_LOCK         write-protect the bootloader's own pages from the bootloader,
+ *                         in the field. Option bytes are erased before they are written
+ *                         back. A cut in between leaves the chip read-protected, and
+ *                         when the next boot writes "unprotected" again the chip
+ *                         answers by mass-erasing the flash.
  */
 #include "demo.h"
 
@@ -47,6 +52,11 @@
 #define CR_STRT     (1u << 6)
 #define CR_LOCK     (1u << 7)
 #define SR_BSY      (1u << 0)
+#define FLASH_OPTKEYR REG(0x40022008u)
+#define FLASH_WRPR  REG(0x40022020u)
+#define CR_OPTPG    (1u << 4)
+#define CR_OPTER    (1u << 5)
+#define OPTION_BYTES 0x1FFFF800u
 
 #define META_MAGIC  0x4D455441u   /* "ATEM" */
 
@@ -129,6 +139,35 @@ static int same_image(uint32_t a, uint32_t b)
 {
     return hdr(a)->version == hdr(b)->version && hdr(a)->crc == hdr(b)->crc;
 }
+
+#ifdef BUG_SELF_LOCK
+/* Write-protect the bootloader's own two 4 KB units, the usual way on an F1:
+ * erase the option bytes, then write all of them back. */
+static void lock_bootloader(void)
+{
+    static const uint16_t bytes[8] = {
+        0x00A5,                 /* RDP: not read-protected */
+        0x00FF, 0x00FF, 0x00FF, /* USER, Data0, Data1 */
+        0x00FC,                 /* WRP0: units 0 and 1 protected */
+        0x00FF, 0x00FF, 0x00FF, /* WRP1..WRP3 */
+    };
+
+    if ((FLASH_WRPR & 3u) == 0)
+        return;                 /* already done */
+    FLASH_OPTKEYR = 0x45670123u;
+    FLASH_OPTKEYR = 0xCDEF89ABu;
+    FLASH_CR |= CR_OPTER;
+    FLASH_CR |= CR_STRT;
+    flash_wait();
+    FLASH_CR &= ~CR_OPTER;
+    for (uint32_t i = 0; i < 8; i++) {
+        FLASH_CR |= CR_OPTPG;
+        *(volatile uint16_t *)(OPTION_BYTES + 2 * i) = bytes[i];
+        flash_wait();
+        FLASH_CR &= ~CR_OPTPG;
+    }
+}
+#endif
 
 /* Clear Slot B's magic. Programming 0x0000 over a written halfword is allowed
  * on the F1, so this is one cheap operation and needs no erase. */
@@ -219,6 +258,9 @@ static void install(void)
 #endif
 #ifndef BUG_NO_UNLOCK
     flash_unlock();
+#endif
+#ifdef BUG_SELF_LOCK
+    lock_bootloader();
 #endif
 #ifdef BUG_RETRY_LIMIT
     /* Count install attempts with two marks in the staged image's unused header

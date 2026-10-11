@@ -16,6 +16,8 @@ flash:
   size: 0x20000          # 128 KB
   page: 0x400            # 1 KB
   write_unit: 2
+  write_protected:                   # as shipped: the bootloader's own 8 KB are locked
+    - {from: 0x08000000, size: 0x2000}
 
 ram:
   size: 0x5000         # 20 KB. Not optional: extra emulated RAM hides stack faults

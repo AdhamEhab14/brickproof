@@ -71,7 +71,7 @@ class Golden:
         r = getattr(self._local, "replay", None)
         if r is None:
             f = self.flash
-            r = self._local.replay = traces.Replay(self.pre, self.ops, f.base, f.page)
+            r = self._local.replay = traces.Replay(self.pre, self.ops, f)
         return r
 
     def verify(self, session, n, what):
@@ -85,7 +85,8 @@ class Golden:
             raise SelfCheckFailed(
                 "%s: flash differs from the golden run replayed to op %d, first at 0x%08X "
                 "(is 0x%02X, expected 0x%02X). If the update is not deterministic, set "
-                "scenario.check_states: false" % (what, n, addr, got, want[addr - self.flash.base]))
+                "scenario.check_states: false" % (
+                    what, n, addr, got, want[traces.locate(addr, self.flash)[0]]))
 
 
 def _fault_message(session):
@@ -97,6 +98,10 @@ def _fault_message(session):
     if v["refused"]:
         return ("flash rule broken: %d program(s) over cells that were not erased, first at "
                 "0x%08X. An STM32F1 refuses these (PGERR) and keeps the old value" % v["refused"])
+    if v.get("protected"):
+        return ("write protection: %d erase or program operation(s) in write-protected flash "
+                "were refused, first at 0x%08X. The option bytes protect that page, so the "
+                "chip changes nothing there" % v["protected"])
     if v["stray"]:
         return ("flash changed at 0x%08X with no flash operation behind it (a store with PG "
                 "clear or the controller locked). The chip ignores such a write" % v["stray"])
@@ -114,9 +119,11 @@ def _rewind_program(session, golden, res):
     op = golden.ops[res.op_index]
     if "value" not in op:
         return                                             # it wrote what was already there
-    f = golden.flash
-    before = traces.value_before(golden.ops, res.op_index, golden.pre, f.base, f.page)
-    if before != op["value"] and session.read_half(res.addr) == op["value"]:
+    before = traces.value_before(golden.ops, res.op_index, golden.pre, golden.flash)
+    # Compared with what was there before, not with the traced value: the two can differ
+    # at this instant. An option byte is traced as the chip stores it (the byte and its
+    # complement), but until the program is settled the cell holds what was written.
+    if session.read_half(res.addr) != before:
         session.write_half(res.addr, before)
         res.rewound = True
 

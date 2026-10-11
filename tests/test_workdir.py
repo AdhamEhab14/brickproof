@@ -91,7 +91,10 @@ def test_the_flash_model_gets_a_shadow_as_big_as_the_flash(tmp_path):
     ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
     wd.prepare(str(tmp_path), ad)
     repl = (tmp_path / "platform.repl").read_text()
-    assert "bpShadow: Memory.MappedMemory @ sysbus 0x91000000\n    size: 0x20000\n" in repl
+    # room for the flash and, after it, the option bytes
+    assert "bpShadow: Memory.MappedMemory @ sysbus 0x91000000\n    size: 0x21000\n" in repl
     assert "bpState: Memory.MappedMemory @ sysbus 0x90000000" in repl
+    assert "bpOptionBytes: Memory.MappedMemory @ sysbus 0x1FFFF800" in repl
     model = (tmp_path / "models" / "stm32f1_flash.py").read_text()
+    assert "\nOB_BASE = 0x1FFFF800\n" in model and "\nWRP_UNIT = 0x1000\n" in model
     assert 'TRACE_FILE = "%s/trace.txt"' % str(tmp_path).replace("\\", "/") in model

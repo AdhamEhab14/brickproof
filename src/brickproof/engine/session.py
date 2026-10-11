@@ -41,8 +41,11 @@ REG_RESYNC = 0x138
 REG_COMPARE = 0x13C
 REG_CMP_FROM = 0x140
 REG_CMP_LEN = 0x144
+REG_PROTECTED = 0x148
+REG_PROTECTED_AT = 0x14C
 EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to compare flash with
-TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused"}
+TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
+               "W": "protected"}
 NEVER = 0xFFFFFFFF
 
 CUT_ERASE = 1
@@ -73,6 +76,20 @@ class FlashGeometry:
     page: int
     write_unit: int = 2
     controller: int = 0x40022000
+    # Option bytes, where the chip has them: their address, and what they hold when a
+    # test starts. A flash image is then the flash followed by these bytes, so a change
+    # to them is saved, restored, replayed and compared like any other.
+    ob_base: int = None
+    option_bytes: bytes = b""
+    wrp_unit: int = 0x1000      # how much flash one write-protection bit covers
+
+    @property
+    def ob_size(self):
+        return len(self.option_bytes) if self.ob_base is not None else 0
+
+    @property
+    def image_size(self):
+        return self.size + self.ob_size
 
 
 SLOWEST_START = 6.0     # assume a slow machine until this one has been measured
@@ -212,8 +229,9 @@ class RenodeSession:
         self.cmd('mach create "target"')
         self.cmd("machine LoadPlatformDescription @platform.repl")
         self._check_memory_sizes()
-        # Renode's flash starts as 0x00; real erased flash reads 0xFF
-        self.restore_flash(b"\xFF" * self.flash.size, "erased.bin")
+        # Renode's flash starts as 0x00; real erased flash reads 0xFF. The option bytes
+        # go in with it, before anything reads them.
+        self.restore_flash(bytes([0xFF]) * self.flash.size + self.flash.option_bytes, "erased.bin")
         for rel, addr in self.firmware:
             if rel.lower().endswith(".elf"):
                 self.cmd("sysbus LoadELF @%s" % rel)
@@ -387,23 +405,39 @@ class RenodeSession:
         return data
 
     def dump_flash(self):
-        """The whole flash as bytes (slow: several seconds for 128 KB)."""
-        return self.read_bytes(self.flash.base, self.flash.size)
+        """The whole flash image as bytes: the flash, then the option bytes if the chip
+        has them (slow: a few seconds for 128 KB)."""
+        image = self.read_bytes(self.flash.base, self.flash.size)
+        if self.flash.ob_size:
+            image += self.read_bytes(self.flash.ob_base, self.flash.ob_size)
+        return image
 
     def restore_flash(self, data, name="flash_restore.bin"):
         """Replace the whole flash with `data` and forget what the flash checks had seen.
         Renode snapshots crash with Python peripherals, so this is how a run goes back
         to a known state."""
-        with open(os.path.join(self.workdir, name), "wb") as f:
-            f.write(data)
-        self.cmd_batch(["sysbus LoadBinary @%s 0x%X" % (name, self.flash.base), self._set(REG_RESYNC, 1)]
-                       + self._clear_checks())
+        f = self.flash
+        with open(os.path.join(self.workdir, name), "wb") as out:
+            out.write(data[:f.size])
+        lines = ["sysbus LoadBinary @%s 0x%X" % (name, f.base)]
+        if f.ob_size and len(data) > f.size:
+            with open(os.path.join(self.workdir, "ob_" + name), "wb") as out:
+                out.write(data[f.size:f.size + f.ob_size])
+            lines.append("sysbus LoadBinary @ob_%s 0x%X" % (name, f.ob_base))
+        self.cmd_batch(lines + [self._set(REG_RESYNC, 1)] + self._clear_checks())
 
     def flash_mismatch(self, expected, name="flash_expect.bin"):
         """First address where flash differs from `expected` (a whole-flash image), or
         None. The comparison runs inside the flash model, on the whole flash: loading
         a file is fast, reading memory back as text is not."""
-        return self.image_mismatch(expected, self.flash.base, name, whole=True)
+        f = self.flash
+        addr = self.image_mismatch(expected[:f.size], f.base, name, whole=True)
+        if addr is None and f.ob_size and len(expected) > f.size:
+            now = self.read_bytes(f.ob_base, f.ob_size)
+            for i in range(f.ob_size):
+                if now[i] != expected[f.size + i]:
+                    return f.ob_base + i
+        return addr
 
     def image_mismatch(self, data, addr, name="image_expect.bin", whole=False):
         """First address where flash at `addr` differs from `data`, or None if that
@@ -493,13 +527,16 @@ class RenodeSession:
           fault    (address, pc): it touched memory the chip does not have
           refused  (count, first address): programs over cells that were not erased
           stray    first address where flash changed with no flash operation behind it
+          protected  (count, first address): erases or programs in write-protected pages
         Each is None when clean. A power cycle clears the fault; restore_flash the rest."""
-        fa, fpc, n, at, stray = self._values(self.cmd_batch(
+        fa, fpc, n, at, stray, wn, wat = self._values(self.cmd_batch(
             [self._get(REG_FAULT_ADDR), self._get(REG_FAULT_PC), self._get(REG_REFUSED),
-             self._get(REG_REFUSED_AT), self._set(REG_AUDIT, 1), self._get(REG_AUDIT)]))
+             self._get(REG_REFUSED_AT), self._set(REG_AUDIT, 1), self._get(REG_AUDIT),
+             self._get(REG_PROTECTED), self._get(REG_PROTECTED_AT)]))
         return {"fault": (fa, fpc) if fa else None,
                 "refused": (n, at) if n else None,
-                "stray": stray or None}
+                "stray": stray or None,
+                "protected": (wn, wat) if wn else None}
 
     def bus_fault(self):
         return self.violations()["fault"]
@@ -511,7 +548,8 @@ class RenodeSession:
         self.write_word(self._ctl(REG_RESYNC), 1)
 
     def _clear_checks(self):
-        return [self._set(reg, 0) for reg in (REG_AUDIT, REG_REFUSED, REG_REFUSED_AT)]
+        return [self._set(reg, 0) for reg in (REG_AUDIT, REG_REFUSED, REG_REFUSED_AT, REG_PROTECTED,
+                                             REG_PROTECTED_AT)]
 
     # ---- the golden-run trace ---------------------------------------------
 

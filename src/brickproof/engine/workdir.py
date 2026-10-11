@@ -102,16 +102,25 @@ def prepare(workdir, adapter):
         text = open(os.path.join(MODELS, name)).read()
         if name.endswith("_flash.py"):
             text = patch_geometry(text, adapter.flash)
+            if adapter.flash.ob_base is not None:
+                text = _set_const(text, "OB_BASE", adapter.flash.ob_base)
+                text = _set_const(text, "OB_SIZE", adapter.flash.ob_size)
+                text = _set_const(text, "WRP_UNIT", adapter.flash.wrp_unit)
             text = _set_trace_file(text, "%s/%s" % (_slash(workdir), TRACE_NAME))
         with open(os.path.join(models, name), "w", newline="\n") as f:
             f.write(text)
 
     repl = platform_text(adapter.platform, models, adapter.platform_extra, adapter.folder,
                          memory_sizes(adapter))
-    # the flash model's two private copies of flash (see its header), as big as the flash
+    # the flash model's two private copies of the flash image (see its header): the
+    # flash, with room after it for the option bytes
     for name, base in (("bpShadow", SHADOW_BASE), ("bpExpect", EXPECT_BASE)):
         repl += "\n%s: Memory.MappedMemory @ sysbus 0x%X\n    size: 0x%X\n" % (
-            name, base, adapter.flash.size)
+            name, base, adapter.flash.size + 0x1000)
+    # the option bytes themselves, at their real address
+    if adapter.flash.ob_base is not None:
+        repl += "\nbpOptionBytes: Memory.MappedMemory @ sysbus 0x%X\n    size: 0x800\n" % (
+            adapter.flash.ob_base)
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):
         text = _set_const(guard, "GUARD_BASE", base)

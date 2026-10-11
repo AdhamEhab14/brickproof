@@ -21,6 +21,8 @@ half-done operation is applied to that image. The device is then powered up from
 import random
 from dataclasses import dataclass
 
+from brickproof import trace as traces
+
 ERASE_KINDS = ("erase-half", "erase-partial", "erase-almost")
 PROGRAM_KINDS = ("program-low", "program-high", "program-partial")
 KINDS = ERASE_KINDS + PROGRAM_KINDS
@@ -67,7 +69,7 @@ def states(op, before, flash, kinds=KINDS, seed=0):
     """The torn states of one traced operation. `before` is the whole flash just before
     it. States equal to the flash before or after the operation are left out (those
     are the clean cuts), and so are duplicates of each other."""
-    off = op["addr"] - flash.base
+    off, unit = traces.locate(op["addr"], flash)
     out, seen = [], set()
 
     def add(kind, image):
@@ -76,12 +78,12 @@ def states(op, before, flash, kinds=KINDS, seed=0):
             out.append(TornState(kind, op["index"], op["addr"], image))
 
     if op["kind"] == "erase":
-        page = bytes(before[off:off + flash.page])
-        after = bytes([0xFF]) * flash.page
+        page = bytes(before[off:off + unit])
+        after = bytes([0xFF]) * unit
         for kind in ERASE_KINDS:
             torn = _torn_erases(page, _rng(seed, op["index"], kind))[kind]
             if torn != after:
-                add(kind, bytes(before[:off]) + torn + bytes(before[off + flash.page:]))
+                add(kind, bytes(before[:off]) + torn + bytes(before[off + unit:]))
     elif op["kind"] == "program" and "value" in op:
         old = before[off] | (before[off + 1] << 8)
         for kind in PROGRAM_KINDS:

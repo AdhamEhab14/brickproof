@@ -15,6 +15,9 @@ from brickproof.torn import KINDS as TORN_KINDS
 
 PLATFORMS = ("stm32f103",)
 
+# per platform: where the option bytes are, and how much flash one WRP bit covers
+OPTION_BYTES = {"stm32f103": (0x1FFFF800, 0x1000)}
+
 
 class AdapterError(ValueError):
     pass
@@ -77,6 +80,32 @@ class Adapter:
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
         return mod.make_driver(session, self)
+
+
+def stm32f1_option_bytes(flash, protected, read_protected):
+    """The 16 option bytes of an STM32F1 as the chip holds them: RDP, USER, Data0,
+    Data1, WRP0..WRP3, each followed by its complement. `protected` is a list of
+    {from, size} ranges to write-protect; a cleared WRP bit protects its unit."""
+    unit = flash.wrp_unit
+    wrp = 0xFFFFFFFF
+    for i, r in enumerate(protected):
+        where = "flash.write_protected[%d]" % i
+        start, size = _need(r, "from", where), _need(r, "size", where)
+        if start < flash.base or start + size > flash.base + flash.size or size <= 0:
+            raise AdapterError("%s: outside the flash" % where)
+        if (start - flash.base) % unit or size % unit:
+            raise AdapterError("%s: write protection goes in units of 0x%X on this chip"
+                               % (where, unit))
+        for u in range((start - flash.base) // unit, (start - flash.base + size) // unit):
+            if u >= 31 and (start - flash.base + size) < flash.size:
+                raise AdapterError("%s: the last protection bit covers everything from 0x%08X "
+                                   "to the end of flash, all or nothing" % (where, flash.base + 31 * unit))
+            wrp &= ~(1 << min(u, 31))
+    out = bytearray()
+    for data in (0x00 if read_protected else 0xA5, 0xFF, 0xFF, 0xFF,
+                 wrp & 0xFF, (wrp >> 8) & 0xFF, (wrp >> 16) & 0xFF, (wrp >> 24) & 0xFF):
+        out += bytes([data, ~data & 0xFF])
+    return bytes(out)
 
 
 def _need(d, key, where):
@@ -250,6 +279,10 @@ def load(path, target=None):
                           page=_need(fl, "page", "flash"), write_unit=fl.get("write_unit", 2))
     if flash.size % flash.page:
         raise AdapterError("flash.size must be a whole number of pages")
+    ob_base, flash.wrp_unit = OPTION_BYTES[base]
+    flash.ob_base = ob_base
+    flash.option_bytes = stm32f1_option_bytes(flash, fl.get("write_protected") or [],
+                                              bool(fl.get("read_protected", False)))
 
     # RAM size is not optional: an emulator with more RAM than the chip hides
     # real faults (a stack access past the end of RAM just works)
