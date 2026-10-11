@@ -42,6 +42,11 @@ states, and tells you how many there are and how many it covered. The demo is cu
 one (`plan: every`). A long update can be cut at every state of its short phases and sampled
 in its long ones (`plan: phases`), and the report says exactly which phases were sampled.
 
+Power does not always fail between two operations. With `--torn` (or `torn: true` in the
+adapter) BrickProof also boots the device from torn states: an erase with only some of its
+bits flipped, a halfword with only some of its bits written. These shapes follow what flash
+cells do but are a model, not a measurement, so they are reported on their own line.
+
 The verdict does not rest on what the firmware says about itself. An oracle checks from
 outside that the bytes installed are exactly an approved image and that the CPU is running
 inside it, not sitting in a fault handler. `runs v2` at the end of a line is its finding.
@@ -84,6 +89,7 @@ brickproof run examples/demo_ab_bootloader/bug-consume_first.yaml --fail-fast
 | `bug-pop_after_switch` | pops saved registers after switching to the app's stack | reads past the end of RAM: bus fault on every boot, no cut needed |
 | `bug-no_erase` | copies the new image over the old one without erasing | the chip refuses to program cells that are not erased |
 | `bug-no_unlock` | never unlocks the flash controller | the chip ignores every write: the update silently does nothing |
+| `bug-resume_copy` | after an interrupted install, skips the erase and writes only what is missing | survives all 167 clean cuts; a torn state leaves a half-written cell the chip will not program again |
 
 The last three are not power-loss bugs. They are mistakes a plain emulator lets through and a
 real chip does not, so they fail before any cut is made. The stack one was found by a real
@@ -113,6 +119,7 @@ Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103).
 | `src/brickproof/models/` | Flash controller models that count operations and cut power (STM32F1 so far) |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
 | `src/brickproof/plan.py` | The cut planner: distinct flash states, exhaustive or sampled |
+| `src/brickproof/torn.py` | Torn states: an erase or a program left half done |
 | `src/brickproof/oracle.py` | The outside judge: approved image installed, and really running |
 | `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |

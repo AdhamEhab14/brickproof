@@ -120,7 +120,7 @@ class FakeDevice:
 
     def restore_flash(self, data):
         self.mem[:] = data
-        self.was_cut = False
+        self.was_cut = bytes(data) != staged_flash()    # anything else is a state a cut left
         self.refused = self.stray = None
 
     def power_cycle(self, settle=0):
