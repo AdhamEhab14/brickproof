@@ -115,7 +115,7 @@ jobs:
       - name: Cut power during the demo update
         run: |
           export RENODE_PATH="$HOME/renode/renode"
-          flags=""
+          flags="-j 3"                # the runner has four cores
           if [ "${{ matrix.expect }}" = 1 ]; then flags="--fail-fast"; fi
           if [ "${{ matrix.torn }}" = true ]; then flags="$flags --torn"; fi
           if [ -n "${{ matrix.depth }}" ]; then flags="$flags --depth ${{ matrix.depth }}"; fi
@@ -184,7 +184,7 @@ jobs:
       - name: Pull the plug during the FBL self-update
         run: |
           export RENODE_PATH="$HOME/renode/renode"
-          brickproof run adapters/three_tier_f103/adapter.yaml --target target --torn --json brickproof-out/three_tier.json --junit brickproof-out/three_tier.xml --html brickproof-out/three_tier.html
+          brickproof run adapters/three_tier_f103/adapter.yaml --target target --torn --depth 2 -j 3 --json brickproof-out/three_tier.json --junit brickproof-out/three_tier.xml --html brickproof-out/three_tier.html
 
       - name: Upload results
         if: always()
