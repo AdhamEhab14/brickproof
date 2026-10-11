@@ -4,6 +4,7 @@ import hashlib
 import os
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 
@@ -14,6 +15,7 @@ from brickproof import torn as torns
 from brickproof import trace as traces
 from brickproof.adapter import Cut
 from brickproof.engine import workdir as wd
+from brickproof.pool import Pool
 from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
 
 KIND_NAMES = {0: "none", 1: "erase", 2: "program"}
@@ -36,6 +38,7 @@ class CutResult:
     image: str = None           # the approved image the oracle found installed
     torn: str = None            # set for a torn state: which shape (see torn.py)
     depth: int = 1              # 2 = a second cut, during the recovery from a first one
+    computed: bool = False      # powered up from the computed flash state, not cut in the emulator
     message: str = ""
     seconds: float = 0.0
 
@@ -55,12 +58,21 @@ class Golden:
         self.pre = pre
         self.check = adapter.check_states
         self.ops = []
-        self.replay = None
+        self._local = threading.local()
 
     def record(self, ops):
-        f = self.flash
         self.ops = ops
-        self.replay = traces.Replay(self.pre, ops, f.base, f.page)
+        self._local = threading.local()
+
+    @property
+    def replay(self):
+        """The golden run replayed to any operation. One per thread: a replay keeps its
+        place, and several emulators' threads ask for different places at once."""
+        r = getattr(self._local, "replay", None)
+        if r is None:
+            f = self.flash
+            r = self._local.replay = traces.Replay(self.pre, self.ops, f.base, f.page)
+        return r
 
     def verify(self, session, n, what):
         """Compare the whole real flash with the replay just before operation n."""
@@ -237,6 +249,27 @@ def run_torn(session, driver, adapter, state, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+def run_computed(session, driver, adapter, cut, golden):
+    """A clean cut without running the update up to it: power the device up from the
+    flash the golden run predicts just before that operation. It is the same test,
+    because only flash survives a power cut, and every cut that IS made in the emulator
+    checks that prediction byte for byte."""
+    op = golden.ops[cut.at_op]
+    res = CutResult(cut=cut.name, fired=True, kind=op["kind"], addr=op["addr"], op_index=cut.at_op,
+                    computed=True)
+    t0 = time.time()
+    try:
+        session.restore_flash(bytes(golden.replay.at(cut.at_op)))
+        _verdict(session, driver, adapter, res, golden.oracle)
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        res.seconds = round(time.time() - t0, 1)
+
+
 def _digest(image):
     return hashlib.sha1(bytes(image)).digest()
 
@@ -288,16 +321,25 @@ def run_deep(session, driver, adapter, parent, m, name, level, state, real):
         res.seconds = round(time.time() - t0, 1)
 
 
-def explore(session, driver, adapter, golden, out, on_result=None, fail_fast=False):
+def _failed(r):
+    return not (r.passed or r.skipped)
+
+
+def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
     """Cuts during recovery, level by level.
 
     A state a cut left behind is powered up and its recovery traced. Cuts are planned
     over that trace like over an update, and each gives a flash state. One already
     tested is skipped: the same flash is the same test. Each new one is powered up and
-    judged, and becomes a parent for the next level."""
+    judged, and becomes a parent for the next level.
+
+    Each level is three steps, so that the outcome does not depend on how many
+    emulators share the work: trace every parent's recovery (in parallel), decide in
+    parent order which states are new (one thread), then test those (in parallel)."""
     cfg = adapter.depth
     flash = adapter.flash
     plan_cfg = {k: cfg[k] for k in ("mode", "per_phase", "small")}
+    torn_kinds = getattr(adapter, "torn", None) if cfg.get("torn") else None
     stats = {"levels": cfg["levels"], "states": 0, "skipped_known": 0, "capped": False}
     out.depth = stats
     clean = {r.op_index: r for r in out.results[1:] if r.fired and not r.torn and r.depth == 1}
@@ -313,10 +355,11 @@ def explore(session, driver, adapter, golden, out, on_result=None, fail_fast=Fal
     for n in wanted:
         if n in clean and clean[n].passed:
             parents.append(("op-%d" % n, bytes(golden.replay.at(n))))
+
     for level in range(2, cfg["levels"] + 1):
-        found = []
-        for label, image in parents:
-            ops = _recovery_trace(session, driver, adapter, image)
+        traces_ = pool.run(lambda s, d, p: [_recovery_trace(s, d, adapter, p[1])], parents)
+        tasks = []
+        for (label, image), ops in zip(parents, traces_, strict=True):
             if not ops:
                 continue                        # this recovery writes nothing: nothing to cut
             parent = Golden(adapter, image, golden.oracle)
@@ -329,21 +372,36 @@ def explore(session, driver, adapter, golden, out, on_result=None, fail_fast=Fal
                     stats["skipped_known"] += 1
                     continue
                 seen.add(d)
-                if stats["states"] >= cfg["max_states"]:
+                if stats["states"] + len(tasks) >= cfg["max_states"]:
                     stats["capped"] = True
-                    return
-                r = run_deep(session, driver, adapter, parent, m, "%s > op-%d" % (label, m),
-                             level, state, real)
+                    break
+                tasks.append((parent, m, "%s > op-%d" % (label, m), state, real, None))
                 real = False
-                stats["states"] += 1
-                out.results.append(r)
-                if on_result:
-                    on_result(r)
-                if r.passed:
-                    found.append((r.cut, state))
-                elif fail_fast:
-                    return
-        parents = found
+                if torn_kinds:
+                    # the half-done versions of this recovery operation, too
+                    for t in torns.states(ops[m], state, flash, torn_kinds, adapter.torn_seed):
+                        td = _digest(t.image)
+                        if td not in seen:
+                            seen.add(td)
+                            tasks.append((parent, m, "%s > op-%d %s" % (label, m, t.kind),
+                                          t.image, False, t.kind))
+            if stats["capped"]:
+                break
+
+        def test(session, driver, task, level=level):
+            parent, m, name, state, real, torn_kind = task
+            r = run_deep(session, driver, adapter, parent, m, name, level, state, real)
+            if torn_kind:
+                r.torn, r.kind = torn_kind, torn_kind
+            return r
+
+        results = pool.run(test, tasks, on_result, _failed if fail_fast else None)
+        out.results += results
+        stats["states"] += len(results)
+        if stats["capped"] or (fail_fast and any(_failed(r) for r in results)):
+            return
+        by_name = {r.cut: r for r in results}
+        parents = [(t[2], t[3]) for t in tasks if t[5] is None and by_name[t[2]].passed]
 
 
 @dataclass
@@ -355,6 +413,7 @@ class Outcome:
     timings: dict = field(default_factory=dict)
     started: str = ""           # when the run began, UTC
     inputs: list = field(default_factory=list)   # the firmware files tested, with their hashes
+    jobs: int = 1               # how many emulators shared the work
 
     @property
     def passed(self):
@@ -370,60 +429,120 @@ def _cuts_to_run(adapter, plan):
     return cuts
 
 
+def _past_the_end(cuts, operations):
+    """Replace the cuts of an at_ops range that lie past the end of the update with one
+    'skipped' result per range. The golden run has counted the operations, so there is
+    no need to arm each of those cuts and wait for it not to fire."""
+    out, ended = [], set()
+    for cut in cuts:
+        if cut.group is not None and cut.at_op is not None and cut.at_op >= operations:
+            if cut.group not in ended:
+                ended.add(cut.group)
+                out.append(CutResult(cut=cut.name, skipped=True,
+                                     message="the update has fewer operations"))
+            continue
+        out.append(cut)
+    return out
+
+
 def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline_only=False,
-             oracle=None, on_plan=None):
+             oracle=None, on_plan=None, workers=()):
     """The baseline, then every cut, on a machine that is already up with the update
-    staged. Returns an Outcome.
+    staged. `workers` are further (session, driver) pairs to share the cuts with.
+    Returns an Outcome.
 
     Kept apart from run() so the logic can be tested against a simulated device."""
+    pool = Pool([(session, driver), *workers])
     pre = session.dump_flash()
     # If the update does not work when nothing interrupts it, no cut result means
     # anything, so that is checked first and a failure ends the run.
     golden = Golden(adapter, pre, oracle)
     baseline = run_cut(session, driver, adapter, None, golden)
-    out = Outcome(results=[baseline], trace=golden.ops)
+    out = Outcome(results=[baseline], trace=golden.ops, jobs=len(pool))
     if on_result:
-        on_result(out.results[0])
-    if not out.results[0].passed:
+        on_result(baseline)
+    if not baseline.passed:
         return out
     cfg = getattr(adapter, "plan", None) or {}
-    out.plan = plans.make(golden.ops, pre, adapter.flash, **cfg)
+    out.plan = plans.make(golden.ops, pre, adapter.flash,
+                          **{k: v for k, v in cfg.items() if k != "real_every"})
     if on_plan:
         on_plan(out.plan)
-    ended = set()                   # range groups that already ran off the end
-    for cut in [] if baseline_only else _cuts_to_run(adapter, out.plan):
-        if cut.group in ended:
-            continue
-        r = run_cut(session, driver, adapter, cut, golden)
-        if r.skipped:
-            ended.add(cut.group)    # op counts are deterministic: later ones won't fire either
-        out.results.append(r)
-        if on_result:
-            on_result(r)
-        if fail_fast and not (r.passed or r.skipped):
-            return out
+    if baseline_only:
+        return out
+    stop = _failed if fail_fast else None
+
+    # With real_every N, only every Nth planned cut is made in the emulator; the others
+    # start from the computed state. The real ones keep checking that those states are right.
+    every = max(1, cfg.get("real_every", 1))
+    cuts = _past_the_end(_cuts_to_run(adapter, out.plan), len(golden.ops))
+    planned = [c for c in cuts if isinstance(c, Cut) and c.at_op is not None and c.expect is None]
+    real = {id(c) for c in planned[::every]} | {id(c) for c in planned[-1:]}
+    computable = {id(c) for c in planned} - real
+
+    def clean_cut(s, d, cut):
+        if isinstance(cut, CutResult):
+            return cut
+        if every > 1 and id(cut) in computable:
+            return run_computed(s, d, adapter, cut, golden)
+        return run_cut(s, d, adapter, cut, golden)
+
+    out.results += pool.run(clean_cut, cuts, on_result, stop)
+    if fail_fast and any(_failed(r) for r in out.results):
+        return out
+
     # Torn states come after the clean cuts, at the same operations: the half-done
     # versions of each operation a clean cut was made in front of.
     kinds = getattr(adapter, "torn", None)
-    ops = sorted({r.op_index for r in out.results[1:] if r.fired and r.op_index < len(golden.ops)})
-    for n in ops if kinds and not baseline_only else []:
-        before = bytes(golden.replay.at(n))
-        for state in torns.states(golden.ops[n], before, adapter.flash, kinds, adapter.torn_seed):
-            r = run_torn(session, driver, adapter, state, golden)
-            out.results.append(r)
-            if on_result:
-                on_result(r)
-            if fail_fast and not r.passed:
-                return out
-    if getattr(adapter, "depth", None) and not baseline_only:
-        explore(session, driver, adapter, golden, out, on_result, fail_fast)
+    if kinds:
+        def torn_at(s, d, n):
+            before = bytes(golden.replay.at(n))
+            return [run_torn(s, d, adapter, state, golden)
+                    for state in torns.states(golden.ops[n], before, adapter.flash, kinds,
+                                              adapter.torn_seed)]
+
+        ops = sorted({r.op_index for r in out.results[1:] if r.fired and r.op_index < len(golden.ops)})
+        out.results += pool.run(torn_at, ops, on_result, stop)
+        if fail_fast and any(_failed(r) for r in out.results):
+            return out
+
+    if getattr(adapter, "depth", None):
+        explore(pool, adapter, golden, out, on_result, fail_fast)
     return out
 
 
+def _bring_up(adapter, exe, log, shared=None):
+    """One emulator, booted, with the update staged. Returns (session, driver, work folder).
+    `shared` is what the first driver exported, so that every worker starts an update
+    with exactly the same bytes (a driver may sign its image with a timestamp)."""
+    work = tempfile.mkdtemp(prefix="brickproof-")
+    try:
+        firmware = wd.prepare(work, adapter)
+        session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
+                                vector_table=adapter.vector_table, mips=adapter.mips,
+                                reset_cmds=adapter.reset_cmds, log=log,
+                                memory_sizes=wd.memory_sizes(adapter))
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    try:
+        session.run_for(adapter.boot_settle)
+        driver = adapter.load_driver(session)
+        if shared is not None and hasattr(driver, "import_state"):
+            driver.import_state(shared)
+        else:
+            driver.prepare()
+        return session, driver, work
+    except BaseException:
+        session.close()
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+
+
 def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, baseline_only=False,
-        on_plan=None):
-    """Start Renode, stage the update and run the campaign (up to the first failure
-    with fail_fast). Returns an Outcome."""
+        on_plan=None, jobs=1):
+    """Start Renode (`jobs` of them), stage the update and run the campaign (up to the
+    first failure with fail_fast). Returns an Outcome."""
     exe = find_renode()
     if not exe:
         raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
@@ -432,33 +551,47 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
     for path, _addr in adapter.firmware:
         with open(path, "rb") as f:
             inputs.append({"file": os.path.basename(path), "sha256": hashlib.sha256(f.read()).hexdigest()})
-    work = tempfile.mkdtemp(prefix="brickproof-")
-    session = None
+    up = []                             # every (session, driver, work folder) that was started
+    lock = threading.Lock()
     try:
-        firmware = wd.prepare(work, adapter)
         t0 = time.time()
-        session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
-                                vector_table=adapter.vector_table, mips=adapter.mips,
-                                reset_cmds=adapter.reset_cmds, log=log,
-                                memory_sizes=wd.memory_sizes(adapter))
-        session.run_for(adapter.boot_settle)
-        driver = adapter.load_driver(session)
-        driver.prepare()
+        up.append(_bring_up(adapter, exe, log))
+        session, driver, _ = up[0]
+        shared = driver.export_state() if hasattr(driver, "export_state") else None
+        errors = []
+
+        def start_one():
+            try:
+                w = _bring_up(adapter, exe, log, shared)
+                with lock:
+                    up.append(w)
+            except BaseException as e:      # noqa: B036 - reported from the main thread
+                errors.append(e)
+
+        extra = 0 if baseline_only else max(0, jobs - 1)
+        threads = [threading.Thread(target=start_one, daemon=True) for _ in range(extra)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if errors:
+            raise errors[0]
         setup = round(time.time() - t0, 1)
         out = campaign(session, driver, adapter, on_result, fail_fast, baseline_only,
-                       oracles.build(adapter, driver), on_plan)
+                       oracles.build(adapter, driver), on_plan,
+                       workers=[(s, d) for s, d, _ in up[1:]])
         out.timings = {"setup_s": setup, "total_s": round(time.time() - t0, 1),
                        "rewound": sum(r.rewound for r in out.results)}
         out.started = started
         out.inputs = inputs
         return out
     finally:
-        if session:
-            session.close()
-        if keep_workdir:
-            print("work folder kept: %s" % work)
-        else:
-            shutil.rmtree(work, ignore_errors=True)
+        for s, _d, work in up:
+            s.close()
+            if keep_workdir:
+                print("work folder kept: %s" % work)
+            else:
+                shutil.rmtree(work, ignore_errors=True)
 
 
 def as_dict(outcome, adapter):
@@ -473,6 +606,7 @@ def as_dict(outcome, adapter):
         "inputs": outcome.inputs,
         "oracle": bool(getattr(adapter, "oracle", None)),
         "passed": outcome.passed,
+        "jobs": outcome.jobs,
         "coverage": outcome.plan.as_dict() if outcome.plan else None,
         "depth": outcome.depth,
         "timings": outcome.timings,

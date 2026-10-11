@@ -571,3 +571,67 @@ times the slowest rate this session has measured (starting from a pessimistic gu
 under 30 s and never over the old fixed allowance. A healthy slice takes a second or two, so
 30 s cannot call a slow but live device dead; that would be a false failure and is worse than
 waiting. A locked-up demo cut now costs 54 s instead of 114 s.
+
+## 2026-10-11: Renode's shared command history was most of the cost of everything
+
+Trying to start eight emulators at once crashed them: Renode saves its monitor command
+history after every command, by rewriting the whole file, and by default that file is one per
+user (`%APPDATA%\renode\history`, `~/.config/renode/history`). Two Renodes writing it collide.
+
+It was also the "fixed 40 to 60 ms per monitor line" measured the day before. The file had
+grown to 25 MB (670,000 lines) and was rewritten for every command, which is why the cost
+crept from 60 to 100 ms as this project ran. Measured with 20 `version` commands:
+shared history 67 ms per line, own history file 1.6 ms.
+
+Each session now writes a `renode.config` with `history-path` in its own work folder and
+starts Renode with `--config`. (`--config` alone, or redirecting `APPDATA`, does not move the
+history: the path is a setting inside the config file.)
+
+Effect on one emulator, full demo, every clean cut: 580 s -> 181 s.
+
+## 2026-10-11: Several emulators (`--jobs`)
+
+Cuts are independent, each starts by restoring flash, so they can be shared out. `pool.py`
+hands out work by index and releases results strictly in item order, so the tests run, their
+order in the output and the place where `--fail-fast` stops are the same for any number of
+emulators. Tested: one against four simulated devices give identical results for clean cuts,
+torn states, depth, depth with torn, listed cuts and fail-fast.
+
+- ports: `free_port()` never hands the same port out twice in a process;
+- Renode processes start one at a time until their monitor answers, then work in parallel;
+- a driver that signs its update at run time shares the prepared state with the other
+  emulators (`export_state` / `import_state`), so all of them start the same update;
+- depth exploration runs each level in three steps (trace all parents in parallel, decide in
+  parent order which states are new, test those in parallel) to stay deterministic;
+- `Golden.replay` is one per thread.
+
+Full demo with `--torn --depth 2 -j 8`: 201 s for 747 runs, same counts as one emulator.
+
+Torn states can now also be explored at depth (`depth: {torn: true}`): the half-done versions
+of each recovery operation.
+
+## 2026-10-11: `real_every`: most planned cuts from the computed state
+
+On a long update most of a cut's time is running the update up to the cut. Every cut made in
+the emulator has its flash compared with the golden run replayed to that point, and they have
+always matched. So with `plan: {real_every: N}` (or `--real-every N`) only every Nth planned
+cut, plus the last, is made in the emulator; the others are powered up from the replayed
+state. The real ones keep the check running through the whole campaign, and the report says
+how many of each there were. A listed cut with an `expect` is always made for real.
+
+## 2026-10-11: Each emulator gets its own temp folder; start-up is one at a time
+
+With twelve emulators, Renode died at `LoadPlatformDescription` with "Access is denied" from
+its temporary-files manager. Not a race between starting processes (it happened with starts
+serialised): Renode keeps `renode-<pid>` folders in the temp directory and, on start-up,
+looks up the process of every one it finds. Thirty `renode-<pid>-crash` folders were lying
+there from Renodes killed earlier in this work, and Windows had reused some of those pids for
+protected processes, whose look-up is refused.
+
+- every session starts Renode with `TMP`/`TEMP`/`TMPDIR` pointing into its own work folder,
+  so it sees no other instance's leftovers, and its own go when the work folder is removed;
+- Renodes are brought up one at a time (the whole machine creation, not only the process
+  start), and a failed start is tried again, three times in all;
+- the leftovers in the shared temp folder were removed.
+
+Twelve emulators then start and run the Three-Tier target (setup 77 s).

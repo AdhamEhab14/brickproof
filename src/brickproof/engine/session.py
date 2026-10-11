@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import weakref
 from dataclasses import dataclass
@@ -95,12 +96,25 @@ def find_renode():
     return exe
 
 
+_ports_lock = threading.Lock()
+_ports_given = set()
+_launch_lock = threading.Lock()     # Renode processes are started one at a time
+
+
 def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    """A TCP port nothing is listening on, and that this process has not handed out
+    before. The system only promises the first; with several sessions starting at
+    once, two of them were given the same port."""
+    with _ports_lock:
+        for _ in range(200):
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+            s.close()
+            if port not in _ports_given:
+                _ports_given.add(port)
+                return port
+    raise RuntimeError("could not find a free TCP port")
 
 
 def connect(port, wait):
@@ -144,23 +158,51 @@ class RenodeSession:
 
     STARTUP_WAIT = 90           # seconds to wait for Renode's monitor to answer
     QUIT_WAIT = 10              # seconds to let it exit by itself before it is killed
+    START_TRIES = 3
 
     def _start(self):
         """Bring Renode up. If anything on the way fails (a platform it rejects, memory
         sizes that do not match), the process must not be left running behind us."""
-        _live.add(self)
-        try:
-            self._bring_up()
-        except BaseException:
-            self.close()
-            raise
+        # One Renode is brought up at a time: several initialising at once collide (on
+        # the history file before it was moved, on Renode's temporary-files manager,
+        # "Access is denied"). The collision is in start-up only; once machines exist
+        # they run side by side. A failed start is tried again before giving up.
+        for attempt in range(self.START_TRIES):
+            _live.add(self)
+            try:
+                with _launch_lock:
+                    self._bring_up()
+                return
+            except BaseException as e:
+                self.close()
+                last = attempt == self.START_TRIES - 1
+                if last or not isinstance(e, (OSError, RuntimeError)):
+                    raise
+                time.sleep(1.0)
 
     def _bring_up(self):
         self.mon_port = free_port()
         self.uart_port = free_port()
+        # Renode keeps a monitor command history, and rewrites the whole file after
+        # every command. By default that is one file per user, shared by every Renode:
+        # it grows without end (25 MB after a few days here, 67 ms per command), and two
+        # Renodes writing it at once crash. Give this one its own, in its work folder.
+        config = os.path.join(self.workdir, "renode.config")
+        with open(config, "w") as f:
+            f.write("[general]" + chr(10) + "history-path = %s" % os.path.join(self.workdir, "history")
+                    + chr(10))
+        # Its own temp folder too. Renode keeps `renode-<pid>` folders in the temp
+        # directory, and on start-up looks up the process of every one it finds there.
+        # A folder left by a Renode that was killed can carry a pid Windows has since
+        # given to a protected process, and then that look-up fails ("Access is denied")
+        # and the new Renode dies. Alone in its own folder it finds nothing to trip on,
+        # and what it leaves behind goes when the work folder does.
+        tmp = os.path.join(self.workdir, "tmp")
+        os.makedirs(tmp, exist_ok=True)
+        env = dict(os.environ, TMP=tmp, TEMP=tmp, TMPDIR=tmp)
         self.proc = subprocess.Popen(
-            [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port)],
-            cwd=self.workdir, stdin=subprocess.PIPE,
+            [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port), "--config", config],
+            cwd=self.workdir, stdin=subprocess.PIPE, env=env,
             stdout=open(self.log, "ab") if self.log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
         self.mon = connect(self.mon_port, self.STARTUP_WAIT)
         self._buf = b""

@@ -58,6 +58,16 @@ class ThreeTierFblUpdate:
             raise RuntimeError("erase of Slot B failed")
         self.s.load_binary("fbl_new.bin", SLOT_B)
 
+    def export_state(self):
+        """What another emulator's driver needs to start exactly the same update. The
+        signed header holds a build time, so signing again would give other bytes."""
+        return {"hdr": self.hdr}
+
+    def import_state(self, state):
+        """Take over a prepared update. The staged image itself arrives with the flash
+        image every cut starts from."""
+        self.hdr = state["hdr"]
+
     def start_update(self):
         self._ser(5).write(self.bl.build_frame(self.bl.CMD_UPDATE_FBL, self.hdr))
 
