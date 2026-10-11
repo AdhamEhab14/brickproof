@@ -7,6 +7,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 
+from brickproof import __version__
 from brickproof import oracle as oracles
 from brickproof import plan as plans
 from brickproof import torn as torns
@@ -303,8 +304,13 @@ def explore(session, driver, adapter, golden, out, on_result=None, fail_fast=Fal
     seen = {_digest(golden.pre)}
     for n in sorted(clean):
         seen.add(_digest(golden.replay.at(n)))
+    # Which first-cut states to go deeper from: the depth plan's pick of a planned
+    # run, or simply the cuts that were asked for when there is no plan.
+    wanted = sorted(clean)
+    if getattr(adapter, "plan", None):
+        wanted = plans.make(golden.ops, golden.pre, flash, **plan_cfg).cuts
     parents = []
-    for n in plans.make(golden.ops, golden.pre, flash, **plan_cfg).cuts:
+    for n in wanted:
         if n in clean and clean[n].passed:
             parents.append(("op-%d" % n, bytes(golden.replay.at(n))))
     for level in range(2, cfg["levels"] + 1):
@@ -347,6 +353,8 @@ class Outcome:
     plan: object = None         # plan.Plan: what the trace offers and what was chosen
     depth: dict = None          # what the exploration of cuts during recovery covered
     timings: dict = field(default_factory=dict)
+    started: str = ""           # when the run began, UTC
+    inputs: list = field(default_factory=list)   # the firmware files tested, with their hashes
 
     @property
     def passed(self):
@@ -419,6 +427,11 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
     exe = find_renode()
     if not exe:
         raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    inputs = []
+    for path, _addr in adapter.firmware:
+        with open(path, "rb") as f:
+            inputs.append({"file": os.path.basename(path), "sha256": hashlib.sha256(f.read()).hexdigest()})
     work = tempfile.mkdtemp(prefix="brickproof-")
     session = None
     try:
@@ -436,6 +449,8 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
                        oracles.build(adapter, driver), on_plan)
         out.timings = {"setup_s": setup, "total_s": round(time.time() - t0, 1),
                        "rewound": sum(r.rewound for r in out.results)}
+        out.started = started
+        out.inputs = inputs
         return out
     finally:
         if session:
@@ -447,9 +462,16 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
 
 
 def as_dict(outcome, adapter):
+    """Everything about a run, as plain data. The JSON, JUnit and HTML reports are all
+    made from this."""
     return {
         "adapter": adapter.name,
+        "adapter_file": getattr(adapter, "path", "") or "adapter.yaml",
         "target": os.path.basename(adapter.target),
+        "brickproof": __version__,
+        "started": outcome.started,
+        "inputs": outcome.inputs,
+        "oracle": bool(getattr(adapter, "oracle", None)),
         "passed": outcome.passed,
         "coverage": outcome.plan.as_dict() if outcome.plan else None,
         "depth": outcome.depth,

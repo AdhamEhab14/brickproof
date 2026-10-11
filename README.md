@@ -104,7 +104,12 @@ access outside them as a fault, and makes flash behave like flash: a cell that i
 cannot be programmed, and a write with the controller locked does nothing.
 
 Exit codes: `0` every cut recovered, `1` at least one failed, `2` adapter error, `3` BrickProof
-itself failed (including its own flash self-check). `--json FILE` writes the results for CI.
+itself failed (including its own flash self-check).
+
+Reports: `--json FILE`, `--junit FILE` for CI systems, and `--html FILE` for a single
+self-contained page with the verdict, what was covered, each failure with a command that
+reproduces it, and the SHA-256 of every firmware file tested. `--cut N` runs one operation
+alone, which is what those commands use.
 
 ## Testing your own firmware
 
@@ -123,6 +128,7 @@ Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103).
 | `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | Flash controller models that count operations and cut power (STM32F1 so far) |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
+| `src/brickproof/report.py` | JUnit and HTML reports |
 | `src/brickproof/plan.py` | The cut planner: distinct flash states, exhaustive or sampled |
 | `src/brickproof/torn.py` | Torn states: an erase or a program left half done |
 | `src/brickproof/oracle.py` | The outside judge: approved image installed, and really running |

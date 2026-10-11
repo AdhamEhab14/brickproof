@@ -121,7 +121,7 @@ jobs:
           if [ -n "${{ matrix.depth }}" ]; then flags="$flags --depth ${{ matrix.depth }}"; fi
           set +e
           brickproof run examples/demo_ab_bootloader/${{ matrix.adapter }}.yaml $flags \
-            --json brickproof-out/${{ matrix.adapter }}.json
+            --json brickproof-out/${{ matrix.adapter }}.json --junit brickproof-out/${{ matrix.adapter }}.xml --html brickproof-out/${{ matrix.adapter }}.html
           code=$?
           echo "exit code $code, expected ${{ matrix.expect }}"
           [ "$code" = "${{ matrix.expect }}" ]
@@ -184,7 +184,7 @@ jobs:
       - name: Pull the plug during the FBL self-update
         run: |
           export RENODE_PATH="$HOME/renode/renode"
-          brickproof run adapters/three_tier_f103/adapter.yaml --target target --torn --json brickproof-out/three_tier.json
+          brickproof run adapters/three_tier_f103/adapter.yaml --target target --torn --json brickproof-out/three_tier.json --junit brickproof-out/three_tier.xml --html brickproof-out/three_tier.html
 
       - name: Upload results
         if: always()

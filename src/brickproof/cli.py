@@ -10,6 +10,7 @@ import os
 import sys
 
 from brickproof import adapter as adapters
+from brickproof import report as reports
 from brickproof import runner
 from brickproof import torn as torns
 from brickproof import trace as traces
@@ -33,7 +34,9 @@ def _print_result(r):
 
 def _load(args):
     try:
-        return adapters.load(args.adapter, target=args.target)
+        ad = adapters.load(args.adapter, target=args.target)
+        ad.path = args.adapter              # as typed, so a report's commands can be pasted back
+        return ad
     except (adapters.AdapterError, OSError) as e:
         print("adapter error: %s" % e, file=sys.stderr)
         return None
@@ -67,20 +70,25 @@ def cmd_run(args):
     ad = _load(args)
     if ad is None:
         return 2
-    if args.plan:
+    if args.plan and not args.cut:
         ad.plan = dict(ad.plan or {}, mode=args.plan)
+    if args.cut:
+        # just these operations: for reproducing a result. The adapter's plan, torn
+        # states and depth are left out unless asked for again on this command line.
+        ad.cuts = [adapters.Cut(name="op-%d" % n, at_op=n) for n in args.cut]
+        ad.plan = ad.torn = ad.depth = None
     if args.torn:
         ad.torn = list(torns.KINDS)
     if args.depth is not None:
         deeper = dict(adapters.DEPTH_DEFAULTS, **(ad.depth or {}), levels=args.depth)
         ad.depth = deeper if args.depth > 1 else None
-    if args.per_phase is not None:
+    if args.per_phase is not None and not args.cut:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
     if not ad.cuts and not ad.plan:
         print("nothing to cut: the adapter has no scenario.cuts and no scenario.plan "
               "(or pass --plan phases)", file=sys.stderr)
         return 2
-    _make_dirs(args.json, args.renode_log, args.trace)
+    _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html)
     print("BrickProof: %s, target %s" % (ad.name, ad.target), flush=True)
     if not ad.oracle:
         print("note: this adapter has no 'oracle' section, so each verdict rests on the "
@@ -88,9 +96,16 @@ def cmd_run(args):
     out = _run(ad, args, fail_fast=args.fail_fast, on_plan=_print_plan if ad.plan else None)
     if out is None:
         return 3
+    report = runner.as_dict(out, ad)
     if args.json:
         with open(args.json, "w") as f:
-            json.dump(runner.as_dict(out, ad), f, indent=2)
+            json.dump(report, f, indent=2)
+    if args.junit:
+        with open(args.junit, "w", encoding="utf-8") as f:
+            f.write(reports.junit(report))
+    if args.html:
+        with open(args.html, "w", encoding="utf-8") as f:
+            f.write(reports.html_page(report))
     if args.trace:
         traces.write_jsonl(out.trace, args.trace)
     if not out.results[0].passed:
@@ -155,6 +170,10 @@ def main(argv=None):
     r = sub.add_parser("run", help="run an adapter's power cuts")
     common(r)
     r.add_argument("--json", help="write the results as JSON to this file")
+    r.add_argument("--junit", help="write the results as JUnit XML to this file")
+    r.add_argument("--html", help="write a self-contained HTML report to this file")
+    r.add_argument("--cut", type=int, action="append", metavar="N",
+                   help="cut only at operation N (repeatable): reproduces one result")
     r.add_argument("--trace", help="write the golden-run trace (JSONL) to this file")
     r.add_argument("--fail-fast", action="store_true", help="stop at the first cut that fails")
     r.add_argument("--plan", choices=("phases", "every"),
