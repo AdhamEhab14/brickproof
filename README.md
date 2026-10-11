@@ -69,6 +69,9 @@ is never refused (the cell ends up as old AND new), and the chip rewrites its ow
 bytes. `brickproof demo f411` runs the correct build, and `brickproof demo f411-bug-no_erase`
 and the other `f411-bug-*` builds have the same mistakes. `resume_copy` is missing there on
 purpose: an F4 does let a half-written cell be programmed again, so it is not a bug on that chip.
+It has one of its own instead, `f411-bug-watchdog`: on a device with a hardware watchdog, a
+sector erase that takes a second gets the chip reset half way through, on every attempt.
+`watchdog` and `f411-watchdog` are the correct build on such a device.
 
 ## What a run covers
 
@@ -91,7 +94,9 @@ emulated chip its real RAM and flash sizes, faults on memory that is not there, 
 program a cell that is not erased, enforces write protection, and models the option bytes.
 Erases and programs take the time the datasheet gives them (a 128 KB sector erase is a second
 during which the CPU stands still), so watchdogs and timeouts behave as on the board.
-`flash.timing: max` in the adapter uses the slowest figures the datasheet allows.
+`flash.timing: max` in the adapter uses the slowest figures the datasheet allows. A reset
+the firmware or a watchdog causes reboots the device as on the chip, and a hardware watchdog
+set in the option bytes runs from reset.
 
 **What the update costs the flash.** Each run reports how long the chip spends erasing and
 programming, and which page or sector is erased most often per update, set against the
@@ -153,7 +158,8 @@ If your bootloader applies an image waiting in a staging slot on the next boot (
 overwrite mode, most OTA designs), the built-in `staged_slot` driver does the rest, and the
 demo's [adapter.yaml](examples/demo_ab_bootloader/adapter.yaml) is the template. If the update
 is started over a protocol (UART, CAN, UDS), add a small `driver.py`, like the one for the
-Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103).
+Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103). Every key is explained in
+[docs/adapter.md](docs/adapter.md).
 
 ```bash
 brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
@@ -204,7 +210,8 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
   `src/brickproof/models/`; the engine itself no longer assumes either chip.
 - Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
   vary with temperature, voltage or age. Wear is counted per update, not simulated.
-- Not modelled: the USER option byte (hardware watchdog, reset behaviour in low-power modes).
+- Not modelled: low-power modes, so the two option bits that decide whether entering one
+  resets the chip have no effect.
 
 ## Licence
 

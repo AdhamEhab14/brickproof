@@ -73,6 +73,7 @@ def test_platform_gets_the_chips_real_memory_sizes(tmp_path):
     wd.prepare(str(tmp_path), ad)
     repl = (tmp_path / "platform.repl").read_text()
     assert "\nsram:\n    size: 0x5000\n" in repl
+    assert "iwdg: Timers.STM32_IndependentWatchdog" in repl, "the F103 gets a real watchdog"
     assert "\nflash:\n    size: 0x8020000\n" in repl
 
 

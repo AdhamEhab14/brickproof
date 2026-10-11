@@ -1,0 +1,7 @@
+# The correct demo on a device whose option bytes make the watchdog a hardware one: it
+# runs from reset and cannot be stopped. The bootloader and the app both feed it, and
+# every cut must still recover.
+extends: adapter.yaml
+name: demo_ab_bootloader_watchdog
+flash:
+  hardware_watchdog: true

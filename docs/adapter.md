@@ -1,0 +1,158 @@
+# Writing an adapter
+
+An adapter is one YAML file that tells BrickProof about your device: which chip, what to load
+into its flash, how an update is started, and what counts as recovered. Everything below is
+what `brickproof run` reads. Two complete examples are in the repository:
+
+- [examples/demo_ab_bootloader/adapter.yaml](../examples/demo_ab_bootloader/adapter.yaml): a
+  bootloader that applies a staged image on the next boot. No code needed, only YAML.
+- [adapters/three_tier_f103](../adapters/three_tier_f103): an update driven over a UART
+  protocol, with a small `driver.py`.
+
+Start from the one that is closer to your update, then run `brickproof trace my_adapter.yaml`.
+It does one update with no cuts and prints every flash operation in phases. If that passes,
+the adapter is right and `brickproof run` can start cutting.
+
+## The whole file
+
+```yaml
+name: my_device                # used in reports
+target: ../my-firmware         # folder the file paths below are relative to
+                               # (--target on the command line overrides it)
+extends: base.yaml             # optional: start from another adapter and change a few keys
+
+platform:
+  base: stm32f103              # stm32f103 or stm32f411
+  extra: extra.repl            # optional: more Renode platform lines (peripherals your
+                               # firmware needs); @ADAPTER@ is this file's folder
+
+flash:
+  base: 0x08000000
+  size: 0x20000                # the real size of the chip's flash
+  page: 0x400                  # STM32F1: the page size (0x400 or 0x800)
+  # sectors: [0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]
+  #                            # STM32F4: every sector's size, in order. One of page or sectors.
+  write_unit: 2                # bytes a program usually writes (2 on F1, 4 on F4)
+  write_protected:             # what the option bytes protect on the device as shipped
+    - {from: 0x08000000, size: 0x4000}
+  read_protected: false        # RDP level 1
+  hardware_watchdog: false     # WDG_SW cleared: the watchdog runs from reset, unstoppable
+  timing: typical              # typical, max or none: how long erases and programs take
+
+ram:
+  size: 0x5000                 # the real RAM size. Required: extra RAM hides stack faults
+
+firmware:                      # the device as shipped, before the update
+  - file: build/bootloader.elf
+  - file: build/app_v1.bin     # a raw binary needs an address
+    addr: 0x08004000
+
+uart: usart2                   # where the firmware prints
+boot_settle: 1.5               # virtual seconds from reset until the device is ready
+reset:                         # optional Renode commands after every reset
+  - gpioPortC OnGPIO 13 false  # for example a button held down
+
+cpu:
+  vector_table: 0x08000000     # default: flash.base
+  mips: 72                     # emulated CPU speed
+
+driver:
+  builtin: staged_slot         # or  file: driver.py
+  options: {}                  # passed to the driver, see below
+
+oracle:                        # which images may be installed after a cut
+  images:
+    old: {file: build/app_v1.img, at: 0x08004000}
+    new: {file: build/app_v2.img, at: 0x08004000}
+  accept: [old, new]           # or [new] if a cut must never lose the update
+
+scenario:
+  name: update-v1-to-v2
+  update_time: 6               # virtual seconds an uninterrupted update needs
+  cut_limit: 30                # virtual seconds to wait for a cut to fire
+  plan: phases                 # or every, or {mode, per_phase, small, real_every}
+  torn: true                   # or a list of shapes; same as --torn
+  depth: 2                     # or {levels, mode, per_phase, small, max_states, torn}
+  cuts:                        # optional hand-picked cuts, instead of or beside a plan
+    - {at_op: 12}
+    - {on_erase: 0x08004000}
+    - {at_ops: {from: 0, to: 40, step: 4}}
+```
+
+## Getting the chip right
+
+The run is only worth something if the emulated chip is the chip you ship.
+
+- `flash.size`, `ram.size`: the real ones. Renode's stock platforms are far bigger than any
+  chip, and a stack overflow or a write past the end of flash would simply work.
+- `flash.write_protected`, `flash.read_protected`: as the device leaves the factory. A slot
+  that is write-protected by mistake makes every update fail on the chip and none in a plain
+  emulator.
+- `flash.hardware_watchdog`: true if the option bytes make the independent watchdog a
+  hardware one. It then runs from reset with its default timeout (about 0.4 s on an F1,
+  0.5 s on an F4), and a chip that stands still through a long erase gets reset.
+- `flash.timing`: `typical` by default. Use `max` when the question is whether a watchdog or
+  a timeout survives the slowest erase the datasheet allows. `none` makes operations take no
+  time, which is faster and less true.
+
+## Drivers
+
+The driver is the part that knows how your update starts and how to tell the device is alive.
+
+**`builtin: staged_slot`** covers bootloaders that find a new image in a staging slot and
+apply it on the next boot (MCUboot's overwrite mode, most OTA designs). Options:
+
+| Option | Meaning |
+|---|---|
+| `slot` | address of the staging slot |
+| `image` | the new image, written there before the reset |
+| `alive` | regular expression: some valid image is running |
+| `expect` | optional regular expression the device must print after recovering, for example `APP v2`: the update was not lost |
+| `boot_timeout` | virtual seconds to wait for those (default 2). A recovery that erases a large sector needs more |
+| `rollback` | optional `{image, forbidden}`: after recovering, stage this older image and reboot. The device must not print `forbidden` |
+
+**`file: driver.py`** is for updates started over a protocol. The file defines
+`make_driver(session, adapter)` returning an object with:
+
+| Method | What it does |
+|---|---|
+| `prepare()` | once: build or load what the update needs |
+| `start_update()` | make the device begin the update (send the commands) |
+| `alive()` | True if the device is running something valid |
+| `check_recovered()` | `(ok, message)` after a cut and a power cycle |
+| `oracle_images()` | optional: approved images known only at run time, as `{name: (bytes, address)}` |
+| `export_state()`, `import_state(state)` | optional: lets several emulators (`--jobs`) start from exactly the same bytes |
+
+Set `update_on_boot = True` on the driver if the reset itself starts the update, as
+`staged_slot` does. The `session` gives you the UART (`uart_write`, `uart_text`), time
+(`run_for`), flash (`load_binary`, `read_bytes`) and resets (`reboot`, `power_cycle`).
+[adapters/three_tier_f103/driver.py](../adapters/three_tier_f103/driver.py) is about 90 lines.
+
+## The oracle
+
+Without an `oracle` section the verdict rests on what the firmware says about itself, and
+the run says so. With one, a result only passes if the bytes at `at` are exactly one of the
+accepted images and the CPU is executing inside it, not in a fault handler. List every image
+that may legitimately be there, and put in `accept` the ones a cut is allowed to leave.
+
+## Choosing cuts
+
+- `plan: every` cuts at every distinct flash state the update goes through. Use it when the
+  update is a few hundred operations.
+- `plan: phases` cuts every state in short phases and samples long ones (`per_phase` cuts
+  each; phases of up to `small` operations are cut everywhere). The report names what was
+  sampled. `--plan every` on the command line overrides it for one run.
+- `real_every: N` makes every Nth cut in the emulator and powers the device up from the
+  computed flash state for the others, which is several times faster and checked against
+  the real cuts.
+- `torn` adds states where the power failed inside an erase or a program.
+- `depth: 2` cuts again while the device is recovering from the first cut.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | every cut recovered |
+| 1 | at least one cut did not, or the update fails with no cut at all |
+| 2 | the adapter could not be read |
+| 3 | the tool itself failed (Renode would not start, or the self-check found the emulated flash differing from the golden run) |
