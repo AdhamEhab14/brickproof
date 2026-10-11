@@ -3,6 +3,8 @@
 #         new user runs it: the correct one must survive a cut at every flash
 #         state and every torn state, and each bug build must be caught (exit code 1,
 #         not 0 or 3).
+# action, docker, package - the three ways BrickProof is handed to someone else, each
+#         built and used for real.
 # e2e   - builds the Three-Tier bootloader (the first real target), then cuts power
 #         during its FBL self-update in Renode and checks it recovers each time.
 name: CI
@@ -139,6 +141,71 @@ jobs:
         with:
           name: demo-${{ matrix.adapter }}
           path: brickproof-out/
+
+  # the GitHub Action, used the way another repository would use it
+  action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the demo through the action
+        uses: ./
+        with:
+          adapter: examples/demo_ab_bootloader/adapter.yaml
+          args: --plan phases --per-phase 1 --torn -j 3
+          artifact-name: action-report
+
+      - name: The reports exist
+        run: test -s brickproof-report/report.json -a -s brickproof-report/report.xml -a -s brickproof-report/report.html
+
+  # the Docker image builds, and the demo runs inside it
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -f docker/Dockerfile -t brickproof .
+
+      - name: Run the bundled demo in it
+        run: docker run --rm brickproof demo --plan phases --per-phase 1 -j 3
+
+      - name: A bug build must fail with exit code 1
+        run: |
+          set +e
+          docker run --rm brickproof demo no_erase --fail-fast
+          [ $? -eq 1 ]
+
+  # the package builds, installs clean, and brings the demo
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the sdist and the wheel
+        run: |
+          pip install build
+          python -m build
+
+      - name: Install the wheel somewhere clean and list the demo
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/pip install dist/*.whl
+          cd /tmp && /tmp/check/bin/brickproof demo --list | grep -q "bug-self_lock"
+
+      - name: The sdist builds a wheel with the same files
+        run: |
+          mkdir /tmp/sdist && tar xzf dist/*.tar.gz -C /tmp/sdist --strip-components=1
+          cd /tmp/sdist && python -m build --wheel -o /tmp/sdist-wheel
+          a=$(unzip -Z1 "$GITHUB_WORKSPACE"/dist/*.whl | grep -v dist-info | sort)
+          b=$(unzip -Z1 /tmp/sdist-wheel/*.whl | grep -v dist-info | sort)
+          [ "$a" = "$b" ] || { diff <(echo "$a") <(echo "$b"); exit 1; }
 
   e2e:
     runs-on: ubuntu-latest

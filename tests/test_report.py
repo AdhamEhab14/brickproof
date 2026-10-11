@@ -121,7 +121,11 @@ def test_html_is_balanced_and_self_contained():
     page = reports.html_page(bad())
     o = parse(page)
     assert o.problems == [] and o.stack == []
-    assert "<style>" in page and "http" not in page.replace("http-equiv", ""), "no outside resources"
+    # nothing is loaded from outside: no scripts, stylesheets, images or fonts.
+    # Links to the regulation texts are plain hyperlinks.
+    for tag in ("<script", "<link", "<img", "<iframe", "@import", "url("):
+        assert tag not in page, tag
+    assert "<style>" in page
     assert "prefers-color-scheme: dark" in page and "viewport" in page
 
 
@@ -177,3 +181,39 @@ def test_reproduce_commands_per_kind():
     assert reports.reproduce(rep, dict(base, depth=2, op_index=3, cut="op-7 > op-3")) == \
         "brickproof run a.yaml --cut 7 --depth 2"
     assert reports.reproduce(rep, dict(base, baseline=True, op_index=10)) == "brickproof run a.yaml --cut 0"
+
+
+# ---- where the evidence fits ---------------------------------------------------------
+
+def rows(report):
+    return {r["id"]: r for r in report["regulations"]}
+
+
+def test_a_passing_run_with_an_oracle_shows_what_it_can_and_no_more():
+    r = rows(good())
+    assert r["r156-7.2.2.1.1"]["status"] == "shown" and r["cra-I-2-h"]["status"] == "shown"
+    assert "10 of its 10 distinct flash states" in r["r156-7.2.2.1.1"]["detail"]
+    assert "torn" in r["r156-7.2.2.1.1"]["detail"]
+    assert r["r156-7.2.2.1.2"]["status"] == "not tested", "the power check is outside a run"
+    assert all(x["not"] and x["asks"] and x["url"].startswith("https://") for x in r.values())
+
+
+def test_a_failing_run_shows_nothing():
+    r = rows(bad())
+    assert {x["status"] for x in r.values()} == {"not shown", "not tested"}
+    assert "run(s) failed" in r["r156-7.2.2.1.1"]["detail"]
+
+
+def test_without_an_oracle_the_integrity_clauses_are_not_shown():
+    r = rows(make_report(FakeDevice(), oracle=False))
+    assert r["r156-7.2.2.1.1"]["status"] == "shown", "recovery does not need the oracle"
+    assert r["r156-7.2.1.1"]["status"] == "not shown" and "no oracle" in r["r156-7.2.1.1"]["detail"]
+    assert r["cra-I-2-f"]["status"] == "not shown"
+
+
+def test_the_page_has_the_map_with_its_disclaimer_and_links():
+    page = reports.html_page(good())
+    text = " ".join(parse(page).text)
+    assert "Where this evidence fits" in text and "A map, not a verdict" in text
+    assert "7.2.2.1.1" in text and "Annex I, Part I, (2)(h)" in text
+    assert "href='https://unece.org/" in page and "href='https://eur-lex.europa.eu/" in page

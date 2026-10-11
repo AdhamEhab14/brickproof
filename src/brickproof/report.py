@@ -174,6 +174,23 @@ def _coverage(cov):
                 cov["operations"], cov["distinct_states"], cov["cuts"], text, rows))
 
 
+def _regulations(rows):
+    marks = {"shown": "<span class='ok'>shown</span>", "not shown": "<span class='bad'>not shown</span>",
+             "not tested": "<span class='skip'>not tested</span>"}
+    body = "".join(
+        "<tr><td><a href='%s'>%s</a><br><span class='mono'>%s</span></td><td class='msg'>%s</td>"
+        "<td>%s</td><td class='msg'>%s%s</td><td class='msg'>%s</td></tr>" % (
+            _e(r["url"]), _e(r["source"]), _e(r["clause"]), _e(r["asks"]), marks[r["status"]],
+            _e(r["shows"]), ("<br><span class='dim'>This run: %s.</span>" % _e(r["detail"]))
+            if r["detail"] else "", _e(r["not"])) for r in rows)
+    return ("<h2>Where this evidence fits</h2>"
+            "<p class='note'>A map, not a verdict. Whether a regulation is met is decided for a "
+            "manufacturer's whole process by an authority or a notified body. The clause summaries "
+            "are paraphrases; the published text is the one that counts.</p>"
+            "<div class='wrap'><table><tr><th>Clause</th><th>What it asks</th><th>This run</th>"
+            "<th>What a passing run shows</th><th>What it does not show</th></tr>%s</table></div>" % body)
+
+
 def html_page(report):
     """One self-contained page: verdict, what was covered, failures first, then everything."""
     cuts = report["cuts"]
@@ -241,6 +258,9 @@ def html_page(report):
                      "what flash cells do but have not been calibrated against real hardware.")
     notes.append("Not modelled: write protection, read protection, option bytes, flash timing, wear.")
     out.append("".join("<p class='note'>%s</p>" % _e(n) for n in notes))
+
+    if report.get("regulations"):
+        out.append(_regulations(report["regulations"]))
 
     out.append("<h2>Firmware tested</h2><div class='wrap'><table><tr><th>File</th><th>SHA-256</th></tr>")
     out.append("".join("<tr><td class='mono'>%s</td><td class='mono'>%s</td></tr>" % (

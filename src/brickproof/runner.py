@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from brickproof import __version__
 from brickproof import oracle as oracles
 from brickproof import plan as plans
+from brickproof import regulations
 from brickproof import torn as torns
 from brickproof import trace as traces
 from brickproof.adapter import Cut
@@ -604,7 +605,7 @@ def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, 
 def as_dict(outcome, adapter):
     """Everything about a run, as plain data. The JSON, JUnit and HTML reports are all
     made from this."""
-    return {
+    report = {
         "adapter": adapter.name,
         "adapter_file": getattr(adapter, "path", "") or "adapter.yaml",
         "target": os.path.basename(adapter.target),
@@ -619,3 +620,5 @@ def as_dict(outcome, adapter):
         "timings": outcome.timings,
         "cuts": [asdict(r) for r in outcome.results],
     }
+    report["regulations"] = regulations.evidence(report)
+    return report

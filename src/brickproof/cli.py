@@ -148,6 +148,34 @@ def cmd_run(args):
     return 0 if out.passed else 1
 
 
+def demo_folder():
+    """Where the bundled demo lives: inside the installed package."""
+    import brickproof.demo
+    return os.path.dirname(os.path.abspath(brickproof.demo.__file__))
+
+
+def demo_builds():
+    """The demo's adapters: 'adapter' is the correct bootloader, the rest have a known bug."""
+    names = sorted(f[:-5] for f in os.listdir(demo_folder()) if f.endswith(".yaml") and f[0] != "_")
+    return ["adapter"] + [n for n in names if n != "adapter"]
+
+
+def cmd_demo(args):
+    builds = demo_builds()
+    if args.list:
+        for name in builds:
+            with open(os.path.join(demo_folder(), name + ".yaml")) as f:
+                first = f.readline().lstrip("# ").strip()
+            print("%-22s %s" % (name, first))
+        return 0
+    name = args.name if args.name in builds else "bug-" + args.name
+    if name not in builds:
+        print("no demo build called %r (try: brickproof demo --list)" % args.name, file=sys.stderr)
+        return 2
+    args.adapter = os.path.join(demo_folder(), name + ".yaml")
+    return cmd_run(args)
+
+
 def cmd_trace(args):
     ad = _load(args)
     if ad is None:
@@ -179,8 +207,9 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="brickproof", description="Power-fail testing for firmware updates.")
     sub = p.add_subparsers(dest="command", required=True)
 
-    def common(c):
-        c.add_argument("adapter", help="adapter YAML file")
+    def common(c, adapter=True):
+        if adapter:
+            c.add_argument("adapter", help="adapter YAML file")
         c.add_argument("--target", help="firmware project folder (overrides the adapter's 'target')")
         c.add_argument("--keep", action="store_true", help="keep the Renode work folder")
         c.add_argument("--renode-log", help="write Renode's own output to this file")
@@ -190,6 +219,29 @@ def main(argv=None):
 
     r = sub.add_parser("run", help="run an adapter's power cuts")
     common(r)
+    run_options(r)
+    r.set_defaults(func=cmd_run)
+
+    d = sub.add_parser("demo", help="run the bundled demo bootloader: no firmware of your own needed",
+                       description="Runs the demo that ships with BrickProof. With no name it is the "
+                                   "correct bootloader; a bug build's name runs that one "
+                                   "(see --list).")
+    d.add_argument("name", nargs="?", default="adapter", help="which build (default: the correct one)")
+    d.add_argument("--list", action="store_true", help="list the builds and exit")
+    common(d, adapter=False)
+    run_options(d)
+    d.set_defaults(func=cmd_demo)
+
+    t = sub.add_parser("trace", help="run the update uninterrupted and show its flash operations")
+    common(t)
+    t.add_argument("-o", "--out", help="write every operation as JSONL to this file")
+    t.set_defaults(func=cmd_trace)
+
+    args = p.parse_args(argv)
+    return args.func(args)
+
+
+def run_options(r):
     r.add_argument("--json", help="write the results as JSON to this file")
     r.add_argument("--junit", help="write the results as JUnit XML to this file")
     r.add_argument("--html", help="write a self-contained HTML report to this file")
@@ -210,15 +262,6 @@ def main(argv=None):
                         "from each first cut (default 1)")
     r.add_argument("--per-phase", type=int, metavar="N",
                    help="samples inside a long phase when planning by phases (default 8)")
-    r.set_defaults(func=cmd_run)
-
-    t = sub.add_parser("trace", help="run the update uninterrupted and show its flash operations")
-    common(t)
-    t.add_argument("-o", "--out", help="write every operation as JSONL to this file")
-    t.set_defaults(func=cmd_trace)
-
-    args = p.parse_args(argv)
-    return args.func(args)
 
 
 if __name__ == "__main__":
