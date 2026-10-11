@@ -1,0 +1,102 @@
+name: BrickProof power-fail test
+description: >
+  Run a firmware update in the Renode emulator, cut power at its flash operations,
+  and fail the job if the device does not recover.
+branding:
+  icon: zap-off
+  color: gray-dark
+
+inputs:
+  adapter:
+    description: Path to the adapter YAML that describes your firmware and its update.
+    required: true
+  target:
+    description: Firmware project folder, if the adapter's own 'target' should be overridden.
+    required: false
+    default: ""
+  args:
+    description: >
+      Extra options for `brickproof run`, for example "--plan phases --torn --depth 2 -j 3".
+    required: false
+    default: ""
+  report-dir:
+    description: Folder the JSON, JUnit and HTML reports are written to.
+    required: false
+    default: brickproof-report
+  upload-report:
+    description: Upload the report folder as a workflow artifact ("true" or "false").
+    required: false
+    default: "true"
+  artifact-name:
+    description: Name of the uploaded artifact.
+    required: false
+    default: brickproof-report
+  renode-version:
+    description: Renode release to run on.
+    required: false
+    default: "1.17.0"
+  python-version:
+    description: Python to run BrickProof with.
+    required: false
+    default: "3.12"
+
+outputs:
+  exit-code:
+    description: 0 every cut recovered, 1 at least one failed, 2 adapter error, 3 BrickProof itself failed.
+    value: ${{ steps.run.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Cache Renode
+      id: renode-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/renode
+        key: renode-${{ inputs.renode-version }}-${{ runner.os }}
+
+    - name: Install Renode
+      if: steps.renode-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        RENODE_VERSION: ${{ inputs.renode-version }}
+      run: |
+        mkdir -p ~/renode
+        curl -sL "https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz" \
+          | tar xz -C ~/renode --strip-components=1
+
+    - name: Install BrickProof
+      shell: bash
+      run: pip install "${{ github.action_path }}"
+
+    - name: Cut power during the update
+      id: run
+      shell: bash
+      # inputs come in through the environment, never pasted into the script
+      env:
+        BP_ADAPTER: ${{ inputs.adapter }}
+        BP_TARGET: ${{ inputs.target }}
+        BP_ARGS: ${{ inputs.args }}
+        BP_REPORT: ${{ inputs.report-dir }}
+      run: |
+        export RENODE_PATH="$HOME/renode/renode"
+        set -- run "$BP_ADAPTER" --json "$BP_REPORT/report.json" --junit "$BP_REPORT/report.xml" --html "$BP_REPORT/report.html"
+        if [ -n "$BP_TARGET" ]; then set -- "$@" --target "$BP_TARGET"; fi
+        # shellcheck disable=SC2086  # BP_ARGS is a list of options, split on purpose
+        set +e
+        brickproof "$@" $BP_ARGS
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Upload the report
+      if: always() && inputs.upload-report == 'true'
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.report-dir }}

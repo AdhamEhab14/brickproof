@@ -4,12 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "brickproof-fw"
-version = "0.0.1"
+version = "0.1.0"
 description = "Power-fail testing for firmware updates: cut power at every flash operation in Renode and check the device recovers"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Adham Ehab" }]
+keywords = ["firmware", "bootloader", "ota", "power-loss", "fault-injection", "renode", "embedded", "testing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: Software Development :: Testing",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6"]
 
@@ -21,13 +30,22 @@ brickproof = "brickproof.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/AdhamEhab14/brickproof"
+Issues = "https://github.com/AdhamEhab14/brickproof/issues"
+Changelog = "https://github.com/AdhamEhab14/brickproof/blob/main/CHANGELOG.md"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+# The demo is a package too, so that `pip install brickproof-fw` brings it along and
+# `brickproof demo` runs with nothing else to fetch. It lives in examples/ in the repo.
+packages = ["brickproof", "brickproof.engine", "brickproof.drivers", "brickproof.demo"]
+
+[tool.setuptools.package-dir]
+brickproof = "src/brickproof"
+"brickproof.demo" = "examples/demo_ab_bootloader"
 
 [tool.setuptools.package-data]
 # the flash/RCC models run inside Renode, so they ship as data, not modules
 brickproof = ["models/*.py", "platforms/*.repl"]
+"brickproof.demo" = ["*.yaml", "prebuilt/*", "README.md"]
 
 [tool.ruff]
 line-length = 110
