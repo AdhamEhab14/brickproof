@@ -40,6 +40,7 @@ class Cut:
 
 @dataclass
 class Adapter:
+    path: str                     # the YAML file it was read from
     name: str
     folder: str
     target: str
@@ -267,7 +268,7 @@ def load(path, target=None):
         raise AdapterError("driver: give exactly one of file or builtin")
 
     return Adapter(
-        name=name, folder=folder, target=target,
+        path=path, name=name, folder=folder, target=target,
         platform=base, platform_extra=os.path.join(folder, extra) if extra else None,
         flash=flash, ram_base=ram.get("base", 0x20000000), ram_size=ram_size, firmware=firmware,
         uart=d.get("uart", "usart2"),
