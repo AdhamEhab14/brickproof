@@ -52,15 +52,19 @@ def _torn_erases(page_bytes, rng):
     return {"erase-half": half, "erase-partial": partial, "erase-almost": almost}
 
 
-def _torn_programs(old, target, rng):
-    """{kind: value} for a halfword whose program from `old` to `target` was cut short.
-    The finished cell would hold old & target; a torn one has cleared only some of
-    the bits on the way there."""
+def _torn_programs(old, target, rng, size=2):
+    """{kind: value} for a cell of `size` bytes whose program from `old` to `target` was
+    cut short. The finished cell would hold old & target; a torn one has cleared only
+    some of the bits on the way there: those in its low half, those in its high half,
+    a random part of them."""
+    bits = 8 * size
+    full = (1 << bits) - 1
+    low_half = (1 << (bits // 2)) - 1
     done = old & target
-    todo = old & ~target & 0xFFFF           # the bits this program has to clear
-    low = (old & ~(todo & 0x00FF)) & 0xFFFF
-    high = (old & ~(todo & 0xFF00)) & 0xFFFF
-    partial = old & ~(todo & rng.getrandbits(16)) & 0xFFFF
+    todo = old & ~target & full             # the bits this program has to clear
+    low = old & ~(todo & low_half) & full
+    high = old & ~(todo & (full ^ low_half)) & full
+    partial = old & ~(todo & rng.getrandbits(bits)) & full
     out = {"program-low": low, "program-high": high, "program-partial": partial}
     return {k: v for k, v in out.items() if v not in (old, done)}
 
@@ -70,6 +74,8 @@ def states(op, before, flash, kinds=KINDS, seed=0):
     it. States equal to the flash before or after the operation are left out (those
     are the clean cuts), and so are duplicates of each other."""
     off, unit = traces.locate(op["addr"], flash)
+    if op["kind"] == "erase":
+        off, unit = traces.locate(traces.erase_start(op["addr"], flash), flash)
     out, seen = [], set()
 
     def add(kind, image):
@@ -85,10 +91,11 @@ def states(op, before, flash, kinds=KINDS, seed=0):
             if torn != after:
                 add(kind, bytes(before[:off]) + torn + bytes(before[off + unit:]))
     elif op["kind"] == "program" and "value" in op:
-        old = before[off] | (before[off + 1] << 8)
+        size = traces.size_of(op, flash)
+        old = int.from_bytes(before[off:off + size], "little")
         for kind in PROGRAM_KINDS:
-            torn = _torn_programs(old, op["value"], _rng(seed, op["index"], kind))
+            torn = _torn_programs(old, op["value"], _rng(seed, op["index"], kind), size)
             if kind in torn:
-                v = torn[kind]
-                add(kind, bytes(before[:off]) + bytes([v & 0xFF, v >> 8]) + bytes(before[off + 2:]))
+                add(kind, bytes(before[:off]) + torn[kind].to_bytes(size, "little")
+                    + bytes(before[off + size:]))
     return out
