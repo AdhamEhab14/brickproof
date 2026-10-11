@@ -686,19 +686,24 @@ class RenodeSession:
 class RenodeSerial:
     """pyserial-like view of the emulated UART, so a target's real host tool runs unchanged."""
 
-    def __init__(self, session, timeout=20, step=0.01):
+    def __init__(self, session, timeout=20, step=0.01, longest=0.08):
         self.s = session
         self.timeout = timeout
         self.step = step
+        self.longest = longest
 
     def write(self, data):
         self.s.uart_write(bytes(data))
 
     def read(self, n):
-        waited = 0.0
+        # the steps grow while nothing arrives: a prompt answer is read at once, and a
+        # device that stays silent does not cost a round trip to the emulator every 10 ms
+        waited, step = 0.0, self.step
         while len(self.s.rx) < n and waited < self.timeout:
-            self.s.run_for(self.step)
-            waited += self.step
+            step = min(step, self.timeout - waited)
+            self.s.run_for(step)
+            waited += step
+            step = min(step * 2, self.longest)
         out = bytes(self.s.rx[:n])
         del self.s.rx[:n]
         return out

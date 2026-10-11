@@ -72,9 +72,14 @@ class ThreeTierFblUpdate:
         self._ser(5).write(self.bl.build_frame(self.bl.CMD_UPDATE_FBL, self.hdr))
 
     def alive(self):
-        """The bootloader answers a version request."""
-        ok, _ = self.bl.transact(self._ser(2), self.bl.CMD_GET_VER)
-        return bool(ok)
+        """The bootloader answers a version request. After a cut the Boot Manager copies
+        40 KB before it starts anything, and on the chip that is about two seconds of
+        erasing and programming during which nobody listens. So ask more than once."""
+        for _ in range(int(self.opt.get("alive_tries", 4))):
+            ok, _ = self.bl.transact(self._ser(2), self.bl.CMD_GET_VER)
+            if ok:
+                return True
+        return False
 
     def oracle_images(self):
         """What may be in the FBL region: the FBL it shipped with, or the update."""

@@ -788,6 +788,16 @@ And adapters had time limits that only held because operations were free: the F4
 `update_time: 0.5` is less than its two sector erases. The limits were raised, and a failed
 baseline now says so when the flash operations alone take longer than `update_time`.
 
+What it costs: a run now covers more virtual time, because a recovery that copies 40 KB
+really is two seconds long. The Three-Tier adapter asked "are you alive?" once, 1.5 s after
+power-up, which was after the recovery when flash was instant and is in the middle of it
+now, so every cut in the copy failed in CI. The driver now asks up to four times. To keep
+the extra virtual time from turning into round trips to the emulator, the three waits that
+polled in fixed 10 to 50 ms steps (for a cut, for a boot banner, for a serial reply) now
+double their step while nothing happens. Measured on one Three-Tier cut: 71 `RunFor` calls
+for 9.3 virtual seconds. Saving up the 53 us skips of single programs and skipping a
+millisecond at a time was tried and made no measurable difference, so it was dropped.
+
 **Wear.** Each run reports the page or sector erased most often in one update, and what that
 means against the endurance the datasheet promises (10,000 cycles on both chips). It is a
 count from the golden trace, not a model of cells ageing: it tells you that a bootloader
