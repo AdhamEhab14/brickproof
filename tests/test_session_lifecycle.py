@@ -52,3 +52,13 @@ def test_sessions_left_open_are_closed_at_exit(tmp_path):
     assert s in S._live and proc.poll() is None
     S._close_leftovers()                            # what atexit runs
     assert proc.poll() is not None and s not in S._live
+
+
+def test_the_hang_limit_has_a_floor_a_ceiling_and_follows_the_machine():
+    assert S.hang_limit(0.05, S.SLOWEST_START) == 30.0, "never under 30 s"
+    assert S.hang_limit(0.3, 1.0) == 30.0
+    assert S.hang_limit(1.5, 6.0) == 180.0, "20x the slowest seen"
+    assert S.hang_limit(1.5, 50.0) == 60 + 120 * 1.5, "never over the old fixed allowance"
+    assert S.hang_limit(6.0, 2.0) == 240.0
+    slow, fast = S.hang_limit(2.0, 8.0), S.hang_limit(2.0, 2.0)
+    assert slow > fast, "a slower machine gets more time"

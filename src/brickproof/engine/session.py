@@ -74,6 +74,20 @@ class FlashGeometry:
     controller: int = 0x40022000
 
 
+SLOWEST_START = 6.0     # assume a slow machine until this one has been measured
+
+
+def hang_limit(seconds, slowest):
+    """Wall-clock seconds to wait for `seconds` of emulated time before deciding the
+    emulated CPU is stuck (on Renode a locked-up core means RunFor never returns).
+
+    Twenty times the slowest this machine has been seen to run, never under 30 s, and
+    never over the old fixed allowance. Too short would call a slow but healthy device
+    dead, which is a false failure, so the floor is generous: a healthy slice takes a
+    second or two. Too long only costs time on a device that really is dead."""
+    return min(60 + 120 * seconds, max(30.0, 20 * seconds * slowest))
+
+
 def find_renode():
     exe = os.environ.get("RENODE_PATH") or shutil.which("renode")
     if not exe and sys.platform == "win32" and os.path.exists("D:/Tools/renode/renode.exe"):
@@ -125,6 +139,7 @@ class RenodeSession:
         self.log = log
         self.virtual_time = 0.0
         self.rx = bytearray()
+        self._slowest = SLOWEST_START   # wall seconds per emulated second, the worst seen
         self._start()
 
     STARTUP_WAIT = 90           # seconds to wait for Renode's monitor to answer
@@ -250,12 +265,20 @@ class RenodeSession:
         # RunFor wants fixed-point text; scientific notation is rejected
         return 'emulation RunFor "%.7f"' % seconds
 
+    def hang_limit(self, seconds):
+        """How long, in wall-clock seconds, to wait for `seconds` of emulated time before
+        calling the CPU stuck."""
+        return hang_limit(seconds, self._slowest)
+
     def run_for(self, seconds):
-        # If it does not come back in generous wall-clock time, the emulated CPU is stuck.
+        t0 = time.time()
         try:
-            self.cmd(self._run_cmd(seconds), timeout=60 + 120 * seconds)
+            self.cmd(self._run_cmd(seconds), timeout=self.hang_limit(seconds))
         except TimeoutError:
             raise MachineHung("emulated time stopped advancing") from None
+        if seconds >= 0.05:
+            # learn how slow this machine really is; only ever towards "slower"
+            self._slowest = max(self._slowest, (time.time() - t0) / seconds)
         self.virtual_time += seconds
         self._pull()
 
@@ -358,7 +381,7 @@ class RenodeSession:
         for _ in range(n):
             lines += [self._run_cmd(interval), "cpu PC", "cpu CPSR"]
         try:
-            values = self._values(self.cmd_batch(lines, timeout=60 + 120 * n * interval))
+            values = self._values(self.cmd_batch(lines, timeout=self.hang_limit(n * interval)))
         except TimeoutError:
             raise MachineHung("emulated time stopped advancing") from None
         self.virtual_time += n * interval
@@ -400,7 +423,7 @@ class RenodeSession:
         while waited < limit:
             try:
                 reply = self.cmd_batch([self._run_cmd(step), self._get(REG_CUT_FIRED)],
-                                       timeout=60 + 120 * step)
+                                       timeout=self.hang_limit(step))
             except TimeoutError:
                 raise MachineHung("emulated time stopped advancing") from None
             self.virtual_time += step
