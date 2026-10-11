@@ -71,6 +71,9 @@ def cmd_run(args):
         ad.plan = dict(ad.plan or {}, mode=args.plan)
     if args.torn:
         ad.torn = list(torns.KINDS)
+    if args.depth is not None:
+        deeper = dict(adapters.DEPTH_DEFAULTS, **(ad.depth or {}), levels=args.depth)
+        ad.depth = deeper if args.depth > 1 else None
     if args.per_phase is not None:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
     if not ad.cuts and not ad.plan:
@@ -92,7 +95,7 @@ def cmd_run(args):
         traces.write_jsonl(out.trace, args.trace)
     if not out.results[0].passed:
         print("the update fails even with no power cut, so no cuts were run")
-    ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn)]
+    ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn) and r.depth == 1]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs)" % (
         passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0)))
@@ -100,6 +103,13 @@ def cmd_run(args):
     if torn:
         print("%d/%d torn states survived (modelled shapes of a half-done erase or program, "
               "not yet calibrated against silicon)" % (sum(r.passed for r in torn), len(torn)))
+    deep = [r for r in out.results if r.depth > 1]
+    if out.depth:
+        note = "; stopped at the limit of %d states" % ad.depth["max_states"] if out.depth["capped"] else ""
+        print("%d/%d states after a further cut during recovery recovered (up to %d cuts in a "
+              "row; %d more led to a state already tested%s)" % (
+                  sum(r.passed for r in deep), len(deep), out.depth["levels"],
+                  out.depth["skipped_known"], note))
     if ad.plan and out.plan:
         print("coverage: %s" % out.plan.summary())
     return 0 if out.passed else 1
@@ -152,6 +162,9 @@ def main(argv=None):
                         "(phases) all of them in short phases and samples in long ones")
     r.add_argument("--torn", action="store_true",
                    help="also boot from torn states: each cut's operation left half done")
+    r.add_argument("--depth", type=int, metavar="N",
+                   help="power cuts in a row to explore: 2 also cuts during the recovery "
+                        "from each first cut (default 1)")
     r.add_argument("--per-phase", type=int, metavar="N",
                    help="samples inside a long phase when planning by phases (default 8)")
     r.set_defaults(func=cmd_run)

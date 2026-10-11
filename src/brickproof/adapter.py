@@ -61,6 +61,7 @@ class Adapter:
     plan: dict = None             # let the planner choose cuts from the golden run (see plan.py)
     torn: list = None             # torn-operation shapes to try at each cut (see torn.py)
     torn_seed: int = 0
+    depth: dict = None            # explore cuts during recovery (see runner.explore)
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -153,6 +154,34 @@ def _parse_plan(scenario):
                 raise AdapterError("scenario.plan.%s: a whole number, 0 or more" % key)
             out[key] = p[key]
     return out
+
+
+DEPTH_DEFAULTS = {"mode": "phases", "per_phase": 2, "small": 6, "max_states": 2000}
+
+
+def _parse_depth(scenario):
+    """scenario.depth: how many power cuts in a row to explore. A number, or a mapping
+    {levels, mode, per_phase, small, max_states}. None when it is 1 or absent."""
+    d = scenario.get("depth")
+    if d is None:
+        return None
+    if isinstance(d, int) and not isinstance(d, bool):
+        d = {"levels": d}
+    if not isinstance(d, dict):
+        raise AdapterError("scenario.depth: a number of cuts in a row, or a mapping")
+    unknown = set(d) - {"levels", *DEPTH_DEFAULTS}
+    if unknown:
+        raise AdapterError("scenario.depth: unknown key(s) %s" % ", ".join(sorted(unknown)))
+    out = dict(DEPTH_DEFAULTS, **d)
+    out.setdefault("levels", 2)
+    if out["mode"] not in ("phases", "every"):
+        raise AdapterError("scenario.depth.mode: use phases or every, not %r" % out["mode"])
+    for key in ("levels", "per_phase", "small", "max_states"):
+        if not isinstance(out[key], int) or isinstance(out[key], bool) or out[key] < 0:
+            raise AdapterError("scenario.depth.%s: a whole number, 0 or more" % key)
+    if out["levels"] < 1:
+        raise AdapterError("scenario.depth.levels: at least 1")
+    return out if out["levels"] > 1 else None
 
 
 def _parse_torn(scenario):
@@ -253,6 +282,7 @@ def load(path, target=None):
         plan=_parse_plan(scenario),
         torn=_parse_torn(scenario),
         torn_seed=int(scenario.get("torn_seed", 0)),
+        depth=_parse_depth(scenario),
         driver_file=os.path.join(folder, drv["file"]) if drv.get("file") else None,
         driver_builtin=drv.get("builtin"),
         driver_options=drv.get("options", {}) or {},

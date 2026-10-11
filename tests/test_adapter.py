@@ -97,7 +97,8 @@ def test_demo_uses_the_builtin_driver():
 
 
 @pytest.mark.parametrize("bug", ["consume_first", "trust_header", "naive_floor", "pop_after_switch",
-                                 "no_erase", "no_unlock", "resume_copy"])
+                                 "no_erase", "no_unlock", "resume_copy",
+                                 "retry_limit"])
 def test_bug_variants_extend_the_demo(bug):
     base = adapters.load(os.path.join(DEMO, "adapter.yaml"))
     ad = adapters.load(os.path.join(DEMO, "bug-%s.yaml" % bug))

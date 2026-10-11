@@ -47,6 +47,10 @@ adapter) BrickProof also boots the device from torn states: an erase with only s
 bits flipped, a halfword with only some of its bits written. These shapes follow what flash
 cells do but are a model, not a measurement, so they are reported on their own line.
 
+Recovery writes flash too, and power can fail again while it does. With `--depth 2` (or
+`depth: 2` in the adapter) BrickProof also cuts during the recovery from each first cut. A
+flash state it has already tested is skipped, because the same flash is the same test.
+
 The verdict does not rest on what the firmware says about itself. An oracle checks from
 outside that the bytes installed are exactly an approved image and that the CPU is running
 inside it, not sitting in a fault handler. `runs v2` at the end of a line is its finding.
@@ -90,6 +94,7 @@ brickproof run examples/demo_ab_bootloader/bug-consume_first.yaml --fail-fast
 | `bug-no_erase` | copies the new image over the old one without erasing | the chip refuses to program cells that are not erased |
 | `bug-no_unlock` | never unlocks the flash controller | the chip ignores every write: the update silently does nothing |
 | `bug-resume_copy` | after an interrupted install, skips the erase and writes only what is missing | survives all 167 clean cuts; a torn state leaves a half-written cell the chip will not program again |
+| `bug-retry_limit` | gives up on an update after two interrupted attempts | survives any single cut, clean or torn; two cuts in a row leave no image |
 
 The last three are not power-loss bugs. They are mistakes a plain emulator lets through and a
 real chip does not, so they fail before any cut is made. The stack one was found by a real

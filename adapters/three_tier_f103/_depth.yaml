@@ -1,0 +1,3 @@
+extends: adapter.yaml
+scenario:
+  depth: {levels: 2, per_phase: 0, small: 4}

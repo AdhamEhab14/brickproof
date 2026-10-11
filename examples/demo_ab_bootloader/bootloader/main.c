@@ -32,6 +32,9 @@
  *                         the halfwords still missing. Survives every clean cut. A cut
  *                         inside a program leaves one cell half written, and the chip
  *                         will not program that cell again without an erase.
+ *   BUG_RETRY_LIMIT       give up on an update after two interrupted attempts. Survives
+ *                         any single power cut. Two cuts in a row, the second during
+ *                         the recovery from the first, leave no image at all.
  */
 #include "demo.h"
 
@@ -216,6 +219,19 @@ static void install(void)
 #endif
 #ifndef BUG_NO_UNLOCK
     flash_unlock();
+#endif
+#ifdef BUG_RETRY_LIMIT
+    /* Count install attempts with two marks in the staged image's unused header
+     * area, so a bad image cannot keep the device rebooting for ever. Two attempts
+     * already started and not finished: give up on this update. */
+    const volatile uint16_t *tries = (const volatile uint16_t *)(SLOT_B + 0x10);
+    if (tries[0] == 0 && tries[1] == 0) {
+        uart_puts("BL: giving up on this update\r\n");
+        consume_staging();
+        FLASH_CR |= CR_LOCK;
+        return;
+    }
+    flash_half(SLOT_B + (tries[0] ? 0x10 : 0x12), 0);
 #endif
 #ifndef BUG_NAIVE_FLOOR
     meta_write(version);

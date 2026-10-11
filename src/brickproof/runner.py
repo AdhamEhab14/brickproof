@@ -1,5 +1,6 @@
 """Run an adapter's cut list: for each cut, start the update from the same flash
 image, pull the plug, power back up and ask whether the device recovered."""
+import hashlib
 import os
 import shutil
 import tempfile
@@ -33,6 +34,7 @@ class CutResult:
     rewound: bool = False       # a program cut whose halfword had landed and was put back
     image: str = None           # the approved image the oracle found installed
     torn: str = None            # set for a torn state: which shape (see torn.py)
+    depth: int = 1              # 2 = a second cut, during the recovery from a first one
     message: str = ""
     seconds: float = 0.0
 
@@ -234,11 +236,116 @@ def run_torn(session, driver, adapter, state, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+def _digest(image):
+    return hashlib.sha1(bytes(image)).digest()
+
+
+def _recovery_trace(session, driver, adapter, image):
+    """What the device does to flash when it is powered up from `image` and left alone."""
+    session.restore_flash(image)
+    session.power_cycle(settle=0)
+    session.trace_start()
+    if adapter.boot_settle:
+        session.run_for(adapter.boot_settle)
+    driver.alive()                              # lets time pass until the device is up
+    if adapter.boot_settle:
+        session.run_for(adapter.boot_settle)    # and a little more, for what it does right after
+    return session.trace_stop()
+
+
+def run_deep(session, driver, adapter, parent, m, name, level, state, real):
+    """A cut during recovery: `parent` is the recovery (its starting flash and its traced
+    operations), `m` the operation of it to cut before, `state` the flash that leaves.
+
+    With real=True the cut is made in the emulator and the computed state is checked
+    against it. Otherwise the device is powered up from the computed state directly,
+    which is the same test (only flash survives a power cut) and much cheaper."""
+    op = parent.ops[m]
+    res = CutResult(cut=name, fired=True, kind=op["kind"], addr=op["addr"], op_index=m, depth=level)
+    t0 = time.time()
+    try:
+        if real:
+            session.restore_flash(parent.pre)
+            session.power_cycle(settle=0)
+            session.set_cut(m)
+            if not session.run_until_cut(adapter.cut_limit):
+                raise SelfCheckFailed("%s: the recovery did not reach operation %d when run a "
+                                      "second time, so it is not deterministic" % (name, m))
+            if op["kind"] == "program":
+                _rewind_program(session, parent, res)
+                session.flash_resync()
+            parent.verify(session, m, "recovery cut %s" % name)
+        else:
+            session.restore_flash(state)
+        _verdict(session, driver, adapter, res, parent.oracle)
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        res.seconds = round(time.time() - t0, 1)
+
+
+def explore(session, driver, adapter, golden, out, on_result=None, fail_fast=False):
+    """Cuts during recovery, level by level.
+
+    A state a cut left behind is powered up and its recovery traced. Cuts are planned
+    over that trace like over an update, and each gives a flash state. One already
+    tested is skipped: the same flash is the same test. Each new one is powered up and
+    judged, and becomes a parent for the next level."""
+    cfg = adapter.depth
+    flash = adapter.flash
+    plan_cfg = {k: cfg[k] for k in ("mode", "per_phase", "small")}
+    stats = {"levels": cfg["levels"], "states": 0, "skipped_known": 0, "capped": False}
+    out.depth = stats
+    clean = {r.op_index: r for r in out.results[1:] if r.fired and not r.torn and r.depth == 1}
+    seen = {_digest(golden.pre)}
+    for n in sorted(clean):
+        seen.add(_digest(golden.replay.at(n)))
+    parents = []
+    for n in plans.make(golden.ops, golden.pre, flash, **plan_cfg).cuts:
+        if n in clean and clean[n].passed:
+            parents.append(("op-%d" % n, bytes(golden.replay.at(n))))
+    for level in range(2, cfg["levels"] + 1):
+        found = []
+        for label, image in parents:
+            ops = _recovery_trace(session, driver, adapter, image)
+            if not ops:
+                continue                        # this recovery writes nothing: nothing to cut
+            parent = Golden(adapter, image, golden.oracle)
+            parent.record(ops)
+            real = True                         # the first new cut of each recovery is made for real
+            for m in plans.make(ops, image, flash, **plan_cfg).cuts:
+                state = bytes(parent.replay.at(m))
+                d = _digest(state)
+                if d in seen:
+                    stats["skipped_known"] += 1
+                    continue
+                seen.add(d)
+                if stats["states"] >= cfg["max_states"]:
+                    stats["capped"] = True
+                    return
+                r = run_deep(session, driver, adapter, parent, m, "%s > op-%d" % (label, m),
+                             level, state, real)
+                real = False
+                stats["states"] += 1
+                out.results.append(r)
+                if on_result:
+                    on_result(r)
+                if r.passed:
+                    found.append((r.cut, state))
+                elif fail_fast:
+                    return
+        parents = found
+
+
 @dataclass
 class Outcome:
     results: list               # CutResult: the baseline first, then each cut
     trace: list                 # the golden run's operations
     plan: object = None         # plan.Plan: what the trace offers and what was chosen
+    depth: dict = None          # what the exploration of cuts during recovery covered
     timings: dict = field(default_factory=dict)
 
     @property
@@ -300,6 +407,8 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
                 on_result(r)
             if fail_fast and not r.passed:
                 return out
+    if getattr(adapter, "depth", None) and not baseline_only:
+        explore(session, driver, adapter, golden, out, on_result, fail_fast)
     return out
 
 
@@ -343,6 +452,7 @@ def as_dict(outcome, adapter):
         "target": os.path.basename(adapter.target),
         "passed": outcome.passed,
         "coverage": outcome.plan.as_dict() if outcome.plan else None,
+        "depth": outcome.depth,
         "timings": outcome.timings,
         "cuts": [asdict(r) for r in outcome.results],
     }
