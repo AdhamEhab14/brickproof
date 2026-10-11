@@ -32,6 +32,16 @@ def test_patch_fails_loudly_on_a_model_without_geometry():
         wd.patch_geometry("x = 1\n", FlashGeometry(base=0, size=0x400, page=0x400))
 
 
+def test_a_sector_model_gets_its_sectors():
+    text = open(os.path.join(wd.MODELS, "stm32f4_flash.py")).read()
+    flash = FlashGeometry(base=0x08000000, size=0x6000, sectors=[(0, 0x2000), (0x2000, 0x4000)])
+    text = wd.patch_geometry(text, flash)
+    assert "\nSECTORS = [(0x0, 0x2000), (0x2000, 0x4000)]\n" in text
+    assert "\nFLASH_SIZE = 0x6000\n" in text
+    with pytest.raises(ValueError, match="SECTORS"):
+        wd.patch_geometry(flash_model(), flash)       # the F1 model erases by page
+
+
 def test_prepare_builds_a_space_free_work_folder(tmp_path):
     target = tmp_path / "my firmware"           # a space, like "D:\Embedded projects"
     (target / "build-test").mkdir(parents=True)

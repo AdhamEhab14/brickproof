@@ -1,0 +1,14 @@
+# The F411 demo write-protecting its own bootloader sector from inside the bootloader
+# (see BUG_SELF_LOCK in common/chip_f411.h). The chip erases its option bytes before
+# it rewrites them. A cut in between leaves them erased, which reads as read
+# protection, and the next request for "unprotected" makes the chip mass-erase its flash.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_bug_self_lock
+flash:
+  write_protected: []          # this build starts unlocked and locks itself
+firmware:
+  - file: prebuilt/f411_bootloader_bug_self_lock.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000

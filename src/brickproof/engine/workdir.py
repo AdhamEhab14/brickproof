@@ -8,7 +8,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS = os.path.join(HERE, "models")
 PLATFORMS = os.path.join(HERE, "platforms")
 
-_GEOMETRY = {"PAGE": "page", "FLASH_BASE": "base", "FLASH_SIZE": "size"}
+_GEOMETRY = {"FLASH_BASE": "base", "FLASH_SIZE": "size"}
 FAULT_REG_OFFSET = 0x118        # REG_FAULT_ADDR in session.py
 TRACE_NAME = "trace.txt"        # RenodeSession.TRACE_NAME
 SHADOW_BASE = 0x91000000        # SHADOW in the flash models
@@ -21,7 +21,12 @@ MEMORIES = {
     "stm32f103": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x00000000),
                   # where the address space is empty on the real chip: from the end of
                   # RAM to the bit-band alias, from the end of flash to system memory
-                  "ram_hole_end": 0x22000000, "flash_hole_end": 0x1FFF0000},
+                  "ram_hole_end": 0x22000000, "flash_hole_end": 0x1FFF0000,
+                  # room for the option bytes: up to whatever comes next on the bus
+                  "ob_region": 0x800},
+    "stm32f411": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x08000000),
+                  "ram_hole_end": 0x22000000, "flash_hole_end": 0x1FFF0000,
+                  "ob_region": 0x400},
 }
 
 
@@ -68,8 +73,22 @@ def _set_trace_file(model_text, path):
     raise ValueError("flash model has no 'TRACE_FILE = ...' line")
 
 
+def _set_sectors(model_text, sectors):
+    """Rewrite the `SECTORS = [...]` line of a flash model that erases by sector."""
+    line = "SECTORS = [%s]" % ", ".join("(0x%X, 0x%X)" % s for s in sectors)
+    model_text, n = re.subn(r"^SECTORS = .*$", line, model_text, count=1, flags=re.M)
+    if n != 1:
+        raise ValueError("model has no 'SECTORS = ...' line")
+    return model_text
+
+
 def patch_geometry(model_text, flash):
-    """Rewrite the PAGE / FLASH_BASE / FLASH_SIZE lines of a flash model."""
+    """Rewrite a flash model's geometry lines: FLASH_BASE and FLASH_SIZE, and what an
+    erase wipes there, one PAGE size or a list of SECTORS."""
+    if flash.sectors:
+        model_text = _set_sectors(model_text, flash.sectors)
+    else:
+        model_text = _set_const(model_text, "PAGE", flash.page)
     for const, attr in _GEOMETRY.items():
         model_text = _set_const(model_text, const, getattr(flash, attr))
     return model_text
@@ -99,12 +118,15 @@ def prepare(workdir, adapter):
     for name in os.listdir(MODELS):
         if not name.endswith(".py") or name.startswith("_") or name == "mem_guard.py":
             continue
+        if name.endswith("_flash.py") and name != adapter.flash.model:
+            continue                            # another chip family's controller
         text = open(os.path.join(MODELS, name)).read()
         if name.endswith("_flash.py"):
             text = patch_geometry(text, adapter.flash)
             if adapter.flash.ob_base is not None:
                 text = _set_const(text, "OB_BASE", adapter.flash.ob_base)
                 text = _set_const(text, "OB_SIZE", adapter.flash.ob_size)
+            if adapter.flash.wrp_unit:
                 text = _set_const(text, "WRP_UNIT", adapter.flash.wrp_unit)
             text = _set_trace_file(text, "%s/%s" % (_slash(workdir), TRACE_NAME))
         with open(os.path.join(models, name), "w", newline="\n") as f:
@@ -119,8 +141,8 @@ def prepare(workdir, adapter):
             name, base, adapter.flash.size + 0x1000)
     # the option bytes themselves, at their real address
     if adapter.flash.ob_base is not None:
-        repl += "\nbpOptionBytes: Memory.MappedMemory @ sysbus 0x%X\n    size: 0x800\n" % (
-            adapter.flash.ob_base)
+        repl += "\nbpOptionBytes: Memory.MappedMemory @ sysbus 0x%X\n    size: 0x%X\n" % (
+            adapter.flash.ob_base, MEMORIES[adapter.platform]["ob_region"])
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):
         text = _set_const(guard, "GUARD_BASE", base)

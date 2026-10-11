@@ -78,6 +78,7 @@ class FlashGeometry:
     # where erase units differ in size (an STM32F4's sectors): [(offset, size), ...]
     sectors: list = None
     controller: int = 0x40022000
+    model: str = "stm32f1_flash.py"      # the flash controller model in models/
     # Option bytes, where the chip has them: their address, and what they hold when a
     # test starts. A flash image is then the flash followed by these bytes, so a change
     # to them is saved, restored, replayed and compared like any other.

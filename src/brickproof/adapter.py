@@ -13,11 +13,6 @@ import yaml
 from brickproof.engine.session import FlashGeometry
 from brickproof.torn import KINDS as TORN_KINDS
 
-PLATFORMS = ("stm32f103",)
-
-# per platform: where the option bytes are, and how much flash one WRP bit covers
-OPTION_BYTES = {"stm32f103": (0x1FFFF800, 0x1000)}
-
 
 class AdapterError(ValueError):
     pass
@@ -82,17 +77,25 @@ class Adapter:
         return mod.make_driver(session, self)
 
 
+def _protected_ranges(flash, protected):
+    """The write_protected entries as checked (where, start, size) tuples."""
+    out = []
+    for i, r in enumerate(protected):
+        where = "flash.write_protected[%d]" % i
+        start, size = _need(r, "from", where), _need(r, "size", where)
+        if start < flash.base or start + size > flash.base + flash.size or size <= 0:
+            raise AdapterError("%s: outside the flash" % where)
+        out.append((where, start, size))
+    return out
+
+
 def stm32f1_option_bytes(flash, protected, read_protected):
     """The 16 option bytes of an STM32F1 as the chip holds them: RDP, USER, Data0,
     Data1, WRP0..WRP3, each followed by its complement. `protected` is a list of
     {from, size} ranges to write-protect; a cleared WRP bit protects its unit."""
     unit = flash.wrp_unit
     wrp = 0xFFFFFFFF
-    for i, r in enumerate(protected):
-        where = "flash.write_protected[%d]" % i
-        start, size = _need(r, "from", where), _need(r, "size", where)
-        if start < flash.base or start + size > flash.base + flash.size or size <= 0:
-            raise AdapterError("%s: outside the flash" % where)
+    for where, start, size in _protected_ranges(flash, protected):
         if (start - flash.base) % unit or size % unit:
             raise AdapterError("%s: write protection goes in units of 0x%X on this chip"
                                % (where, unit))
@@ -106,6 +109,41 @@ def stm32f1_option_bytes(flash, protected, read_protected):
                  wrp & 0xFF, (wrp >> 8) & 0xFF, (wrp >> 16) & 0xFF, (wrp >> 24) & 0xFF):
         out += bytes([data, ~data & 0xFF])
     return bytes(out)
+
+
+def stm32f4_option_bytes(flash, protected, read_protected):
+    """The option bytes of an STM32F4 as the chip shows them: USER and RDP in one
+    halfword, the nWRP bits in another, each followed by its complement. Write
+    protection is one bit per sector, and a cleared bit protects its sector."""
+    units = flash.units()
+    nwrp = 0xFFF
+    for where, start, size in _protected_ranges(flash, protected):
+        starts = [u for u, _ in units]
+        ends = [u + n for u, n in units]
+        if start not in starts or start + size not in ends:
+            raise AdapterError("%s: write protection goes by whole sectors on this chip" % where)
+        for s in range(starts.index(start), ends.index(start + size) + 1):
+            nwrp &= ~(1 << s)
+    out = bytearray()
+    for half in (((0x55 if read_protected else 0xAA) << 8) | 0xEF, 0xF000 | nwrp):
+        out += bytes([half & 0xFF, half >> 8, ~half & 0xFF, (~half >> 8) & 0xFF]) + bytes([0xFF]) * 4
+    return bytes(out)
+
+
+# What the engine has to know about each chip family it can emulate.
+#   model         the flash controller model in models/
+#   controller    where that controller sits
+#   ob_base       where the option bytes are
+#   option_bytes  builds them from an adapter's write_protected / read_protected
+#   wrp_unit      how much flash one write-protection bit covers (None: one per sector)
+#   write_unit    bytes a program usually writes
+CHIPS = {
+    "stm32f103": dict(model="stm32f1_flash.py", controller=0x40022000, ob_base=0x1FFFF800,
+                      option_bytes=stm32f1_option_bytes, wrp_unit=0x1000, write_unit=2),
+    "stm32f411": dict(model="stm32f4_flash.py", controller=0x40023C00, ob_base=0x1FFFC000,
+                      option_bytes=stm32f4_option_bytes, wrp_unit=None, write_unit=4),
+}
+PLATFORMS = tuple(CHIPS)
 
 
 def _need(d, key, where):
@@ -275,13 +313,30 @@ def load(path, target=None):
     extra = plat.get("extra")
 
     fl = _need(d, "flash", path)
+    chip = CHIPS[base]
     flash = FlashGeometry(base=_need(fl, "base", "flash"), size=_need(fl, "size", "flash"),
-                          page=_need(fl, "page", "flash"), write_unit=fl.get("write_unit", 2))
-    if flash.size % flash.page:
-        raise AdapterError("flash.size must be a whole number of pages")
-    ob_base, flash.wrp_unit = OPTION_BYTES[base]
-    flash.ob_base = ob_base
-    flash.option_bytes = stm32f1_option_bytes(flash, fl.get("write_protected") or [],
+                          page=fl.get("page"), write_unit=fl.get("write_unit", chip["write_unit"]),
+                          controller=chip["controller"], model=chip["model"], ob_base=chip["ob_base"],
+                          wrp_unit=chip["wrp_unit"])
+    if (flash.page is None) == ("sectors" not in fl):
+        raise AdapterError("flash: give exactly one of page (one erase size everywhere) "
+                           "or sectors (a list of sizes)")
+    if flash.page is not None:
+        if flash.page <= 0 or flash.size % flash.page:
+            raise AdapterError("flash.size must be a whole number of pages")
+    else:
+        sizes = fl["sectors"]
+        if not isinstance(sizes, list) or not sizes or any(not isinstance(n, int) or n <= 0 for n in sizes):
+            raise AdapterError("flash.sectors must be a list of sector sizes")
+        if sum(sizes) != flash.size:
+            raise AdapterError("flash.sectors add up to 0x%X, but flash.size is 0x%X"
+                               % (sum(sizes), flash.size))
+        flash.sectors = [(sum(sizes[:i]), n) for i, n in enumerate(sizes)]
+    if chip["model"] == "stm32f1_flash.py" and flash.page is None:
+        raise AdapterError("flash: an %s erases by page, not by sector" % base)
+    if chip["model"] == "stm32f4_flash.py" and flash.sectors is None:
+        raise AdapterError("flash: an %s erases by sector; list them in flash.sectors" % base)
+    flash.option_bytes = chip["option_bytes"](flash, fl.get("write_protected") or [],
                                               bool(fl.get("read_protected", False)))
 
     # RAM size is not optional: an emulator with more RAM than the chip hides

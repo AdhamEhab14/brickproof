@@ -1,0 +1,61 @@
+# The same demo on an STM32F411: sectors of 16 to 128 KB, word programming, v1 -> v2.
+# The chip differs from the F103 in everything a power cut touches: an erase wipes a
+# whole sector, a program can clear bits but is never refused, and the chip rewrites
+# its own option bytes. Runs from the committed prebuilt/ files:
+#
+#   brickproof demo f411
+#
+# The f411-bug-*.yaml files next to this one swap in a bootloader with a known bug.
+
+name: demo_ab_bootloader_f411
+target: .
+
+platform:
+  base: stm32f411
+
+flash:
+  base: 0x08000000
+  size: 0x80000          # 512 KB
+  sectors: [0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]
+  write_unit: 4
+  write_protected:                   # as shipped: the bootloader's own sector is locked
+    - {from: 0x08000000, size: 0x4000}
+
+ram:
+  size: 0x20000        # 128 KB. Not optional: extra emulated RAM hides stack faults
+
+# the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
+firmware:
+  - file: prebuilt/f411_bootloader.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000
+
+uart: usart2
+boot_settle: 0.3
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x08040000
+    image: prebuilt/f411_app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    rollback:
+      image: prebuilt/f411_app_v1.img
+      forbidden: "APP v1"
+
+# Judged from outside the firmware: the bytes in Slot A must be exactly one of
+# these images, and the core must be running inside it, not in a fault handler.
+oracle:
+  images:
+    v1: {file: prebuilt/f411_app_v1.img, at: 0x08020000}
+    v2: {file: prebuilt/f411_app_v2.img, at: 0x08020000}
+  accept: [v2]                       # a cut must not lose the update: only the new one will do
+
+scenario:
+  name: update-v1-to-v2
+  cut_limit: 1                       # virtual seconds; the whole install takes far less
+  update_time: 0.5
+  plan: every                        # cut at every distinct flash state the update goes through

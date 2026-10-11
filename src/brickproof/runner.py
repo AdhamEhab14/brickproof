@@ -101,7 +101,7 @@ def _fault_message(session):
                 "0x%08X. An STM32F1 refuses these (PGERR) and keeps the old value" % v["refused"])
     if v.get("protected"):
         return ("write protection: %d erase or program operation(s) in write-protected flash "
-                "were refused, first at 0x%08X. The option bytes protect that page, so the "
+                "were refused, first at 0x%08X. The option bytes protect that part of flash, so the "
                 "chip changes nothing there" % v["protected"])
     if v["stray"]:
         return ("flash changed at 0x%08X with no flash operation behind it (a store with PG "
