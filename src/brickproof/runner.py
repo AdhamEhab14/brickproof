@@ -124,8 +124,9 @@ def _rewind_program(session, golden, res):
     # Compared with what was there before, not with the traced value: the two can differ
     # at this instant. An option byte is traced as the chip stores it (the byte and its
     # complement), but until the program is settled the cell holds what was written.
-    if session.read_half(res.addr) != before:
-        session.write_half(res.addr, before)
+    size = traces.size_of(op, golden.flash)
+    if session.read_unit(res.addr, size) != before:
+        session.write_unit(res.addr, before, size)
         res.rewound = True
 
 

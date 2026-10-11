@@ -180,11 +180,11 @@ class FakeDevice:
                 return BASE + i
         return None
 
-    def read_half(self, addr):
-        return self._half(addr)
+    def read_unit(self, addr, size):
+        return int.from_bytes(self.read_bytes(addr, size), "little")
 
-    def write_half(self, addr, value):
-        self._put(addr, value)
+    def write_unit(self, addr, value, size):
+        self.mem[addr - BASE:addr - BASE + size] = value.to_bytes(size, "little")
 
     def read_bytes(self, addr, n):
         return bytes(self.mem[addr - BASE:addr - BASE + n])

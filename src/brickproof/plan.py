@@ -86,7 +86,7 @@ def changes(ops, pre, flash):
     out = []
     for op in ops:
         if op["kind"] == "erase":
-            off, size = traces.locate(op["addr"], flash)
+            off, size = traces.locate(traces.erase_start(op["addr"], flash), flash)
             erased = bytes([0xFF]) * size
             out.append(image[off:off + size] != erased)
             image[off:off + size] = erased
@@ -95,9 +95,9 @@ def changes(ops, pre, flash):
             image[:flash.size] = bytes([0xFF]) * flash.size
         elif op["kind"] == "program" and "value" in op:
             off, _ = traces.locate(op["addr"], flash)
-            lo, hi = op["value"] & 0xFF, op["value"] >> 8
-            out.append(image[off] != lo or image[off + 1] != hi)
-            image[off], image[off + 1] = lo, hi
+            new = op["value"].to_bytes(traces.size_of(op, flash), "little")
+            out.append(image[off:off + len(new)] != new)
+            image[off:off + len(new)] = new
         else:
             out.append(False)           # refused, protected, or it wrote what was already there
     return out
@@ -127,7 +127,7 @@ def make(ops, pre, flash, mode="phases", per_phase=8, small=12):
     # (op 0 always does: it is the flash the update started from)
     new_state = [n == 0 or changed[n - 1] for n in range(len(ops))]
     plan = Plan(mode=mode, operations=len(ops))
-    for ph in traces.phases(ops, flash.page, flash.write_unit):
+    for ph in traces.phases(ops, flash):
         candidates = [n for n in range(ph.first, ph.last + 1) if new_state[n]]
         if mode == "every" or len(candidates) <= max(small, 4):
             cuts = candidates

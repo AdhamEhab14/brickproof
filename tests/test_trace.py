@@ -4,6 +4,7 @@ from brickproof import trace as traces
 from brickproof.engine.session import FlashGeometry
 
 PAGE = 0x400
+F1 = FlashGeometry(base=0x08000000, size=0x20000, page=PAGE)
 
 
 def op(i, kind, addr, **extra):
@@ -16,37 +17,37 @@ def copy(first_index, start, n):
 
 def test_a_sequential_copy_is_one_phase():
     ops = [op(0, "erase", 0x08002000)] + copy(1, 0x08002200, 150)
-    ph = traces.phases(ops, PAGE)
+    ph = traces.phases(ops, F1)
     assert [(p.first, p.last, p.kind, p.count) for p in ph] == [(0, 0, "erase", 1), (1, 150, "program", 150)]
     assert (ph[1].start, ph[1].end) == (0x08002200, 0x08002200 + 2 * 149)
 
 
 def test_erases_group_page_by_page():
     ops = [op(i, "erase", 0x08004000 + i * PAGE) for i in range(40)]
-    ph = traces.phases(ops, PAGE)
+    ph = traces.phases(ops, F1)
     assert len(ph) == 1 and ph[0].count == 40 and ph[0].end == 0x08004000 + 39 * PAGE
 
 
 def test_a_jump_in_address_starts_a_new_phase():
     # body first, then the header in front of it: two phases, though both are programs
     ops = copy(0, 0x08002200, 4) + copy(4, 0x08002000, 2)
-    assert [(p.first, p.last) for p in traces.phases(ops, PAGE)] == [(0, 3), (4, 5)]
+    assert [(p.first, p.last) for p in traces.phases(ops, F1)] == [(0, 3), (4, 5)]
 
 
 def test_rewriting_the_same_address_is_not_a_run():
     ops = [op(0, "program", 0x08010000, value=0), op(1, "program", 0x08010000, value=0)]
-    assert len(traces.phases(ops, PAGE)) == 2
+    assert len(traces.phases(ops, F1)) == 2
 
 
 def test_the_write_unit_sets_the_program_step():
     ops = [op(k, "program", 0x08000000 + 4 * k, value=0) for k in range(3)]
-    assert len(traces.phases(ops, PAGE, unit=4)) == 1
-    assert len(traces.phases(ops, PAGE, unit=2)) == 3
+    assert len(traces.phases(ops, FlashGeometry(base=0x08000000, size=0x20000, page=PAGE, write_unit=4))) == 1
+    assert len(traces.phases(ops, F1)) == 3
 
 
 def test_describe_shows_single_and_ranged_phases():
     ops = [op(0, "erase", 0x0801E400)] + copy(1, 0x0801E400, 6)
-    lines = traces.describe(ops, PAGE)
+    lines = traces.describe(ops, F1)
     assert lines[0].split() == ["op", "0", "erase", "1", "0x0801E400"]
     assert lines[1].split() == ["ops", "1-6", "program", "6", "0x0801E400", "..", "0x0801E40A"]
 
@@ -65,7 +66,7 @@ def test_jsonl_is_one_readable_operation_per_line(tmp_path):
 
 
 def test_an_empty_trace_has_no_phases():
-    assert traces.phases([], PAGE) == [] and traces.describe([], PAGE) == []
+    assert traces.phases([], F1) == [] and traces.describe([], F1) == []
 
 
 GEOMETRY = FlashGeometry(base=0x08000000, size=0x4000, page=PAGE)
@@ -142,3 +143,47 @@ def test_a_mass_erase_does_not_touch_the_option_bytes():
 def test_protected_and_refused_operations_change_nothing_in_a_replay():
     ops = [op(0, "protected", 0x08000400), op(1, "refused", 0x08000000, value=1, old=2)]
     assert bytes(traces.Replay(image_with_ob(), ops, WITH_OB).at(2)) == image_with_ob()
+
+
+# an STM32F4's first sectors: four of 16 KB, one of 64 KB, then 128 KB each
+F4 = FlashGeometry(base=0x08000000, size=0x40000, write_unit=4,
+                   sectors=[(0, 0x4000), (0x4000, 0x4000), (0x8000, 0x4000), (0xC000, 0x4000),
+                            (0x10000, 0x10000), (0x20000, 0x20000)])
+
+
+def test_an_erase_unit_is_whatever_holds_the_address():
+    assert F1.unit_at(0x08000405) == (0x08000400, PAGE)
+    assert F4.unit_at(0x08004000) == (0x08004000, 0x4000)
+    assert F4.unit_at(0x0801FFFF) == (0x08010000, 0x10000)
+    assert F4.unit_at(0x08020004) == (0x08020000, 0x20000)
+    assert len(F4.units()) == 6 and len(F1.units()) == 128
+
+
+def test_sector_erases_of_different_sizes_are_one_phase():
+    ops = [op(0, "erase", 0x0800C000), op(1, "erase", 0x08010000), op(2, "erase", 0x08020000)]
+    ph = traces.phases(ops, F4)
+    assert len(ph) == 1 and ph[0].count == 3
+
+
+def test_a_program_is_as_wide_as_it_was_recorded():
+    # a byte, then a word right after it, then the chip's usual unit
+    ops = [op(0, "program", 0x08004000, value=0x11, size=1),
+           op(1, "program", 0x08004001, value=0x55443322, size=4),
+           op(2, "program", 0x08004005, value=0x99887766)]
+    assert len(traces.phases(ops, F4)) == 1
+    image = traces.Replay(bytes([0xFF]) * 0x40000, ops, F4).at(3)
+    assert bytes(image[0x4000:0x4009]) == bytes(range(0x11, 0x9A, 0x11))
+    assert traces.value_before(ops, 1, bytes(0x40000), F4) == 0
+
+
+def test_a_sector_erase_wipes_the_whole_sector_in_a_replay():
+    ops = [op(0, "erase", 0x08010000)]
+    image = traces.Replay(bytes(0x40000), ops, F4).at(1)
+    assert image[0x10000:0x20000] == bytes([0xFF]) * 0x10000
+    assert image[0xFFFF] == 0 and image[0x20000] == 0
+
+
+def test_jsonl_shows_a_value_at_its_own_width(tmp_path):
+    path = tmp_path / "t.jsonl"
+    traces.write_jsonl([op(0, "program", 0x08004000, value=0x12, size=4)], str(path))
+    assert json.loads(path.read_text())["value"] == "0x00000012"

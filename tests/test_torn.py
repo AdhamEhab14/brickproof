@@ -191,3 +191,33 @@ def test_torn_is_off_by_default_true_means_all_and_a_list_is_kept(tmp_path):
 def test_a_bad_torn_option_is_rejected(tmp_path, bad):
     with pytest.raises(adapters.AdapterError, match="torn"):
         load(tmp_path, bad)
+
+
+# a chip with sectors of different sizes that programs a word at a time
+F4 = FlashGeometry(base=BASE, size=0x6000, write_unit=4,
+                   sectors=[(0, 0x1000), (0x1000, 0x1000), (0x2000, 0x4000)])
+
+
+def test_a_torn_word_program_tears_all_four_bytes():
+    before = bytes([0xFF]) * 0x6000
+    op = {"index": 3, "kind": "program", "addr": BASE + 0x1000, "value": 0x12345678, "size": 4}
+    got = torn.states(op, before, F4)
+    assert {t.kind for t in got} <= set(torn.PROGRAM_KINDS) and got
+    for t in got:
+        kind, state = t.kind, t.image
+        cell = int.from_bytes(state[0x1000:0x1004], "little")
+        assert cell & 0x12345678 == 0x12345678, "only bits the target clears are cleared"
+        assert cell != 0x12345678 and cell != 0xFFFFFFFF, kind
+        assert state[:0x1000] == before[:0x1000] and state[0x1004:] == before[0x1004:]
+    low = [t.image for t in got if t.kind == "program-low"][0]
+    assert low[0x1000:0x1004] == bytes([0x78, 0x56, 0xFF, 0xFF])
+
+
+def test_a_torn_sector_erase_stays_inside_its_sector():
+    before = bytes(0x6000)
+    op = {"index": 0, "kind": "erase", "addr": BASE + 0x2000}
+    got = torn.states(op, before, F4)
+    assert got
+    for state in (t.image for t in got):
+        assert state[:0x2000] == before[:0x2000]
+        assert state[0x2000:] != before[0x2000:]

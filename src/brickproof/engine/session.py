@@ -73,8 +73,10 @@ class MachineHung(RuntimeError):
 class FlashGeometry:
     base: int
     size: int
-    page: int
-    write_unit: int = 2
+    page: int = None            # the erase unit, where it is the same everywhere
+    write_unit: int = 2         # bytes a program usually writes
+    # where erase units differ in size (an STM32F4's sectors): [(offset, size), ...]
+    sectors: list = None
     controller: int = 0x40022000
     # Option bytes, where the chip has them: their address, and what they hold when a
     # test starts. A flash image is then the flash followed by these bytes, so a change
@@ -82,6 +84,22 @@ class FlashGeometry:
     ob_base: int = None
     option_bytes: bytes = b""
     wrp_unit: int = 0x1000      # how much flash one write-protection bit covers
+
+    def unit_at(self, addr):
+        """(first address, size) of the erase unit that holds `addr`."""
+        if self.sectors:
+            off = addr - self.base
+            for start, size in self.sectors:
+                if start <= off < start + size:
+                    return self.base + start, size
+            raise ValueError("0x%08X is not in any flash sector" % addr)
+        return self.base + (addr - self.base) // self.page * self.page, self.page
+
+    def units(self):
+        """Every erase unit, in order: [(first address, size), ...]."""
+        if self.sectors:
+            return [(self.base + start, size) for start, size in self.sectors]
+        return [(self.base + off, self.page) for off in range(0, self.size, self.page)]
 
     @property
     def ob_size(self):
@@ -380,12 +398,15 @@ class RenodeSession:
     def read_word(self, addr):
         return self.read_words([addr])[0]
 
-    def read_half(self, addr):
-        return self._values(self.cmd_batch(["sysbus ReadWord 0x%X" % addr]))[0]
+    def read_unit(self, addr, size):
+        """`size` bytes at addr as a number, least significant byte first."""
+        return int.from_bytes(self.read_bytes(addr, size), "little")
 
-    def write_half(self, addr, value):
-        """Change one halfword of flash from outside, and tell the flash model."""
-        self.cmd_batch(["sysbus WriteWord 0x%X 0x%X" % (addr, value), self._set(REG_RESYNC, 1)])
+    def write_unit(self, addr, value, size, name="unit.bin"):
+        """Change `size` bytes of flash from outside, and tell the flash model."""
+        with open(os.path.join(self.workdir, name), "wb") as f:
+            f.write(value.to_bytes(size, "little"))
+        self.cmd_batch(["sysbus LoadBinary @%s 0x%X" % (name, addr), self._set(REG_RESYNC, 1)])
 
     def write_word(self, addr, value):
         self.cmd("sysbus WriteDoubleWord 0x%X 0x%X" % (addr, value))
@@ -575,7 +596,9 @@ class RenodeSession:
                     continue
                 op = {"index": len(ops), "kind": TRACE_KINDS[parts[0]], "addr": int(parts[1], 16)}
                 if parts[0] in ("P", "X"):
+                    # the number of hex digits says how many bytes the program wrote
                     op["value"] = int(parts[2], 16)
+                    op["size"] = len(parts[2].replace("0x", "")) // 2
                 if parts[0] == "X":
                     op["old"] = int(parts[3], 16)
                 elif parts[0] == "P?":

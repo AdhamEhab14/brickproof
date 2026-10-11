@@ -195,3 +195,14 @@ def test_a_listed_cut_with_an_expectation_is_always_made_for_real():
 def test_real_every_is_read_from_the_adapter(tmp_path):
     assert load(tmp_path, "  plan: {mode: every, real_every: 25}\n").plan == {
         "mode": "every", "real_every": 25}
+
+
+def test_word_programs_and_sector_erases_are_states_too():
+    f4 = FlashGeometry(base=BASE, size=0x6000, write_unit=4,
+                       sectors=[(0, 0x1000), (0x1000, 0x1000), (0x2000, 0x4000)])
+    pre = bytes([0xFF]) * 0x2000 + bytes(0x4000)
+    ops = [{"index": 0, "kind": "erase", "addr": BASE + 0x2000},              # wipes 16 KB of zeros
+           {"index": 1, "kind": "erase", "addr": BASE + 0x1000},              # already erased
+           {"index": 2, "kind": "program", "addr": BASE + 0x2000, "value": 0xFFFF0000, "size": 4},
+           {"index": 3, "kind": "program", "addr": BASE + 0x2004, "value": 0xFFFFFFFF, "size": 4}]
+    assert plans.changes(ops, pre, f4) == [True, False, True, False]
