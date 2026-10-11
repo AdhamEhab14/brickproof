@@ -4,7 +4,7 @@
  * On the next boot this copies it over Slot A and runs it. The order of the
  * install is what makes it survive a power cut at any flash operation:
  *
- *   1. raise the rollback floor to the new version (two-page record, see meta_write)
+ *   1. raise the rollback floor to the new version (two-copy record, see meta_write)
  *   2. erase Slot A
  *   3. copy the app body
  *   4. copy the header last, so Slot A only looks valid once it is complete
@@ -25,38 +25,29 @@
  *   BUG_POP_AFTER_SWITCH  pop saved registers after switching to the app's stack
  *                         (no cut needed: it reads past the end of RAM on every boot)
  *   BUG_NO_ERASE          copy the new image over the old one without erasing first
- *                         (the chip refuses to program a cell that is not erased)
+ *                         (an F1 refuses to program a cell that is not erased; an F4
+ *                         stores old AND new, which is neither image)
  *   BUG_NO_UNLOCK         never unlock the flash controller for the install
  *                         (the chip ignores every erase and program)
  *   BUG_RESUME_COPY       after an interrupted install, skip the erase and write only
- *                         the halfwords still missing. Survives every clean cut. A cut
- *                         inside a program leaves one cell half written, and the chip
- *                         will not program that cell again without an erase.
+ *                         the cells still missing. Survives every clean cut. A cut
+ *                         inside a program leaves one cell half written, and an F1
+ *                         will not program that cell again without an erase. (An F4
+ *                         will, so this one is a bug on the F1 only.)
  *   BUG_RETRY_LIMIT       give up on an update after two interrupted attempts. Survives
  *                         any single power cut. Two cuts in a row, the second during
  *                         the recovery from the first, leave no image at all.
- *   BUG_SELF_LOCK         write-protect the bootloader's own pages from the bootloader,
+ *   BUG_SELF_LOCK         write-protect the bootloader's own flash from the bootloader,
  *                         in the field. Option bytes are erased before they are written
  *                         back. A cut in between leaves the chip read-protected, and
  *                         when the next boot writes "unprotected" again the chip
  *                         answers by mass-erasing the flash.
+ *
+ * The same source builds for an STM32F103 and, with -DSTM32F4, for an STM32F411. What
+ * differs between them (the flash map, how to erase and program, the option bytes)
+ * is in common/chip_*.h.
  */
 #include "demo.h"
-
-#define FLASH_KEYR  REG(0x40022004u)
-#define FLASH_SR    REG(0x4002200Cu)
-#define FLASH_CR    REG(0x40022010u)
-#define FLASH_AR    REG(0x40022014u)
-#define CR_PG       (1u << 0)
-#define CR_PER      (1u << 1)
-#define CR_STRT     (1u << 6)
-#define CR_LOCK     (1u << 7)
-#define SR_BSY      (1u << 0)
-#define FLASH_OPTKEYR REG(0x40022008u)
-#define FLASH_WRPR  REG(0x40022020u)
-#define CR_OPTPG    (1u << 4)
-#define CR_OPTER    (1u << 5)
-#define OPTION_BYTES 0x1FFFF800u
 
 #define META_MAGIC  0x4D455441u   /* "ATEM" */
 
@@ -65,43 +56,6 @@ typedef struct {
     uint32_t floor;
     uint32_t magic;               /* written last: a torn record has no magic */
 } meta_t;
-
-/* ---- flash ---------------------------------------------------------------- */
-
-static void flash_wait(void)
-{
-    while (FLASH_SR & SR_BSY)
-        ;
-}
-
-static void flash_unlock(void)
-{
-    FLASH_KEYR = 0x45670123u;
-    FLASH_KEYR = 0xCDEF89ABu;
-}
-
-static void flash_erase(uint32_t page)
-{
-    FLASH_CR |= CR_PER;
-    FLASH_AR = page;
-    FLASH_CR |= CR_STRT;
-    flash_wait();
-    FLASH_CR &= ~CR_PER;
-}
-
-static void flash_half(uint32_t addr, uint16_t v)
-{
-    FLASH_CR |= CR_PG;
-    *(volatile uint16_t *)addr = v;
-    flash_wait();
-    FLASH_CR &= ~CR_PG;
-}
-
-static void flash_word(uint32_t addr, uint32_t v)
-{
-    flash_half(addr, (uint16_t)v);
-    flash_half(addr + 2, (uint16_t)(v >> 16));
-}
 
 /* ---- images --------------------------------------------------------------- */
 
@@ -140,41 +94,11 @@ static int same_image(uint32_t a, uint32_t b)
     return hdr(a)->version == hdr(b)->version && hdr(a)->crc == hdr(b)->crc;
 }
 
-#ifdef BUG_SELF_LOCK
-/* Write-protect the bootloader's own two 4 KB units, the usual way on an F1:
- * erase the option bytes, then write all of them back. */
-static void lock_bootloader(void)
-{
-    static const uint16_t bytes[8] = {
-        0x00A5,                 /* RDP: not read-protected */
-        0x00FF, 0x00FF, 0x00FF, /* USER, Data0, Data1 */
-        0x00FC,                 /* WRP0: units 0 and 1 protected */
-        0x00FF, 0x00FF, 0x00FF, /* WRP1..WRP3 */
-    };
-
-    if ((FLASH_WRPR & 3u) == 0)
-        return;                 /* already done */
-    FLASH_OPTKEYR = 0x45670123u;
-    FLASH_OPTKEYR = 0xCDEF89ABu;
-    FLASH_CR |= CR_OPTER;
-    FLASH_CR |= CR_STRT;
-    flash_wait();
-    FLASH_CR &= ~CR_OPTER;
-    for (uint32_t i = 0; i < 8; i++) {
-        FLASH_CR |= CR_OPTPG;
-        *(volatile uint16_t *)(OPTION_BYTES + 2 * i) = bytes[i];
-        flash_wait();
-        FLASH_CR &= ~CR_OPTPG;
-    }
-}
-#endif
-
-/* Clear Slot B's magic. Programming 0x0000 over a written halfword is allowed
- * on the F1, so this is one cheap operation and needs no erase. */
+/* Clear Slot B's magic. Programming zeros over written flash is allowed on both
+ * chips, so this is cheap and needs no erase. */
 static void consume_staging(void)
 {
-    flash_half(SLOT_B, 0);
-    flash_half(SLOT_B + 2, 0);
+    flash_word(SLOT_B, 0);
 }
 
 /* ---- rollback floor ------------------------------------------------------- */
@@ -207,7 +131,7 @@ static void meta_write(uint32_t floor)
     } else if (m1) {
         seq = m1->seq;
     }
-    flash_erase(target);
+    flash_erase(target, 1);
     flash_word(target + 0, seq + 1);
     flash_word(target + 4, floor);
     flash_word(target + 8, META_MAGIC);
@@ -223,7 +147,7 @@ static uint32_t meta_floor(void)
 
 static void meta_write(uint32_t floor)
 {
-    flash_erase(META_0);
+    flash_erase(META_0, 1);
     flash_word(META_0 + 0, 1);
     flash_word(META_0 + 4, floor);
     flash_word(META_0 + 8, META_MAGIC);
@@ -233,22 +157,22 @@ static void meta_write(uint32_t floor)
 
 /* ---- install -------------------------------------------------------------- */
 
-static void copy_halfwords(uint32_t dst, uint32_t src, uint32_t n)
+/* One program per cell: a halfword on the F1, a word on the F4. */
+static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
 {
-    for (uint32_t i = 0; i < n; i += 2) {
+    for (uint32_t i = 0; i < n; i += CELL) {
 #ifdef BUG_RESUME_COPY
-        if (*(const uint16_t *)(dst + i) == *(const uint16_t *)(src + i))
+        if (*(const cell_t *)(dst + i) == *(const cell_t *)(src + i))
             continue;                     /* already there from the interrupted attempt */
 #endif
-        flash_half(dst + i, *(const uint16_t *)(src + i));
+        flash_cell(dst + i, *(const cell_t *)(src + i));
     }
 }
 
 static void install(void)
 {
     uint32_t version = hdr(SLOT_B)->version;
-    uint32_t body = (hdr(SLOT_B)->size + 1u) & ~1u;
-    uint32_t pages = (IMG_OFFSET + body + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint32_t body = (hdr(SLOT_B)->size + CELL - 1u) & ~(CELL - 1u);
 
     uart_puts("BL: installing\r\n");
 #ifdef BUG_RESUME_COPY
@@ -266,14 +190,14 @@ static void install(void)
     /* Count install attempts with two marks in the staged image's unused header
      * area, so a bad image cannot keep the device rebooting for ever. Two attempts
      * already started and not finished: give up on this update. */
-    const volatile uint16_t *tries = (const volatile uint16_t *)(SLOT_B + 0x10);
+    const volatile cell_t *tries = (const volatile cell_t *)(SLOT_B + 0x10);
     if (tries[0] == 0 && tries[1] == 0) {
         uart_puts("BL: giving up on this update\r\n");
         consume_staging();
-        FLASH_CR |= CR_LOCK;
+        flash_lock();
         return;
     }
-    flash_half(SLOT_B + (tries[0] ? 0x10 : 0x12), 0);
+    flash_cell(SLOT_B + 0x10 + (tries[0] ? 0 : CELL), 0);
 #endif
 #ifndef BUG_NAIVE_FLOOR
     meta_write(version);
@@ -286,19 +210,16 @@ static void install(void)
 #ifdef BUG_RESUME_COPY
     if (!resume)
 #endif
-    for (uint32_t p = 0; p < pages; p++)
-        flash_erase(SLOT_A + p * PAGE_SIZE);
-#else
-    (void)pages;
+    flash_erase(SLOT_A, IMG_OFFSET + body);
 #endif
 #ifdef BUG_TRUST_HEADER
-    copy_halfwords(SLOT_A, SLOT_B, sizeof(img_hdr_t));
+    copy_cells(SLOT_A, SLOT_B, sizeof(img_hdr_t));
 #endif
-    copy_halfwords(SLOT_A + IMG_OFFSET, SLOT_B + IMG_OFFSET, body);
+    copy_cells(SLOT_A + IMG_OFFSET, SLOT_B + IMG_OFFSET, body);
 #if defined(BUG_CONSUME_FIRST)
-    copy_halfwords(SLOT_A, (uint32_t)&h, sizeof(img_hdr_t));
+    copy_cells(SLOT_A, (uint32_t)&h, sizeof(img_hdr_t));
 #elif !defined(BUG_TRUST_HEADER)
-    copy_halfwords(SLOT_A, SLOT_B, sizeof(img_hdr_t));
+    copy_cells(SLOT_A, SLOT_B, sizeof(img_hdr_t));
 #endif
 #ifndef BUG_CONSUME_FIRST
     consume_staging();
@@ -306,7 +227,7 @@ static void install(void)
 #ifdef BUG_NAIVE_FLOOR
     meta_write(version);
 #endif
-    FLASH_CR |= CR_LOCK;
+    flash_lock();
 }
 
 /* ---- boot ----------------------------------------------------------------- */
@@ -345,7 +266,7 @@ int main(void)
         if (image_valid(SLOT_A) && same_image(SLOT_A, SLOT_B)) {
             flash_unlock();               /* cut after the copy, before step 5 */
             consume_staging();
-            FLASH_CR |= CR_LOCK;
+            flash_lock();
         } else if (hdr(SLOT_B)->version >= floor) {
             install();
             floor = meta_floor();

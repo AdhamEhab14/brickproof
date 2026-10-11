@@ -31,10 +31,11 @@ the device back up, and checks that it recovered.
 - JSON, JUnit and HTML reports; the HTML one lists each failure with a command that reproduces
   it, the firmware hashes, and where the evidence fits in UN R156 and the EU Cyber Resilience Act.
 - A bundled demo (`brickproof demo`): a small A/B bootloader and ten builds with a known bug,
-  each of which a run catches.
+  each of which a run catches. The same demo builds for the STM32F411 (`brickproof demo f411`).
 - A GitHub Action and a Docker image.
 
-**Supported chips.** STM32F1.
+**Supported chips.** STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte to
+double-word programming, option bytes through OPTCR).
 
 **Not modelled yet.** Torn-operation shapes are a model until compared with real hardware.
 The USER and Data option bytes have no effect. Flash timing and wear.

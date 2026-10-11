@@ -1,0 +1,10 @@
+# The F411 demo with a known bug put back (see BUG_NAIVE_FLOOR in bootloader/main.c).
+# BrickProof should fail at least one cut.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_bug_naive_floor
+firmware:
+  - file: prebuilt/f411_bootloader_bug_naive_floor.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000

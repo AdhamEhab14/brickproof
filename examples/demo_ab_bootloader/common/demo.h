@@ -1,18 +1,19 @@
-/* Shared by the demo bootloader and the demo app: the flash map, the image
- * header, and the few STM32F103 registers both of them touch. */
+/* Shared by the demo bootloader and the demo app: the image header, the chip
+ * (flash map, flash primitives, UART pins) and the registers both chips share. */
 #ifndef DEMO_H
 #define DEMO_H
 
 #include <stdint.h>
 
-/* ---- flash map (STM32F103RB, 128 KB in 1 KB pages) ---------------------- */
-#define PAGE_SIZE      0x400u
-#define BL_BASE        0x08000000u   /*  8 KB bootloader                     */
-#define SLOT_A         0x08002000u   /* 56 KB the image that runs            */
-#define SLOT_B         0x08010000u   /* 56 KB staging: a new image waits here */
-#define SLOT_SIZE      0xE000u
-#define META_0         0x0801E000u   /* rollback floor, two pages so one is  */
-#define META_1         0x0801E400u   /* always intact while the other is rewritten */
+#define REG(a)         (*(volatile uint32_t *)(a))
+
+#ifdef STM32F4
+#include "chip_f411.h"
+#else
+#include "chip_f103.h"
+#endif
+
+#define CELL           ((uint32_t)sizeof(cell_t))
 
 /* An image is a 16-byte header at the slot start, then the app itself at
  * +0x200 (the vector table needs that alignment). */
@@ -26,12 +27,7 @@ typedef struct {
     uint32_t crc;        /* CRC-32 of those bytes */
 } img_hdr_t;
 
-/* ---- registers ----------------------------------------------------------- */
-#define REG(a)         (*(volatile uint32_t *)(a))
-
-#define RCC_APB2ENR    REG(0x40021018u)
-#define RCC_APB1ENR    REG(0x4002101Cu)
-#define GPIOA_CRL      REG(0x40010800u)
+/* ---- registers both chips have in the same place -------------------------- */
 #define USART2_SR      REG(0x40004400u)
 #define USART2_DR      REG(0x40004404u)
 #define USART2_BRR     REG(0x40004408u)

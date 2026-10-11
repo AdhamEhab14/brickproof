@@ -1,0 +1,20 @@
+// STM32F411 base platform for BrickProof.
+// Renode's stock F4 platform, with its flash controller swapped for the one that
+// counts operations and cuts power. The stock one keeps no trace, enforces nothing
+// and cannot stop the CPU. @MODELS@ is replaced with the models folder when the
+// engine writes the run's platform file.
+// A target adapter can append its own lines (extra peripherals, clock fixes).
+using "platforms/cpus/stm32f4.repl"
+
+flash_controller: @ none
+
+flashctl: Python.PythonPeripheral @ sysbus 0x40023C00
+    size: 0x400
+    initable: true
+    filename: "@MODELS@/stm32f4_flash.py"
+
+// Where the flash model keeps its test state (op count, cut point, fault latch).
+// Plain memory survives a firmware reset; the model's own variables do not.
+// The address is unused on the chip and outside the guarded holes.
+bpState: Memory.MappedMemory @ sysbus 0x90000000
+    size: 0x1000

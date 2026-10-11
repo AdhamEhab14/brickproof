@@ -169,3 +169,75 @@ def test_the_demo_ships_with_its_bootloader_locked_and_one_variant_unlocked():
     assert wrp0 == 0xFC
     unlocked = adapters.load(os.path.join(DEMO, "bug-self_lock.yaml")).flash.option_bytes[8]
     assert unlocked == 0xFF
+
+
+# ---- a chip that erases by sector (STM32F411) ---------------------------------
+
+F411 = """
+name: demo
+target: fw
+platform: {base: stm32f411}
+flash: {base: 0x08000000, size: 0x80000, sectors: SECTORSEXTRA}
+ram: {size: 0x20000}
+firmware:
+  - file: app.elf
+driver: {file: driver.py}
+"""
+F411_SECTORS = "[0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]"
+
+
+def f411(tmp_path, extra="", text=F411):
+    p = tmp_path / "adapter.yaml"
+    p.write_text(text.replace("SECTORS", F411_SECTORS).replace("EXTRA", extra))
+    return adapters.load(str(p)).flash
+
+
+def test_sectors_become_offsets_and_the_chip_sets_the_rest(tmp_path):
+    f = f411(tmp_path)
+    assert f.page is None and f.sectors[4] == (0x10000, 0x10000) and len(f.sectors) == 8
+    assert f.unit_at(0x08044000) == (0x08040000, 0x20000)
+    assert (f.controller, f.model, f.write_unit) == (0x40023C00, "stm32f4_flash.py", 4)
+    assert f.ob_base == 0x1FFFC000
+
+
+def test_f4_option_bytes_are_as_the_chip_shows_them(tmp_path):
+    ob = f411(tmp_path).option_bytes
+    # a fresh chip: RDP level 0 and the factory USER bits, nothing protected
+    assert ob == bytes.fromhex("efaa1055ffffffff" "ffff0000ffffffff")
+    locked = f411(tmp_path, ", write_protected: [{from: 0x08000000, size: 0x4000}, "
+                            "{from: 0x08020000, size: 0x40000}]").option_bytes
+    nwrp = locked[8] | locked[9] << 8
+    assert nwrp == 0xFFFF & ~(1 << 0 | 1 << 5 | 1 << 6)
+    assert (locked[10] | locked[11] << 8) == ~nwrp & 0xFFFF, "followed by its complement"
+    assert f411(tmp_path, ", read_protected: true").option_bytes[1] != 0xAA
+
+
+@pytest.mark.parametrize("extra, message", [
+    (", write_protected: [{from: 0x08000000, size: 0x2000}]", "whole sectors"),
+    (", write_protected: [{from: 0x08002000, size: 0x2000}]", "whole sectors"),
+    (", write_protected: [{from: 0x08060000, size: 0x40000}]", "outside the flash"),
+    (", page: 0x400", "exactly one of page"),
+])
+def test_bad_f4_flash_settings_are_rejected(tmp_path, extra, message):
+    with pytest.raises(adapters.AdapterError, match=message):
+        f411(tmp_path, extra)
+
+
+def test_sectors_must_add_up_and_fit_the_chip(tmp_path):
+    with pytest.raises(adapters.AdapterError, match="add up"):
+        f411(tmp_path, text=F411.replace("SECTORS", "[0x4000, 0x4000]"))
+    with pytest.raises(adapters.AdapterError, match="by sector"):
+        f411(tmp_path, text=F411.replace("sectors: SECTORS", "page: 0x400"))
+    with pytest.raises(adapters.AdapterError, match="by page"):
+        f411(tmp_path, text=F411.replace("stm32f411", "stm32f103").replace("ram: {size: 0x20000}",
+                                                                           "ram: {size: 0x5000}"))
+
+
+def test_the_f411_demo_and_its_bug_builds_load():
+    names = [n for n in os.listdir(DEMO) if n.startswith("f411") and n.endswith(".yaml")]
+    assert len(names) == 10
+    for n in names:
+        ad = adapters.load(os.path.join(DEMO, n))
+        assert ad.platform == "stm32f411" and ad.flash.sectors
+        for path, _ in ad.firmware:
+            assert os.path.exists(path), path

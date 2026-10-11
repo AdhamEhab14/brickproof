@@ -91,6 +91,29 @@ jobs:
             expect: 1
           - adapter: bug-self_lock     # option bytes rewritten in the field: a cut wipes the chip
             expect: 1
+          # the same demo on an STM32F411: sector erase, word programming, other option bytes
+          - adapter: f411
+            expect: 0
+            torn: true
+            depth: 2
+          - adapter: f411-bug-consume_first
+            expect: 1
+          - adapter: f411-bug-trust_header
+            expect: 1
+          - adapter: f411-bug-naive_floor
+            expect: 1
+          - adapter: f411-bug-pop_after_switch
+            expect: 1
+          - adapter: f411-bug-no_erase   # not refused on an F4: the cells end up as old AND new
+            expect: 1
+          - adapter: f411-bug-no_unlock
+            expect: 1
+          - adapter: f411-bug-retry_limit
+            expect: 1
+          - adapter: f411-bug-protected_slot
+            expect: 1
+          - adapter: f411-bug-self_lock
+            expect: 1
     name: demo (${{ matrix.adapter }})
     env:
       RENODE_VERSION: "1.17.0"

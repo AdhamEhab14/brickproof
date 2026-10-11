@@ -1,4 +1,5 @@
-"""Build the demo: the bootloader (correct and three bug variants) and two app images.
+"""Build the demo for both chips: the bootloader (correct, and one build per known bug)
+and two app images. The STM32F411 files get an f411_ prefix.
 
 Needs arm-none-eabi-gcc on PATH. Output goes to build/. Pass --prebuilt to also
 refresh the committed copies in prebuilt/, which is what users without a
@@ -18,8 +19,14 @@ from mkimage import make_image  # noqa: E402
 
 CC = "arm-none-eabi-gcc"
 OBJCOPY = "arm-none-eabi-objcopy"
-CFLAGS = ["-mcpu=cortex-m3", "-mthumb", "-Os", "-g", "-Wall", "-Wextra", "-Werror",
+CFLAGS = ["-mthumb", "-Os", "-g", "-Wall", "-Wextra", "-Werror",
           "-ffreestanding", "-nostdlib", "-ffunction-sections", "-Icommon"]
+# per chip: file name prefix, compiler flags, linker script suffix, bugs that do not apply
+CHIPS = [
+    ("", ["-mcpu=cortex-m3"], "", ()),
+    # an F4 lets a half-written cell be programmed again, so resuming a copy is fine there
+    ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",)),
+]
 LDFLAGS = ["-Wl,--gc-sections", "-Lcommon", "-lgcc"]
 COMMON = ["common/startup.c", "common/uart.c"]
 
@@ -48,20 +55,33 @@ def run(cmd):
     subprocess.run(cmd, cwd=HERE, check=True)
 
 
+def outputs():
+    """Every file a build leaves for the adapters to load."""
+    names = ["meta_floor1.bin"]
+    for prefix, _, _, skip in CHIPS:
+        names += ["%s%s.elf" % (prefix, b) for b in BOOTLOADERS if b not in skip]
+        names += ["%sapp_v%d.img" % (prefix, v) for v in APP_VERSIONS]
+    return names
+
+
 def build(out):
     os.makedirs(os.path.join(HERE, out), exist_ok=True)
-    for name, defs in BOOTLOADERS.items():
-        run([CC, *CFLAGS, *defs, "-Tbootloader/link.ld", "bootloader/main.c", *COMMON,
-             *LDFLAGS, "-o", "%s/%s.elf" % (out, name)])
-    for v in APP_VERSIONS:
-        elf, raw = "%s/app_v%d.elf" % (out, v), "%s/app_v%d.bin" % (out, v)
-        run([CC, *CFLAGS, "-DAPP_VERSION=%d" % v, "-Tapp/link.ld", "app/main.c", *COMMON,
-             *LDFLAGS, "-o", elf])
-        run([OBJCOPY, "-O", "binary", elf, raw])
-        with open(os.path.join(HERE, raw), "rb") as f:
-            body = f.read()
-        with open(os.path.join(HERE, out, "app_v%d.img" % v), "wb") as f:
-            f.write(make_image(body, v))
+    for prefix, flags, ld, skip in CHIPS:
+        cc = [CC, *CFLAGS, *flags]
+        for name, defs in BOOTLOADERS.items():
+            if name in skip:
+                continue
+            run([*cc, *defs, "-Tbootloader/link%s.ld" % ld, "bootloader/main.c", *COMMON,
+                 *LDFLAGS, "-o", "%s/%s%s.elf" % (out, prefix, name)])
+        for v in APP_VERSIONS:
+            stem = "%s/%sapp_v%d" % (out, prefix, v)
+            run([*cc, "-DAPP_VERSION=%d" % v, "-Tapp/link%s.ld" % ld, "app/main.c", *COMMON,
+                 *LDFLAGS, "-o", stem + ".elf"])
+            run([OBJCOPY, "-O", "binary", stem + ".elf", stem + ".bin"])
+            with open(os.path.join(HERE, stem + ".bin"), "rb") as f:
+                body = f.read()
+            with open(os.path.join(HERE, stem + ".img"), "wb") as f:
+                f.write(make_image(body, v))
     # the device as shipped: v1 installed, floor already at 1
     with open(os.path.join(HERE, out, "meta_floor1.bin"), "wb") as f:
         f.write(floor_record(1, 1))
@@ -72,7 +92,6 @@ if __name__ == "__main__":
     if "--prebuilt" in sys.argv:
         dst = os.path.join(HERE, "prebuilt")
         os.makedirs(dst, exist_ok=True)
-        names = ["%s.elf" % b for b in BOOTLOADERS] + ["app_v%d.img" % v for v in APP_VERSIONS]
-        for name in names + ["meta_floor1.bin"]:
+        for name in outputs():
             shutil.copyfile(os.path.join(HERE, "build", name), os.path.join(dst, name))
     print("built into", os.path.join(HERE, "build"))

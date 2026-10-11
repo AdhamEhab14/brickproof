@@ -10,7 +10,7 @@ which cuts brick the device, and how to reproduce each one.
 
 It came out of the power-cut tests of
 [Three-Tier-STM32-Secure-Bootloader](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader),
-where it found three real bugs. Supported chips: STM32F1.
+where it found three real bugs. Supported chips: STM32F1 and STM32F4 (F411).
 
 ## Quick start
 
@@ -57,11 +57,18 @@ brickproof demo self_lock --fail-fast
 | `protected_slot` | (a device setting) the app slot is write-protected | the chip refuses every erase and program there |
 | `resume_copy` | after an interrupted install, skips the erase and writes only what is missing | survives every clean cut; a torn write leaves a cell the chip will not program again |
 | `retry_limit` | gives up on an update after two interrupted attempts | survives any single cut; two cuts in a row lose the update |
-| `self_lock` | write-protects its own pages from the bootloader, in the field | a cut while the option bytes are erased, and the retry mass-erases the flash |
+| `self_lock` | write-protects its own flash from the bootloader, in the field | a cut while the option bytes are erased, and the retry mass-erases the flash |
 
 The first three are the bugs BrickProof found in the Three-Tier bootloader. `pop_after_switch`
 was found by a real board after an emulator had passed it. The rest are mistakes a plain
 emulator lets through and a chip does not.
+
+The demo also builds for an **STM32F411**, a chip that differs from the F103 in everything a
+power cut touches: an erase wipes a whole sector of 16 to 128 KB, a program writes a word and
+is never refused (the cell ends up as old AND new), and the chip rewrites its own option
+bytes. `brickproof demo f411` runs the correct build, and `brickproof demo f411-bug-no_erase`
+and the other `f411-bug-*` builds have the same mistakes. `resume_copy` is missing there on
+purpose: an F4 does let a half-written cell be programmed again, so it is not a bug on that chip.
 
 ## What a run covers
 
@@ -72,7 +79,7 @@ only at distinct flash states and tells you how many there are and how many it c
 long ones, and the report says which phases were sampled.
 
 **Torn operations** (`--torn`). Power can fail inside an erase or a program. BrickProof also
-boots the device from those states: an erase with only some bits flipped, a halfword with only
+boots the device from those states: an erase with only some bits flipped, a cell with only
 some bits written. The shapes follow what flash cells do, but they are a model until compared
 with real hardware, so they are counted on their own line.
 
@@ -185,7 +192,9 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 ## Limits
 
 - The device is emulated. Torn-operation shapes are a model until compared with hardware.
-- Only STM32F1 flash is modelled.
+- Flash is modelled for STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte
+  to double-word programming). Another family needs a model of its flash controller in
+  `src/brickproof/models/`; the engine itself no longer assumes either chip.
 - Not modelled: the USER and Data option bytes, flash timing, wear.
 
 ## Licence
