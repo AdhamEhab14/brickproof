@@ -97,8 +97,9 @@ def _fault_message(session):
         return ("bus fault: the firmware touched 0x%08X (PC 0x%08X), which does not exist on "
                 "the chip" % v["fault"])
     if v["refused"]:
-        return ("flash rule broken: %d program(s) over cells that were not erased, first at "
-                "0x%08X. An STM32F1 refuses these (PGERR) and keeps the old value" % v["refused"])
+        return ("flash rule broken: the chip refused %d program(s), first at 0x%08X, and kept "
+                "the old value. On an STM32F1 that is a cell that was not erased (PGERR), on an "
+                "STM32F4 a store that is not as wide as PSIZE says (PGPERR)" % v["refused"])
     if v.get("protected"):
         return ("write protection: %d erase or program operation(s) in write-protected flash "
                 "were refused, first at 0x%08X. The option bytes protect that part of flash, so the "
