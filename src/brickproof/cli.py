@@ -56,11 +56,21 @@ def _print_plan(plan):
     print(flush=True)
 
 
+def _jobs(args):
+    """--jobs N, or 'auto' for one emulator per core, leaving one core free."""
+    j = getattr(args, "jobs", None)
+    if j in (None, "1"):
+        return 1
+    if j == "auto":
+        return max(1, (os.cpu_count() or 2) - 1)
+    return max(1, int(j))
+
+
 def _run(ad, args, **kw):
     """runner.run, with a tool failure turned into a message. Returns None on failure."""
     try:
         return runner.run(ad, keep_workdir=args.keep, log=args.renode_log,
-                          on_result=_print_result, **kw)
+                          on_result=_print_result, jobs=_jobs(args), **kw)
     except Exception as e:      # the tool broke: not the same thing as a failed cut
         print("brickproof error: %s: %s" % (type(e).__name__, e), file=sys.stderr)
         return None
@@ -82,6 +92,8 @@ def cmd_run(args):
     if args.depth is not None:
         deeper = dict(adapters.DEPTH_DEFAULTS, **(ad.depth or {}), levels=args.depth)
         ad.depth = deeper if args.depth > 1 else None
+    if args.real_every and ad.plan:
+        ad.plan = dict(ad.plan, real_every=args.real_every)
     if args.per_phase is not None and not args.cut:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
     if not ad.cuts and not ad.plan:
@@ -112,8 +124,14 @@ def cmd_run(args):
         print("the update fails even with no power cut, so no cuts were run")
     ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn) and r.depth == 1]
     passed = sum(r.passed for r in ran)
-    print("%d/%d cuts recovered (setup %.0fs, total %.0fs)" % (
-        passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0)))
+    print("%d/%d cuts recovered (setup %.0fs, total %.0fs%s)" % (
+        passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0),
+        ", %d emulators" % out.jobs if out.jobs > 1 else ""))
+    computed = sum(1 for r in ran if r.computed)
+    if computed:
+        print("%d of those cuts were made in the emulator and checked against the computed "
+              "state; the other %d were powered up from the computed state" % (
+                  len(ran) - computed, computed))
     torn = [r for r in out.results if r.torn]
     if torn:
         print("%d/%d torn states survived (modelled shapes of a half-done erase or program, "
@@ -166,6 +184,9 @@ def main(argv=None):
         c.add_argument("--target", help="firmware project folder (overrides the adapter's 'target')")
         c.add_argument("--keep", action="store_true", help="keep the Renode work folder")
         c.add_argument("--renode-log", help="write Renode's own output to this file")
+        c.add_argument("-j", "--jobs", metavar="N",
+                       help="emulators to run side by side: a number, or 'auto' for one per "
+                            "core but one. The results do not depend on it (default 1)")
 
     r = sub.add_parser("run", help="run an adapter's power cuts")
     common(r)
@@ -179,6 +200,9 @@ def main(argv=None):
     r.add_argument("--plan", choices=("phases", "every"),
                    help="let the planner choose the cuts: every distinct flash state, or "
                         "(phases) all of them in short phases and samples in long ones")
+    r.add_argument("--real-every", type=int, metavar="N",
+                   help="make only every Nth planned cut in the emulator and power the others "
+                        "up from the computed flash state (much faster on a long update)")
     r.add_argument("--torn", action="store_true",
                    help="also boot from torn states: each cut's operation left half done")
     r.add_argument("--depth", type=int, metavar="N",

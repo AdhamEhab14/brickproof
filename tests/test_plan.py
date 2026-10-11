@@ -165,3 +165,33 @@ def test_plan_can_be_a_name_or_a_mapping(tmp_path):
 def test_a_bad_plan_is_rejected(tmp_path, bad):
     with pytest.raises(adapters.AdapterError, match="plan"):
         load(tmp_path, bad)
+
+
+# ---- real_every: most cuts from the computed state, some made for real ---------------
+
+def test_real_every_makes_some_cuts_for_real_and_computes_the_rest():
+    out = run(FakeDevice(), {"mode": "every", "real_every": 4})
+    cuts = out.results[1:]
+    assert [r.op_index for r in cuts] == list(range(10)) and all(r.passed for r in cuts)
+    real = [r.op_index for r in cuts if not r.computed]
+    assert real == [0, 4, 8, 9], "every fourth, and always the last"
+    assert all(r.kind in ("erase", "program") and r.addr for r in cuts)
+
+
+def test_computed_cuts_fail_where_real_ones_would():
+    real = run(FakeDevice(no_recovery=True), {"mode": "every"})
+    mixed = run(FakeDevice(no_recovery=True), {"mode": "every", "real_every": 3})
+    assert [r.passed for r in mixed.results] == [r.passed for r in real.results]
+    assert any(r.computed and not r.passed for r in mixed.results)
+
+
+def test_a_listed_cut_with_an_expectation_is_always_made_for_real():
+    listed = [adapters.Cut(name="mine", at_op=3, expect=(2, 0))]
+    out = run(FakeDevice(), {"mode": "every", "real_every": 100}, cuts=listed)
+    mine = next(r for r in out.results if r.cut == "mine")
+    assert not mine.computed and mine.passed
+
+
+def test_real_every_is_read_from_the_adapter(tmp_path):
+    assert load(tmp_path, "  plan: {mode: every, real_every: 25}\n").plan == {
+        "mode": "every", "real_every": 25}

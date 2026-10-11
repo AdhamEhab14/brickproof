@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import weakref
 from dataclasses import dataclass
@@ -95,12 +96,25 @@ def find_renode():
     return exe
 
 
+_ports_lock = threading.Lock()
+_ports_given = set()
+_launch_lock = threading.Lock()     # Renode processes are started one at a time
+
+
 def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    """A TCP port nothing is listening on, and that this process has not handed out
+    before. The system only promises the first; with several sessions starting at
+    once, two of them were given the same port."""
+    with _ports_lock:
+        for _ in range(200):
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+            s.close()
+            if port not in _ports_given:
+                _ports_given.add(port)
+                return port
+    raise RuntimeError("could not find a free TCP port")
 
 
 def connect(port, wait):
@@ -158,13 +172,25 @@ class RenodeSession:
     def _bring_up(self):
         self.mon_port = free_port()
         self.uart_port = free_port()
-        self.proc = subprocess.Popen(
-            [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port)],
-            cwd=self.workdir, stdin=subprocess.PIPE,
-            stdout=open(self.log, "ab") if self.log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        self.mon = connect(self.mon_port, self.STARTUP_WAIT)
-        self._buf = b""
-        self._drain_banner()
+        # Renode keeps a monitor command history, and rewrites the whole file after
+        # every command. By default that is one file per user, shared by every Renode:
+        # it grows without end (25 MB after a few days here, 67 ms per command), and two
+        # Renodes writing it at once crash. Give this one its own, in its work folder.
+        config = os.path.join(self.workdir, "renode.config")
+        with open(config, "w") as f:
+            f.write("[general]" + chr(10) + "history-path = %s" % os.path.join(self.workdir, "history")
+                    + chr(10))
+        # one process at a time until its monitor answers: several Renodes starting in
+        # the same instant trip over each other. Everything after this runs in parallel.
+        with _launch_lock:
+            self.proc = subprocess.Popen(
+                [self.exe, "--disable-xwt", "--plain", "--port", str(self.mon_port),
+                 "--config", config],
+                cwd=self.workdir, stdin=subprocess.PIPE,
+                stdout=open(self.log, "ab") if self.log else subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            self.mon = connect(self.mon_port, self.STARTUP_WAIT)
+            self._buf = b""
+            self._drain_banner()
         self.cmd("logLevel 3")
         self.cmd('emulation CreateServerSocketTerminal %d "term" false' % self.uart_port)
         self.cmd('mach create "target"')

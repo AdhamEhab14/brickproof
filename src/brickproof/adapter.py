@@ -134,7 +134,9 @@ def _read(path, depth=0):
 
 
 def _parse_plan(scenario):
-    """scenario.plan: a mode name, or {mode, per_phase, small}. None if absent."""
+    """scenario.plan: a mode name, or {mode, per_phase, small, real_every}. With
+    real_every N only every Nth planned cut is made in the emulator; the others are
+    powered up from the computed flash state. None if absent."""
     p = scenario.get("plan")
     if p is None:
         return None
@@ -142,14 +144,14 @@ def _parse_plan(scenario):
         p = {"mode": p}
     if not isinstance(p, dict):
         raise AdapterError("scenario.plan: give a mode (phases, every) or a mapping")
-    unknown = set(p) - {"mode", "per_phase", "small"}
+    unknown = set(p) - {"mode", "per_phase", "small", "real_every"}
     if unknown:
         raise AdapterError("scenario.plan: unknown key(s) %s" % ", ".join(sorted(unknown)))
     mode = p.get("mode", "phases")
     if mode not in ("phases", "every"):
         raise AdapterError("scenario.plan.mode: use phases or every, not %r" % mode)
     out = {"mode": mode}
-    for key in ("per_phase", "small"):
+    for key in ("per_phase", "small", "real_every"):
         if key in p:
             if not isinstance(p[key], int) or p[key] < 0:
                 raise AdapterError("scenario.plan.%s: a whole number, 0 or more" % key)
@@ -157,12 +159,14 @@ def _parse_plan(scenario):
     return out
 
 
-DEPTH_DEFAULTS = {"mode": "phases", "per_phase": 2, "small": 6, "max_states": 2000}
+DEPTH_DEFAULTS = {"mode": "phases", "per_phase": 2, "small": 6, "max_states": 2000, "torn": False}
 
 
 def _parse_depth(scenario):
     """scenario.depth: how many power cuts in a row to explore. A number, or a mapping
-    {levels, mode, per_phase, small, max_states}. None when it is 1 or absent."""
+    {levels, mode, per_phase, small, max_states, torn}. With torn, the half-done
+    versions of each recovery operation are tried as well (it needs scenario.torn or
+    --torn for the shapes). None when it is 1 or absent."""
     d = scenario.get("depth")
     if d is None:
         return None
@@ -180,6 +184,8 @@ def _parse_depth(scenario):
     for key in ("levels", "per_phase", "small", "max_states"):
         if not isinstance(out[key], int) or isinstance(out[key], bool) or out[key] < 0:
             raise AdapterError("scenario.depth.%s: a whole number, 0 or more" % key)
+    if not isinstance(out["torn"], bool):
+        raise AdapterError("scenario.depth.torn: true or false")
     if out["levels"] < 1:
         raise AdapterError("scenario.depth.levels: at least 1")
     return out if out["levels"] > 1 else None
