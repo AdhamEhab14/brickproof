@@ -47,6 +47,12 @@ firmware:                      # the device as shipped, before the update
   - file: build/app_v1.bin     # a raw binary needs an address
     addr: 0x08004000
 
+clock:
+  hse: 8000000                 # the board's crystal or external clock in Hz (default 8 MHz)
+
+pins:                          # inputs held at a level, for buttons and straps
+  PC13: high                   # an input nothing drives reads low in the emulator
+
 uart: usart2                   # where the firmware prints
 boot_settle: 1.5               # virtual seconds from reset until the device is ready
 reset:                         # optional Renode commands after every reset
@@ -91,6 +97,11 @@ The run is only worth something if the emulated chip is the chip you ship.
 - `flash.hardware_watchdog`: true if the option bytes make the independent watchdog a
   hardware one. It then runs from reset with its default timeout (about 0.4 s on an F1,
   0.5 s on an F4), and a chip that stands still through a long erase gets reset.
+- `clock.hse`: the frequency of the board's crystal. The emulated clock tree follows what
+  the firmware writes to the RCC (PLL, prescalers), and the timers and the SysTick count
+  with the result, so this one number is all the board has to add.
+- `pins`: firmware that reads a button or a strap at start-up sees a low level unless told
+  otherwise, and may then stay in its bootloader. State the level the board gives the pin.
 - `flash.timing`: `typical` by default. Use `max` when the question is whether a watchdog or
   a timeout survives the slowest erase the datasheet allows. `none` makes operations take no
   time, which is faster and less true.

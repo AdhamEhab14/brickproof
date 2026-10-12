@@ -62,6 +62,7 @@ class Adapter:
     torn_seed: int = 0
     depth: dict = None            # explore cuts during recovery (see runner.explore)
     shard: tuple = None           # (k, n): run only every nth cut, starting with the kth
+    hse: int = 8000000            # the board's crystal or external clock, in Hz
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -153,6 +154,24 @@ PLATFORMS = tuple(CHIPS)
 
 # flash.timing: how long erases and programs take in the emulator
 TIMINGS = {"none": 0, "typical": 1, "max": 2}
+
+
+def _parse_pins(d):
+    """`pins: {PC13: high, PA0: low}` as the Renode lines that hold those inputs at
+    that level after every reset. An input nothing drives reads low in the emulator,
+    which firmware that looks at a button or a strap at start-up takes as pressed."""
+    lines = []
+    for pin, level in (d.get("pins") or {}).items():
+        pin, level = str(pin).upper(), str(level).lower()
+        ok = len(pin) >= 3 and pin[0] == "P" and "A" <= pin[1] <= "K" and pin[2:].isdigit() \
+            and int(pin[2:]) < 16
+        if not ok:
+            raise AdapterError("pins: '%s' is not a pin name like PC13" % pin)
+        if level not in ("high", "low"):
+            raise AdapterError("pins.%s: use high or low, not '%s'" % (pin, level))
+        state = "true" if level == "high" else "false"
+        lines.append("gpioPort%s OnGPIO %d %s" % (pin[1], int(pin[2:]), state))
+    return lines
 
 
 def _need(d, key, where):
@@ -382,7 +401,8 @@ def load(path, target=None):
         uart=d.get("uart", "usart2"),
         vector_table=cpu.get("vector_table", flash.base),
         mips=cpu.get("mips", 72),
-        reset_cmds=list(d.get("reset", [])),
+        reset_cmds=_parse_pins(d) + list(d.get("reset", [])),
+        hse=int((d.get("clock") or {}).get("hse", 8000000)),
         boot_settle=float(d.get("boot_settle", 1.5)),
         cut_limit=float(scenario.get("cut_limit", 30.0)),
         update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),

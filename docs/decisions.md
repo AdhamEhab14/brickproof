@@ -972,7 +972,7 @@ must be running inside one of those that the scenario accepts, and it may move f
 the other between two looks, because a bootloader hands over. With a single address nothing
 changes, messages included.
 
-Two things the same outside project showed that are not fixed yet:
+Two things the same outside project showed (both dealt with in the next entry):
 - Emulated peripheral clocks do not follow the firmware's clock setup. Renode gives a timer
   a fixed input clock (10 MHz by default), so firmware that sets a prescaler for the 72 MHz
   it configured sees time run 7.2 times too slowly. An adapter can state the clock in its
@@ -980,3 +980,26 @@ Two things the same outside project showed that are not fixed yet:
   The proper fix is for the RCC model to tell the peripherals.
 - An input pin nobody drives reads low. Firmware that reads a button at start-up needs the
   adapter to set the pin (`reset:` lines).
+
+## 2026-10-12: Clocks follow the firmware, pins have a level, a dead device is noticed
+
+Three gaps the outside bootloaders showed, closed.
+
+**Clocks.** Renode gives each timer a fixed input clock (10 MHz in its STM32 files) and its
+RCC models do not tell anyone what the firmware configured. OpenBLT keeps time with TIM1
+and a prescaler for the 72 MHz it sets up, so its 500 ms took 3.6 s. Both chips now have an
+RCC model of ours that works the tree out from the registers (source, PLL, AHB and APB
+prescalers, and the doubling of a timer clock on a divided bus) and sets the frequency of
+the timers and the SysTick whenever the firmware changes it. The F411 gets a new model in
+place of Renode's; the F103 had ours already, without the tree. The board adds one number,
+`clock.hse`. Checked: OpenBLT passes with no clock line in its adapter, and wolfBoot's test
+application, which runs a PLL from a 25 MHz crystal and a TIM2 interrupt, behaves as before.
+UART baud rates are not derived from this: Renode passes bytes whatever the divisor says.
+
+**Pins.** `pins: {PC13: high}` holds an input at a level after every reset. It does not model
+pull-ups or a floating pin; it lets the adapter say what the board does.
+
+**A dead device.** A locked-up core never returns from a run, and the allowance before the
+engine gives up grows with the length of the run. One 30-second wait for an update meant up
+to ten minutes before "locked up" was reported. Long waits are now made in one-second
+slices, so the same verdict comes after one slice's allowance.
