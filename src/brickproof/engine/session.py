@@ -80,6 +80,14 @@ class FlashGeometry:
     controller: int = 0x40022000
     model: str = "stm32f1_flash.py"      # the flash controller model in models/
     timing: int = 0             # how long operations take: 0 none, 1 typical, 2 slowest
+    # an external SPI NOR flash chip, if the board has one. It has no address on the
+    # system bus; ext_base is only how its bytes are named in traces and images.
+    ext_base: int = None
+    ext_size: int = 0
+    ext_bus: str = ""           # the SPI controller it hangs on, for example spi1
+    ext_cs: str = ""            # its chip select pin, for example PA4
+    ext_sector: int = 0x1000    # its smallest erase
+    ext_endurance: int = 100000
     endurance: int = 0          # erase cycles the datasheet promises per unit (0: unknown)
     # Option bytes, where the chip has them: their address, and what they hold when a
     # test starts. A flash image is then the flash followed by these bytes, so a change
@@ -108,9 +116,12 @@ class FlashGeometry:
     def ob_size(self):
         return len(self.option_bytes) if self.ob_base is not None else 0
 
+    def external(self, addr):
+        return self.ext_base is not None and self.ext_base <= addr < self.ext_base + self.ext_size
+
     @property
     def image_size(self):
-        return self.size + self.ob_size
+        return self.size + self.ob_size + self.ext_size
 
 
 SLOWEST_START = 6.0     # assume a slow machine until this one has been measured
@@ -248,6 +259,9 @@ class RenodeSession:
         self.cmd("logLevel 3")
         self.cmd('emulation CreateServerSocketTerminal %d "term" false' % self.uart_port)
         self.cmd('mach create "target"')
+        if self.flash.ext_size:
+            # the external flash chip is a C# model, compiled as it is loaded
+            self.cmd("include @models/BpSpiNor.cs", timeout=120)
         self.cmd("machine LoadPlatformDescription @platform.repl")
         self._check_memory_sizes()
         # Renode's flash starts as 0x00; real erased flash reads 0xFF. The option bytes
@@ -256,6 +270,8 @@ class RenodeSession:
         for rel, addr in self.firmware:
             if rel.lower().endswith(".elf"):
                 self.cmd("sysbus LoadELF @%s" % rel)
+            elif self.flash.external(addr):
+                self.cmd('%s LoadAt "%s" 0x%X' % (self._ext, self._path(rel), addr - self.flash.ext_base))
             else:
                 self.cmd("sysbus LoadBinary @%s 0x%X" % (rel, addr))
         self.cmd("cpu VectorTableOffset 0x%X" % self.vector_table)
@@ -418,6 +434,9 @@ class RenodeSession:
 
     def write_unit(self, addr, value, size, name="unit.bin"):
         """Change `size` bytes of flash from outside, and tell the flash model."""
+        if self.flash.external(addr):
+            self.ext_load(value.to_bytes(size, "little"), addr - self.flash.ext_base, name)
+            return
         with open(os.path.join(self.workdir, name), "wb") as f:
             f.write(value.to_bytes(size, "little"))
         self.cmd_batch(["sysbus LoadBinary @%s 0x%X" % (name, addr), self._set(REG_RESYNC, 1)])
@@ -428,10 +447,49 @@ class RenodeSession:
     def load_binary(self, rel_path, addr):
         """Put a file straight into memory. Path is relative to the work folder. The
         flash model is told, in case the file went into flash."""
+        if self.flash.external(addr):
+            self.cmd('%s LoadAt "%s" 0x%X' % (self._ext, self._path(rel_path), addr - self.flash.ext_base))
+            return
         self.cmd_batch(["sysbus LoadBinary @%s 0x%X" % (rel_path, addr), self._set(REG_RESYNC, 1)])
+
+    # ---- the external flash chip ------------------------------------------------
+
+    @property
+    def _ext(self):
+        return "sysbus.%s.extflash" % self.flash.ext_bus
+
+    def _path(self, name):
+        """A work-folder file as the chip model wants it: a full path with forward slashes."""
+        return os.path.abspath(os.path.join(self.workdir, name)).replace("\\", "/")
+
+    def ext_dump(self, name="ext_dump.bin"):
+        """Everything in the external flash chip."""
+        self.cmd('%s SaveTo "%s"' % (self._ext, self._path(name)))
+        with open(os.path.join(self.workdir, name), "rb") as f:
+            return f.read()
+
+    def ext_load(self, data, offset=0, name="ext_load.bin"):
+        with open(os.path.join(self.workdir, name), "wb") as f:
+            f.write(data)
+        self.cmd('%s LoadAt "%s" 0x%X' % (self._ext, self._path(name), offset))
+
+    def ext_mismatch(self, data, offset=0, name="ext_expect.bin"):
+        """First address where the chip differs from `data` laid at `offset`, or None."""
+        with open(os.path.join(self.workdir, name), "wb") as f:
+            f.write(data)
+        reply = self.cmd('%s Mismatch "%s" 0x%X' % (self._ext, self._path(name), offset))
+        # the answer is the last number on the reply's own line: 0x... or -1 (as 0xFFFF...)
+        found = re.findall(r"0x[0-9A-Fa-f]+|-?\d+", reply.split(name)[-1])
+        at = int(found[-1], 0) if found else -1
+        if at >= 1 << 62:
+            at = -1
+        return None if at < 0 else self.flash.ext_base + at
 
     def read_bytes(self, addr, n):
         """n bytes of memory. Slow, about 100 ms per KB: it comes back as text."""
+        if self.flash.external(addr):
+            off = addr - self.flash.ext_base
+            return self.ext_dump()[off:off + n]
         out = self.cmd("sysbus ReadBytes 0x%X 0x%X" % (addr, n), timeout=600)
         out = out[out.find("["):]
         data = bytes(int(t, 16) for t in re.findall(r"0x[0-9A-Fa-f]{2}", out))
@@ -445,6 +503,8 @@ class RenodeSession:
         image = self.read_bytes(self.flash.base, self.flash.size)
         if self.flash.ob_size:
             image += self.read_bytes(self.flash.ob_base, self.flash.ob_size)
+        if self.flash.ext_size:
+            image += self.ext_dump()
         return image
 
     def restore_flash(self, data, name="flash_restore.bin"):
@@ -460,6 +520,9 @@ class RenodeSession:
                 out.write(data[f.size:f.size + f.ob_size])
             lines.append("sysbus LoadBinary @ob_%s 0x%X" % (name, f.ob_base))
         self.cmd_batch(lines + [self._set(REG_RESYNC, 1)] + self._clear_checks())
+        inner = f.size + f.ob_size
+        if f.ext_size and len(data) > inner:
+            self.ext_load(data[inner:inner + f.ext_size])
 
     def flash_mismatch(self, expected, name="flash_expect.bin"):
         """First address where flash differs from `expected` (a whole-flash image), or
@@ -472,11 +535,16 @@ class RenodeSession:
             for i in range(f.ob_size):
                 if now[i] != expected[f.size + i]:
                     return f.ob_base + i
+        inner = f.size + f.ob_size
+        if addr is None and f.ext_size and len(expected) > inner:
+            return self.ext_mismatch(expected[inner:inner + f.ext_size])
         return addr
 
     def image_mismatch(self, data, addr, name="image_expect.bin", whole=False):
         """First address where flash at `addr` differs from `data`, or None if that
         image is exactly what is there."""
+        if self.flash.external(addr):
+            return self.ext_mismatch(data, addr - self.flash.ext_base)
         with open(os.path.join(self.workdir, name), "wb") as f:
             f.write(data)
         reply = self.cmd_batch(
@@ -613,9 +681,11 @@ class RenodeSession:
                 parts = line.split()
                 if not parts:
                     continue
-                # a trailing @N is how many microseconds the chip spent on the operation
+                # a trailing @N is how many microseconds the chip spent on the operation,
+                # #N how many bytes an erase took where that is not fixed
                 us = [int(t[1:]) for t in parts if t.startswith("@")]
-                parts = [t for t in parts if not t.startswith("@")]
+                length = [int(t[1:], 16) for t in parts if t.startswith("#")]
+                parts = [t for t in parts if t[0] not in "@#"]
                 op = {"index": len(ops), "kind": TRACE_KINDS[parts[0]], "addr": int(parts[1], 16)}
                 if parts[0] in ("P", "X"):
                     # the number of hex digits says how many bytes the program wrote
@@ -627,6 +697,8 @@ class RenodeSession:
                     op["inferred"] = True
                 if us:
                     op["us"] = us[0]
+                if length:
+                    op["length"] = length[0]
                 ops.append(op)
         return ops
 

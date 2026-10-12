@@ -86,7 +86,7 @@ def changes(ops, pre, flash):
     out = []
     for op in ops:
         if op["kind"] == "erase":
-            off, size = traces.locate(traces.erase_start(op["addr"], flash), flash)
+            off, size = traces.erase_span(op, flash)
             erased = bytes([0xFF]) * size
             out.append(image[off:off + size] != erased)
             image[off:off + size] = erased

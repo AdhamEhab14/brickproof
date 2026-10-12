@@ -130,6 +130,12 @@ jobs:
             torn: true
           - adapter: f411-bug-early_unpg
             expect: 1
+          - adapter: f411-ext          # staged image and rollback floor in an external SPI NOR chip
+            expect: 0
+            torn: true
+            depth: 2
+          - adapter: f411-ext-bug-consume_first
+            expect: 1
     name: demo (${{ matrix.adapter }})
     env:
       RENODE_VERSION: "1.17.0"

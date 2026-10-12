@@ -75,7 +75,7 @@ def states(op, before, flash, kinds=KINDS, seed=0):
     are the clean cuts), and so are duplicates of each other."""
     off, unit = traces.locate(op["addr"], flash)
     if op["kind"] == "erase":
-        off, unit = traces.locate(traces.erase_start(op["addr"], flash), flash)
+        off, unit = traces.erase_span(op, flash)
     out, seen = [], set()
 
     def add(kind, image):

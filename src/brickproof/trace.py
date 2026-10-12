@@ -20,10 +20,17 @@ def size_of(op, flash):
     return op.get("size") or flash.write_unit
 
 
+def _external(addr, flash):
+    ext = getattr(flash, "ext_base", None)
+    return ext is not None and ext <= addr < ext + flash.ext_size
+
+
 def locate(addr, flash):
     """(offset, erase size) of an address in a flash image: where it sits, and how much an
     erase there wipes. The image is the flash, then the option bytes where the chip has
-    them; erasing those wipes all of them."""
+    them (erasing those wipes all of them), then an external flash chip if there is one."""
+    if _external(addr, flash):
+        return flash.size + flash.ob_size + (addr - flash.ext_base), flash.ext_sector
     ob = getattr(flash, "ob_base", None)
     if ob is not None and addr >= ob:
         return flash.size + (addr - ob), flash.ob_size
@@ -33,10 +40,19 @@ def locate(addr, flash):
 
 def erase_start(addr, flash):
     """The address an erase of the unit holding `addr` starts at."""
+    if _external(addr, flash):
+        return addr - (addr - flash.ext_base) % flash.ext_sector
     ob = getattr(flash, "ob_base", None)
     if ob is not None and addr >= ob:
         return ob
     return flash.unit_at(addr)[0]
+
+
+def erase_span(op, flash):
+    """(offset in the image, length) of what one traced erase wipes. An external chip has
+    erase commands of several sizes, so its erases say how much they took."""
+    off, size = locate(erase_start(op["addr"], flash), flash)
+    return off, op.get("length") or size
 
 
 @dataclass
@@ -62,7 +78,7 @@ def phases(ops, flash):
             after = op["addr"] + size_of(op, flash)
         else:
             start = erase_start(op["addr"], flash)
-            after = start + locate(start, flash)[1]
+            after = start + erase_span(op, flash)[1]
         p = out[-1] if out else None
         if p and p.kind == op["kind"] and op["addr"] == p.next:
             p.last, p.end, p.next = op["index"], op["addr"], after
@@ -87,7 +103,11 @@ def cost(ops, flash):
     page or sector that is erased most often in one update."""
     erased = {}
     for op in ops:
-        if op["kind"] == "erase" and op["addr"] < flash.base + flash.size:
+        if op["kind"] == "erase" and _external(op["addr"], flash):
+            # a big erase wears every sector it covers
+            for a in range(op["addr"], op["addr"] + erase_span(op, flash)[1], flash.ext_sector):
+                erased[a] = erased.get(a, 0) + 1
+        elif op["kind"] == "erase" and op["addr"] < flash.base + flash.size:
             start = erase_start(op["addr"], flash)
             erased[start] = erased.get(start, 0) + 1
         elif op["kind"] == "mass_erase":
@@ -96,9 +116,17 @@ def cost(ops, flash):
     out = {"flash_time_s": round(sum(op.get("us", 0) for op in ops) / 1e6, 6),
            "erases": sum(erased.values()), "most_erased": None, "updates_to_wear_out": None}
     if erased:
-        addr = max(sorted(erased), key=lambda a: erased[a])
+        # wear is judged against what each memory promises: the unit that uses up the
+        # largest share of its endurance per update is the one that fails first
+        def endurance_of(a):
+            return (flash.ext_endurance if _external(a, flash) else getattr(flash, "endurance", 0)) or 0
+
+        def share(a):
+            return erased[a] / endurance_of(a) if endurance_of(a) else 0
+
+        addr = max(sorted(erased), key=lambda a: (share(a), erased[a]))
         out["most_erased"] = {"addr": addr, "erases_per_update": erased[addr]}
-        endurance = getattr(flash, "endurance", 0)
+        endurance = endurance_of(addr)
         if endurance:
             out["updates_to_wear_out"] = endurance // erased[addr]
             out["endurance"] = endurance
@@ -132,6 +160,8 @@ def write_jsonl(ops, path):
                 row["inferred"] = True
             if op.get("us"):
                 row["us"] = op["us"]
+            if op.get("length"):
+                row["length"] = "0x%X" % op["length"]
             f.write(json.dumps(row) + "\n")
 
 
@@ -146,12 +176,17 @@ def value_before(ops, index, pre, flash):
         if op["kind"] == "program":
             if op["addr"] == addr and "value" in op and size_of(op, flash) == size:
                 return op["value"]
-        elif op["kind"] == "mass_erase" and addr < flash.base + flash.size:
+        elif op["kind"] == "mass_erase" and flash.base <= addr < flash.base + flash.size:
             return (1 << (8 * size)) - 1
-        elif op["kind"] == "erase" and op["addr"] == erase_start(addr, flash):
+        elif op["kind"] == "erase" and op["addr"] <= addr < op["addr"] + _wiped(op, flash):
             return (1 << (8 * size)) - 1
     off, _ = locate(addr, flash)
     return int.from_bytes(pre[off:off + size], "little")
+
+
+def _wiped(op, flash):
+    """How many bytes from its own address a traced erase wipes."""
+    return erase_span(op, flash)[1] - (op["addr"] - erase_start(op["addr"], flash))
 
 
 class Replay:
@@ -174,7 +209,7 @@ class Replay:
             self.n, self.image = 0, bytearray(self.pre)
         for op in self.ops[self.n:n]:
             if op["kind"] == "erase":
-                off, size = locate(erase_start(op["addr"], self.flash), self.flash)
+                off, size = erase_span(op, self.flash)
                 self.image[off:off + size] = bytes([0xFF]) * size
             elif op["kind"] == "mass_erase":
                 self.image[:self.flash.size] = bytes([0xFF]) * self.flash.size

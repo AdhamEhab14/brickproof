@@ -216,3 +216,47 @@ def test_the_time_of_an_operation_is_kept_in_the_jsonl(tmp_path):
     path = tmp_path / "t.jsonl"
     traces.write_jsonl([op(0, "erase", 0x08002000, us=30000)], str(path))
     assert json.loads(path.read_text())["us"] == 30000
+
+
+# an internal flash of 128 KB, its 16 option bytes, and a 64 KB external chip
+EXT = FlashGeometry(base=0x08000000, size=0x20000, page=PAGE, ob_base=0x1FFFF800, option_bytes=bytes(16),
+                    ext_base=0xA0000000, ext_size=0x10000, endurance=10000, ext_endurance=100000)
+EXT_AT = 0x20000 + 16           # where the chip starts in an image
+
+
+def test_the_external_chip_comes_last_in_an_image():
+    assert EXT.image_size == 0x20000 + 16 + 0x10000
+    assert traces.locate(0xA0000000, EXT) == (EXT_AT, 0x1000)
+    assert traces.locate(0xA0001234, EXT) == (EXT_AT + 0x1234, 0x1000)
+    assert traces.erase_start(0xA0001234, EXT) == 0xA0001000
+    assert traces.locate(0x1FFFF802, EXT) == (0x20000 + 2, 16), "the option bytes are still theirs"
+
+
+def test_an_external_erase_wipes_as_much_as_its_command_took():
+    pre = bytes(EXT.image_size)
+    sector = [op(0, "erase", 0xA0001000, length=0x1000)]
+    image = traces.Replay(pre, sector, EXT).at(1)
+    assert image[EXT_AT + 0x1000:EXT_AT + 0x2000] == bytes([0xFF]) * 0x1000
+    assert image[EXT_AT + 0xFFF] == 0 and image[EXT_AT + 0x2000] == 0
+    block = [op(0, "erase", 0xA0000000, length=0x8000)]
+    image = traces.Replay(pre, block, EXT).at(1)
+    assert image[EXT_AT:EXT_AT + 0x8000] == bytes([0xFF]) * 0x8000 and image[EXT_AT + 0x8000] == 0
+    assert traces.value_before(block + [op(1, "program", 0xA0007FFE, value=0, size=2)], 1, pre, EXT) == 0xFFFF
+
+
+def test_a_page_program_is_one_operation_as_long_as_its_data():
+    data = bytes(range(1, 201))
+    ops = [op(0, "program", 0xA0000100, value=int.from_bytes(data, "little"), size=200)]
+    image = traces.Replay(bytes([0xFF]) * EXT.image_size, ops, EXT).at(1)
+    assert bytes(image[EXT_AT + 0x100:EXT_AT + 0x100 + 200]) == data
+    assert image[EXT_AT + 0xFF] == 0xFF and image[EXT_AT + 0x100 + 200] == 0xFF
+
+
+def test_wear_is_judged_against_each_memory_s_own_endurance():
+    # one erase of an internal page uses up more of its life than three of an external sector
+    ops = [op(0, "erase", 0x08002000)] + [op(i, "erase", 0xA0003000, length=0x1000) for i in (1, 2, 3)]
+    c = traces.cost(ops, EXT)
+    assert c["most_erased"] == {"addr": 0x08002000, "erases_per_update": 1}
+    assert c["updates_to_wear_out"] == 10000
+    big = traces.cost([op(0, "erase", 0xA0000000, length=0x10000)], EXT)
+    assert big["erases"] == 16 and big["updates_to_wear_out"] == 100000

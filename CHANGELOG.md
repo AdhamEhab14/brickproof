@@ -39,6 +39,9 @@ the device back up, and checks that it recovered.
   page or sector against the datasheet's endurance.
 - A GitHub Action and a Docker image.
 
+**External flash.** An SPI NOR flash chip (25-series commands, single-line mode) on the same
+board, with its operations counted, cut, torn and traced together with the internal flash.
+
 **Supported chips.** STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte to
 double-word programming, option bytes through OPTCR).
 

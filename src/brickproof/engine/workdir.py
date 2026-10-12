@@ -11,6 +11,7 @@ PLATFORMS = os.path.join(HERE, "platforms")
 _GEOMETRY = {"FLASH_BASE": "base", "FLASH_SIZE": "size"}
 FAULT_REG_OFFSET = 0x118        # REG_FAULT_ADDR in session.py
 TRACE_NAME = "trace.txt"        # RenodeSession.TRACE_NAME
+STATE_BASE = 0x90000000         # STATE in the flash models: op count, cut point, trace switch
 SHADOW_BASE = 0x91000000        # SHADOW in the flash models
 EXPECT_BASE = 0x92000000        # EXPECT in the flash models: an image to compare flash with
 
@@ -148,6 +149,14 @@ def prepare(workdir, adapter):
     if adapter.flash.ob_base is not None:
         repl += "\nbpOptionBytes: Memory.MappedMemory @ sysbus 0x%X\n    size: 0x%X\n" % (
             adapter.flash.ob_base, MEMORIES[adapter.platform]["ob_region"])
+    # an external SPI NOR flash chip: its model, where it hangs, and its chip select
+    f = adapter.flash
+    if f.ext_size:
+        shutil.copyfile(os.path.join(MODELS, "BpSpiNor.cs"), os.path.join(models, "BpSpiNor.cs"))
+        repl += ('\nextflash: SPI.BpSpiNor @ %s\n    size: 0x%X\n    address: 0x%X\n    state: 0x%X\n'
+                 '    traceFile: "%s/%s"\n    timing: %d\n' % (
+                     f.ext_bus, f.ext_size, f.ext_base, STATE_BASE, _slash(workdir), TRACE_NAME, f.timing))
+        repl += "\ngpioPort%s:\n    %d -> extflash@0\n" % (f.ext_cs[1], int(f.ext_cs[2:]))
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):
         text = _set_const(guard, "GUARD_BASE", base)
