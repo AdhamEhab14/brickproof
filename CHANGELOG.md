@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.0
+
+What changed after BrickProof was run on bootloaders that are not ours (wolfBoot and
+OpenBLT). Everything here is something those runs showed was missing.
+
+**External flash.** An SPI NOR flash chip beside the microcontroller (25-series commands,
+single-line mode), set with `external_flash` in the adapter. Its page programs and erases are
+counted, cut, torn and traced together with those of the internal flash, in the order they
+really happen. Demo: `brickproof demo f411-ext`.
+
+**Closer to the chip**
+- Flash is also at address 0, where an STM32 that boots from it mirrors it. Firmware that
+  programs through that address used to write nowhere.
+- Timers and the SysTick count with the clock the firmware configures (source, PLL,
+  prescalers). `clock: {hse: ...}` gives the board's crystal. The STM32F411 gets an RCC model
+  of ours in place of Renode's.
+- `pins: {PC13: high}` holds an input at a level, for buttons and straps that firmware reads
+  at start-up.
+
+**Judging**
+- The oracle accepts approved images side by side at different addresses, a bootloader and
+  the program it starts. A bootloader that reprograms in place can now be judged: after a cut
+  the bootloader must be intact and running.
+
+**Running**
+- A locked-up device is reported after about a second of waiting, not after the allowance
+  for the whole update.
+
 ## 0.1.0
 
 First release.
@@ -38,9 +66,6 @@ the device back up, and checks that it recovered.
 - What the update costs the flash: time spent erasing and programming, and the most-erased
   page or sector against the datasheet's endurance.
 - A GitHub Action and a Docker image.
-
-**External flash.** An SPI NOR flash chip (25-series commands, single-line mode) on the same
-board, with its operations counted, cut, torn and traced together with the internal flash.
 
 **Supported chips.** STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte to
 double-word programming, option bytes through OPTCR).
