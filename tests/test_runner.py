@@ -90,7 +90,7 @@ def test_a_failing_baseline_ends_the_run_before_any_cut():
     assert "0x20005000" in results[0].message
 
 
-@pytest.mark.parametrize("option,text", [("refuse", "flash rule broken: 2 program(s)"),
+@pytest.mark.parametrize("option,text", [("refuse", "flash rule broken: the chip refused 2 program(s)"),
                                          ("stray", "with no flash operation behind it")])
 def test_flash_rule_violations_fail_the_baseline(option, text):
     results, _ = campaign(FakeDevice(**{option: True}))

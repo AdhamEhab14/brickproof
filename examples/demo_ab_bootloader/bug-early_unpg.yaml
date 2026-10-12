@@ -1,0 +1,11 @@
+# The demo storing every second cell after PG has been cleared again
+# (see BUG_EARLY_UNPG in bootloader/main.c). Plain emulator memory takes those stores.
+# The chip ignores them. BrickProof should fail the baseline.
+extends: adapter.yaml
+name: demo_ab_bootloader_bug_early_unpg
+firmware:
+  - file: prebuilt/bootloader_bug_early_unpg.elf
+  - file: prebuilt/app_v1.img
+    addr: 0x08002000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0801E000

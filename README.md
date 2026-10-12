@@ -54,6 +54,7 @@ brickproof demo self_lock --fail-fast
 | `pop_after_switch` | pops saved registers after switching to the app's stack | reads past the end of RAM: bus fault on every boot |
 | `no_erase` | copies the new image over the old one without erasing | the chip refuses to program cells that are not erased |
 | `no_unlock` | never unlocks the flash controller | the chip ignores every write: the update silently does nothing |
+| `early_unpg` | stores every second cell after programming mode is off again | the chip ignores those stores: half the image is never written |
 | `protected_slot` | (a device setting) the app slot is write-protected | the chip refuses every erase and program there |
 | `resume_copy` | after an interrupted install, skips the erase and writes only what is missing | survives every clean cut; a torn write leaves a cell the chip will not program again |
 | `retry_limit` | gives up on an update after two interrupted attempts | survives any single cut; two cuts in a row lose the update |
@@ -71,7 +72,9 @@ and the other `f411-bug-*` builds have the same mistakes. `resume_copy` is missi
 purpose: an F4 does let a half-written cell be programmed again, so it is not a bug on that chip.
 It has one of its own instead, `f411-bug-watchdog`: on a device with a hardware watchdog, a
 sector erase that takes a second gets the chip reset half way through, on every attempt.
-`watchdog` and `f411-watchdog` are the correct build on such a device.
+`watchdog` and `f411-watchdog` are the correct build on such a device, and `hold_pg` and
+`f411-hold_pg` are the correct build writing flash the other common way, with programming
+mode left on over a whole run of cells.
 
 ## What a run covers
 
@@ -91,7 +94,8 @@ cuts again. A flash state already tested is skipped.
 
 **The chip's rules.** A plain emulator is more forgiving than silicon. BrickProof gives the
 emulated chip its real RAM and flash sizes, faults on memory that is not there, refuses to
-program a cell that is not erased, enforces write protection, and models the option bytes.
+program a cell that is not erased or a store of the wrong width, ignores a store made while
+programming mode is off, enforces write protection, and models the option bytes.
 Erases and programs take the time the datasheet gives them (a 128 KB sector erase is a second
 during which the CPU stands still), so watchdogs and timeouts behave as on the board.
 `flash.timing: max` in the adapter uses the slowest figures the datasheet allows. A reset
