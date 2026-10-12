@@ -145,6 +145,9 @@ that may legitimately be there, and put in `accept` the ones a cut is allowed to
 - `real_every: N` makes every Nth cut in the emulator and powers the device up from the
   computed flash state for the others, which is several times faster and checked against
   the real cuts.
+- `--shard K/N` on the command line runs every Nth cut, starting with the Kth. Give N
+  machines the same command with K from 1 to N and together they make the whole campaign.
+  `.github/workflows/exhaustive.yml` does that for the Three-Tier bootloader.
 - `torn` adds states where the power failed inside an erase or a program.
 - `depth: 2` cuts again while the device is recovering from the first cut.
 

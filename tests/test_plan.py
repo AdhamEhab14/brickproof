@@ -206,3 +206,18 @@ def test_word_programs_and_sector_erases_are_states_too():
            {"index": 2, "kind": "program", "addr": BASE + 0x2000, "value": 0xFFFF0000, "size": 4},
            {"index": 3, "kind": "program", "addr": BASE + 0x2004, "value": 0xFFFFFFFF, "size": 4}]
     assert plans.changes(ops, pre, f4) == [True, False, True, False]
+
+
+def test_shards_together_make_exactly_the_whole_campaign():
+    whole = [r.cut for r in run(FakeDevice(), {"mode": "every"}).results[1:]]
+    parts = []
+    for k in (1, 2, 3):
+        ad = SimpleNamespace(flash=FakeDevice().flash, check_states=True, cut_limit=0.03,
+                             update_time=1.0, boot_settle=0.1, cuts=[], plan={"mode": "every"},
+                             shard=(k, 3))
+        device = FakeDevice()
+        out = runner.campaign(device, FakeDriver(device), ad)
+        assert out.shard == {"index": k, "of": 3, "all_cuts": len(whole), "cuts": len(out.results) - 1}
+        parts.append([r.cut for r in out.results[1:]])
+    assert sorted(sum(parts, [])) == sorted(whole) and all(parts)
+    assert not set(parts[0]) & set(parts[1])

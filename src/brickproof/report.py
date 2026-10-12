@@ -233,6 +233,11 @@ def html_page(report):
         out.append(_coverage(report["coverage"]))
     else:
         out.append("<p>No plan: the update did not pass uninterrupted, or no golden run exists.</p>")
+    if report.get("shard"):
+        sh = report["shard"]
+        out.append("<p><strong>Shard %d of %d.</strong> This run made %d of the campaign's %d cuts. "
+                   "The whole campaign is covered only by all the shards together.</p>"
+                   % (sh["index"], sh["of"], sh["cuts"], sh["all_cuts"]))
     if report.get("update"):
         out += ["<p>%s</p>" % _e(line[0].upper() + line[1:] + ".")
                 for line in traces.describe_cost(report["update"], report["update"]["timing"])]

@@ -109,6 +109,15 @@ def cmd_run(args):
         ad.plan = dict(ad.plan, real_every=args.real_every)
     if args.per_phase is not None and not args.cut:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
+    if args.shard:
+        try:
+            k, n = (int(x) for x in args.shard.split("/"))
+            if not 1 <= k <= n:
+                raise ValueError
+        except ValueError:
+            print("--shard: use K/N with K from 1 to N, for example 3/20", file=sys.stderr)
+            return 2
+        ad.shard = (k, n)
     if not ad.cuts and not ad.plan:
         print("nothing to cut: the adapter has no scenario.cuts and no scenario.plan "
               "(or pass --plan phases)", file=sys.stderr)
@@ -159,6 +168,10 @@ def cmd_run(args):
                   out.depth["skipped_known"], note))
     if ad.plan and out.plan:
         print("coverage: %s" % out.plan.summary())
+    if out.shard:
+        print("shard %d of %d: this run made %d of the campaign's %d cuts; the coverage above is "
+              "that of all shards together" % (out.shard["index"], out.shard["of"],
+                                               out.shard["cuts"], out.shard["all_cuts"]))
     if out.trace:
         _print_cost(out.trace, ad.flash)
     return 0 if out.passed else 1
@@ -282,6 +295,9 @@ def run_options(r):
                         "from each first cut (default 1)")
     r.add_argument("--per-phase", type=int, metavar="N",
                    help="samples inside a long phase when planning by phases (default 8)")
+    r.add_argument("--shard", metavar="K/N",
+                   help="run only every Nth cut, starting with the Kth: splits a long campaign "
+                        "over N machines, each given a different K")
 
 
 if __name__ == "__main__":
