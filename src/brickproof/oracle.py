@@ -9,7 +9,9 @@ uses nothing the firmware says. It looks at two facts:
                       code, not parked in a fault handler
 
 It shares no code with any target. An adapter lists the approved images and which of
-them a scenario accepts after a cut (only the new one, or old and new).
+them a scenario accepts after a cut (only the new one, or old and new). Images can also
+sit side by side at different addresses, a bootloader and the program it starts: then
+the core must be running inside one of those that are installed.
 """
 from dataclasses import dataclass
 
@@ -53,32 +55,43 @@ class Oracle:
         self.samples = samples
         self.interval = interval
 
-    def installed(self, session):
-        """(the approved image that is in flash, None) or (None, why not)."""
-        nearest, matches = None, []
+    def _find(self, session):
+        """(approved images that are in flash, one per address; the closest miss)."""
+        nearest, here = None, {}
         for img in self.images:
             diff = session.image_mismatch(img.data, img.addr)
             if diff is None:
-                matches.append(img)
+                # One image can be the start of another (an update that only appends),
+                # and then both match. The longest is the one that is really there.
+                if img.addr not in here or len(img.data) > len(here[img.addr].data):
+                    here[img.addr] = img
             elif nearest is None or diff > nearest[1]:
                 nearest = (img, diff)
-        if matches:
-            # One image can be the start of another (an update that only appends), and
-            # then both match. The longest is the one that is really there.
-            return max(matches, key=lambda i: len(i.data)), None
+        return list(here.values()), nearest
+
+    def installed(self, session):
+        """(the approved image that is in flash, None) or (None, why not). With images
+        at several addresses, the longest of those found."""
+        found, nearest = self._find(session)
+        if found:
+            return max(found, key=lambda i: len(i.data)), None
         img, diff = nearest
         return None, ("no approved image is installed at 0x%08X: the closest is %s, and flash "
                       "differs from it at 0x%08X" % (img.addr, img.name, diff))
 
     def judge(self, session):
-        img, why = self.installed(session)
-        if img is None:
-            return Verdict(False, None, why)
+        found, _ = self._find(session)
+        if not found:
+            return Verdict(False, None, self.installed(session)[1])
+        samples = session.sample_cpu(self.samples, self.interval)
+        if len(found) > 1:
+            return self._judge_side_by_side(found, samples)
+        img = found[0]
         if img.name not in self.accept:
             return Verdict(False, img.name, "the installed image is %s; this scenario accepts only %s"
                            % (img.name, " or ".join(self.accept)))
         lo, hi = self.run_in or (img.addr, img.end)
-        for pc, exc in session.sample_cpu(self.samples, self.interval):
+        for pc, exc in samples:
             if exc in FAULTS:
                 return Verdict(False, img.name, "%s is installed but the core is in the %s "
                                "handler (PC 0x%08X)" % (img.name, FAULTS[exc], pc))
@@ -86,6 +99,26 @@ class Oracle:
                 return Verdict(False, img.name, "%s is installed but not running: PC 0x%08X is "
                                "outside 0x%08X..0x%08X" % (img.name, pc, lo, hi))
         return Verdict(True, img.name)
+
+    def _judge_side_by_side(self, found, samples):
+        """Several approved images are installed at different addresses, a bootloader and
+        the program it starts for example. The core must be in one this scenario accepts.
+        It may go from one to the other between two looks: a bootloader hands over."""
+        names = " and ".join(i.name for i in found)
+        running = None
+        for pc, exc in samples:
+            if exc in FAULTS:
+                return Verdict(False, None, "%s are installed but the core is in the %s handler "
+                               "(PC 0x%08X)" % (names, FAULTS[exc], pc))
+            inside = [i for i in found if i.addr <= pc < i.end]
+            if not inside:
+                return Verdict(False, None, "%s are installed but neither is running: PC 0x%08X"
+                               % (names, pc))
+            running = inside[0]
+            if running.name not in self.accept:
+                return Verdict(False, running.name, "the core is running %s; this scenario accepts "
+                               "only %s" % (running.name, " or ".join(self.accept)))
+        return Verdict(True, running.name)
 
 
 def build(adapter, driver):
