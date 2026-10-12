@@ -69,12 +69,13 @@ def test_prepare_names_the_missing_firmware(tmp_path):
 
 def test_platform_gets_the_chips_real_memory_sizes(tmp_path):
     ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
-    assert wd.memory_sizes(ad) == {"sram": 0x5000, "flash": 0x08020000}
+    assert wd.memory_sizes(ad) == {"sram": 0x5000, "flash": 0x20000}
     wd.prepare(str(tmp_path), ad)
     repl = (tmp_path / "platform.repl").read_text()
     assert "\nsram:\n    size: 0x5000\n" in repl
     assert "iwdg: Timers.STM32_IndependentWatchdog" in repl, "the F103 gets a real watchdog"
-    assert "\nflash:\n    size: 0x8020000\n" in repl
+    assert "\nflash:\n    size: 0x20000\n" in repl
+    assert "sysbus 0x08000000;\n        sysbus 0x00000000" in repl, "flash is also at the boot alias"
 
 
 def test_ram_base_must_match_the_platform():
@@ -87,7 +88,8 @@ def test_ram_base_must_match_the_platform():
 def test_every_hole_in_the_address_space_gets_a_guard(tmp_path):
     ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
     assert wd.holes(ad) == [("ramGuard", 0x20005000, 0x22000000 - 0x20005000),
-                            ("flashGuard", 0x08020000, 0x1FFF0000 - 0x08020000)]
+                            ("flashGuard", 0x08020000, 0x1FFF0000 - 0x08020000),
+                            ("aliasGuard", 0x20000, 0x08000000 - 0x20000)]
     wd.prepare(str(tmp_path), ad)
     repl = (tmp_path / "platform.repl").read_text()
     assert "ramGuard: Python.PythonPeripheral @ sysbus 0x20005000" in repl

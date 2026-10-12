@@ -8,6 +8,13 @@ using "platforms/cpus/stm32f4.repl"
 
 flash_controller: @ none
 
+// An STM32 that boots from its main flash shows that flash at address 0 as well, and
+// firmware uses it (wolfBoot programs through it). Same memory, two addresses.
+flash: @ {
+        sysbus 0x08000000;
+        sysbus 0x00000000
+    }
+
 flashctl: Python.PythonPeripheral @ sysbus 0x40023C00
     size: 0x400
     initable: true
