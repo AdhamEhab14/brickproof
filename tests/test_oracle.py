@@ -175,3 +175,47 @@ def test_images_come_from_files_and_from_the_driver(tmp_path):
 def test_a_bad_oracle_section_is_rejected(tmp_path, section, text):
     with pytest.raises(adapters.AdapterError, match=text):
         load(tmp_path, section)
+
+
+# ---- a bootloader and the program it starts, side by side -----------------------
+
+BOOT_AT = 0x08000000
+BOOT_CODE = bytes(range(64))
+BOOTLOADER = Image("bootloader", BOOT_CODE, BOOT_AT)
+PROGRAM = Image("program", NEW_IMAGE, SLOT)
+
+
+def device_with_bootloader(program=None, pc=BOOT_AT + 8, exc=0):
+    d = FakeDevice()
+    d.mem[0:len(BOOT_CODE)] = BOOT_CODE
+    d.mem[SLOT - BOOT_AT:SLOT - BOOT_AT + len(NEW_IMAGE)] = program or bytes(len(NEW_IMAGE))
+    d.cpu = (pc, exc)
+    return d
+
+
+def side_by_side(accept=("bootloader", "program")):
+    return Oracle([BOOTLOADER, PROGRAM], accept=list(accept))
+
+
+def test_with_only_the_bootloader_installed_the_core_must_be_in_it():
+    assert side_by_side().judge(device_with_bootloader()).image == "bootloader"
+    v = side_by_side().judge(device_with_bootloader(pc=SLOT + 4))
+    assert not v.ok and "bootloader is installed but not running" in v.message
+
+
+def test_with_both_installed_the_core_may_be_in_either():
+    for pc, name in ((BOOT_AT + 8, "bootloader"), (SLOT + 4, "program")):
+        v = side_by_side().judge(device_with_bootloader(NEW_IMAGE, pc=pc))
+        assert v.ok and v.image == name
+
+
+def test_with_both_installed_the_core_must_be_in_one_of_them():
+    v = side_by_side().judge(device_with_bootloader(NEW_IMAGE, pc=0x20000100))
+    assert not v.ok and "neither is running" in v.message
+    v = side_by_side().judge(device_with_bootloader(NEW_IMAGE, pc=SLOT + 4, exc=3))
+    assert not v.ok and "HardFault" in v.message
+
+
+def test_running_an_installed_image_the_scenario_does_not_accept_fails():
+    v = side_by_side(accept=["program"]).judge(device_with_bootloader(NEW_IMAGE))
+    assert not v.ok and v.image == "bootloader" and "accepts only program" in v.message
