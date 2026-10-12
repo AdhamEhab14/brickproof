@@ -112,4 +112,6 @@ def test_the_flash_model_gets_a_shadow_as_big_as_the_flash(tmp_path):
     assert "\nOB_BASE = 0x1FFFF800\n" in model and "\nWRP_UNIT = 0x1000\n" in model
     assert "\nTIMING = 0x1\n" in model, "operations take their typical time unless told otherwise"
     assert not (tmp_path / "models" / "stm32f4_flash.py").exists(), "only this chip's controller"
+    rcc = (tmp_path / "models" / "stm32f1_rcc.py").read_text()
+    assert "\nHSE_HZ = 0x7A1200\n" in rcc, "the board's crystal reaches the clock model"
     assert 'TRACE_FILE = "%s/trace.txt"' % str(tmp_path).replace("\\", "/") in model

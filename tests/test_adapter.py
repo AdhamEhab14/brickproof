@@ -266,3 +266,26 @@ def test_the_watchdog_demos_ship_with_a_hardware_watchdog():
         ad = adapters.load(os.path.join(DEMO, name))
         user = ad.flash.option_bytes[2 if bit == 1 else 0]
         assert not user & bit, name
+
+
+def test_pins_become_levels_held_after_every_reset(tmp_path):
+    p = tmp_path / "adapter.yaml"
+    p.write_text(MINIMAL + "pins: {PC13: high, pa0: low}\nreset: [\"cpu Step\"]\n")
+    ad = adapters.load(str(p))
+    assert ad.reset_cmds == ["gpioPortC OnGPIO 13 true", "gpioPortA OnGPIO 0 false", "cpu Step"]
+
+
+@pytest.mark.parametrize("pins", ["{X13: high}", "{PC16: high}", "{PC13: up}", "{C13: low}"])
+def test_bad_pins_are_rejected(tmp_path, pins):
+    p = tmp_path / "adapter.yaml"
+    p.write_text(MINIMAL + "pins: %s\n" % pins)
+    with pytest.raises(adapters.AdapterError, match="pins"):
+        adapters.load(str(p))
+
+
+def test_the_crystal_is_8_mhz_unless_the_adapter_says_otherwise(tmp_path):
+    p = tmp_path / "adapter.yaml"
+    p.write_text(MINIMAL)
+    assert adapters.load(str(p)).hse == 8000000
+    p.write_text(MINIMAL + "clock: {hse: 25000000}\n")
+    assert adapters.load(str(p)).hse == 25000000

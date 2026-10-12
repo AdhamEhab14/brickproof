@@ -8,6 +8,15 @@ using "platforms/cpus/stm32f4.repl"
 
 flash_controller: @ none
 
+// Renode's RCC keeps the clock tree to itself. Ours tells the timers what the firmware
+// configured.
+rcc: @ none
+
+clocks: Python.PythonPeripheral @ sysbus 0x40023800
+    size: 0x400
+    initable: true
+    filename: "@MODELS@/stm32f4_rcc.py"
+
 // An STM32 that boots from its main flash shows that flash at address 0 as well, and
 // firmware uses it (wolfBoot programs through it). Same memory, two addresses.
 flash: @ {

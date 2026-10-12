@@ -355,16 +355,23 @@ class RenodeSession:
         calling the CPU stuck."""
         return hang_limit(seconds, self._slowest)
 
-    def run_for(self, seconds):
-        t0 = time.time()
-        try:
-            self.cmd(self._run_cmd(seconds), timeout=self.hang_limit(seconds))
-        except TimeoutError:
-            raise MachineHung("emulated time stopped advancing") from None
-        if seconds >= 0.05:
-            # learn how slow this machine really is; only ever towards "slower"
-            self._slowest = max(self._slowest, (time.time() - t0) / seconds)
-        self.virtual_time += seconds
+    def run_for(self, seconds, slice_s=1.0):
+        """Let `seconds` of emulated time pass. A long wait is made in slices: a core
+        that has locked up never returns from a run, and with slices that is noticed
+        after one of them, not after the allowance for the whole wait."""
+        left = seconds
+        while left > 0:
+            step = min(left, slice_s)
+            t0 = time.time()
+            try:
+                self.cmd(self._run_cmd(step), timeout=self.hang_limit(step))
+            except TimeoutError:
+                raise MachineHung("emulated time stopped advancing") from None
+            if step >= 0.05:
+                # learn how slow this machine really is; only ever towards "slower"
+                self._slowest = max(self._slowest, (time.time() - t0) / step)
+            self.virtual_time += step
+            left -= step
         self._pull()
 
     def _pull(self, wait=0.03):

@@ -132,6 +132,8 @@ def prepare(workdir, adapter):
                 text = _set_const(text, "WRP_UNIT", adapter.flash.wrp_unit)
             text = _set_const(text, "TIMING", adapter.flash.timing)
             text = _set_trace_file(text, "%s/%s" % (_slash(workdir), TRACE_NAME))
+        elif name.endswith("_rcc.py"):
+            text = _set_const(text, "HSE_HZ", adapter.hse)
         with open(os.path.join(models, name), "w", newline="\n") as f:
             f.write(text)
 
