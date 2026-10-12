@@ -1,0 +1,136 @@
+# The Three-Tier bootloader's self-update, cut at EVERY distinct flash state.
+#
+# That is about 12,000 cuts, hours of work for one machine, so it is split into shards
+# that run side by side: shard k of n makes every nth cut. Started by hand (Actions tab,
+# "Run workflow"), not on every push. The last job adds the shards up and fails if any
+# cut failed or any shard is missing.
+name: exhaustive
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: How many machines to split the campaign over
+        default: "20"
+      real_every:
+        description: Make every Nth cut in the emulator, start the others from the computed state
+        default: "25"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.list.outputs.shards }}
+    steps:
+      - id: list
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: echo "shards=$(python3 -c "import os; print(list(range(1, int(os.environ['SHARDS']) + 1)))")" >> "$GITHUB_OUTPUT"
+
+  cut:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    name: shard ${{ matrix.shard }}
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the target bootloader
+        uses: actions/checkout@v4
+        with:
+          repository: AdhamEhab14/Three-Tier-STM32-Secure-Bootloader
+          ref: v2.0.0          # pinned: the adapter is written for this release
+          path: target
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - name: Build the target with its published TEST keys
+        working-directory: target
+        run: |
+          cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
+          cmake --build build-test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e . -r adapters/three_tier_f103/requirements.txt
+
+      - name: Cut this shard's share of every flash state
+        env:
+          SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
+          REAL_EVERY: ${{ inputs.real_every }}
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          brickproof run adapters/three_tier_f103/adapter.yaml --target target \
+            --plan every --real-every "$REAL_EVERY" --shard "$SHARD" -j 3 \
+            --json "brickproof-out/shard-${{ matrix.shard }}.json" > brickproof-out.log 2>&1 || code=$?
+          tail -n 12 brickproof-out.log
+          exit ${code:-0}
+
+      - name: Upload this shard's results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: |
+            brickproof-out/
+            brickproof-out.log
+
+  total:
+    needs: cut
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: shards
+
+      - name: Add the shards up
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          python3 - <<'EOF'
+          import glob, json, os, sys
+          want = int(os.environ["SHARDS"])
+          reports = [json.load(open(p)) for p in sorted(glob.glob("shards/*/brickproof-out/shard-*.json"))]
+          cuts = [c for r in reports for c in r["cuts"] if not c["baseline"]]
+          failed = [c for c in cuts if not c["passed"] and not c["skipped"]]
+          real = sum(1 for c in cuts if not c["computed"])
+          print("shards reported: %d of %d" % (len(reports), want))
+          for r in reports[:1]:
+              cov = r["coverage"]
+              print("the update: %d operations, %d distinct flash states" % (cov["operations"], cov["distinct_states"]))
+          print("cuts: %d, of which %d made in the emulator and %d started from the computed state"
+                % (len(cuts), real, len(cuts) - real))
+          print("failed: %d" % len(failed))
+          for c in failed[:50]:
+              print("  FAIL %s at 0x%08X: %s" % (c["cut"], c["addr"] or 0, c["message"]))
+          planned = {r["shard"]["all_cuts"] for r in reports}
+          whole = len(reports) == want and len(planned) == 1 and len(cuts) == planned.pop()
+          if not whole:
+              print("the shards do not add up to the whole campaign")
+          sys.exit(1 if failed or not whole else 0)
+          EOF

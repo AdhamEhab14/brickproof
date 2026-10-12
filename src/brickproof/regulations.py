@@ -101,7 +101,9 @@ def _scope(report):
     cov = report.get("coverage")
     if not cov:
         return "no cuts were planned"
-    parts = ["%d of its %d distinct flash states" % (cov["cuts"], cov["distinct_states"])]
+    # one shard of a split campaign made only its share of the planned cuts
+    cuts = report["shard"]["cuts"] if report.get("shard") else cov["cuts"]
+    parts = ["%d of its %d distinct flash states" % (cuts, cov["distinct_states"])]
     kinds = {("torn" if c["torn"] else "depth" if c["depth"] > 1 else "cut") for c in report["cuts"]
              if not c["baseline"]}
     if "torn" in kinds:

@@ -424,6 +424,7 @@ class Outcome:
     started: str = ""           # when the run began, UTC
     inputs: list = field(default_factory=list)   # the firmware files tested, with their hashes
     jobs: int = 1               # how many emulators shared the work
+    shard: dict = None          # set when this run made only its share of the cuts
 
     @property
     def passed(self):
@@ -486,6 +487,14 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     # start from the computed state. The real ones keep checking that those states are right.
     every = max(1, cfg.get("real_every", 1))
     cuts = _past_the_end(_cuts_to_run(adapter, out.plan), len(golden.ops))
+    # A long campaign can be split over several machines: shard k of n takes every nth
+    # cut. The cuts are the same list in the same order everywhere, so the shards
+    # together make exactly the whole campaign.
+    if getattr(adapter, "shard", None):
+        k, n = adapter.shard
+        out.shard = {"index": k, "of": n, "all_cuts": len(cuts)}
+        cuts = cuts[k - 1::n]
+        out.shard["cuts"] = len(cuts)
     planned = [c for c in cuts if isinstance(c, Cut) and c.at_op is not None and c.expect is None]
     real = {id(c) for c in planned[::every]} | {id(c) for c in planned[-1:]}
     computable = {id(c) for c in planned} - real
@@ -621,6 +630,7 @@ def as_dict(outcome, adapter):
         "update": dict(traces.cost(outcome.trace, adapter.flash), timing=adapter.flash.timing)
         if outcome.trace else None,
         "depth": outcome.depth,
+        "shard": outcome.shard,
         "timings": outcome.timings,
         "cuts": [asdict(r) for r in outcome.results],
     }

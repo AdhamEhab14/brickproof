@@ -61,6 +61,7 @@ class Adapter:
     torn: list = None             # torn-operation shapes to try at each cut (see torn.py)
     torn_seed: int = 0
     depth: dict = None            # explore cuts during recovery (see runner.explore)
+    shard: tuple = None           # (k, n): run only every nth cut, starting with the kth
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
