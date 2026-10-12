@@ -43,6 +43,8 @@ BOOTLOADERS = {
     "bootloader_bug_retry_limit": ["-DBUG_RETRY_LIMIT"],
     "bootloader_bug_self_lock": ["-DBUG_SELF_LOCK"],
     "bootloader_bug_watchdog": ["-DBUG_WATCHDOG"],
+    "bootloader_bug_early_unpg": ["-DBUG_EARLY_UNPG"],
+    "bootloader_hold_pg": ["-DHOLD_PG"],        # not a bug: PG held over a run of cells
 }
 APP_VERSIONS = (1, 2)
 META_MAGIC = 0x4D455441

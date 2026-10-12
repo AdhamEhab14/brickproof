@@ -23,7 +23,8 @@ the device back up, and checks that it recovered.
 - An oracle outside the firmware: the installed bytes must be exactly an approved image, and
   the CPU must be running inside it, not in a fault handler.
 - The chip's rules, which a plain emulator does not have: real RAM and flash sizes, a bus fault
-  for memory that is not there, erase before program, write protection, option bytes
+  for memory that is not there, erase before program, stores ignored unless programming
+  mode is on, write protection, option bytes
   (including the mass erase when read protection is removed), how long erases and
   programs take, during which the CPU stands still, a hardware watchdog set in the option
   bytes, and a proper reboot after a reset the firmware or a watchdog causes.
@@ -32,7 +33,7 @@ the device back up, and checks that it recovered.
 **What you get**
 - JSON, JUnit and HTML reports; the HTML one lists each failure with a command that reproduces
   it, the firmware hashes, and where the evidence fits in UN R156 and the EU Cyber Resilience Act.
-- A bundled demo (`brickproof demo`): a small A/B bootloader and ten builds with a known bug,
+- A bundled demo (`brickproof demo`): a small A/B bootloader and a dozen builds with a known bug,
   each of which a run catches. The same demo builds for the STM32F411 (`brickproof demo f411`).
 - What the update costs the flash: time spent erasing and programming, and the most-erased
   page or sector against the datasheet's endurance.

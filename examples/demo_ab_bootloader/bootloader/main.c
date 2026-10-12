@@ -43,10 +43,17 @@
  *                         when the next boot writes "unprotected" again the chip
  *                         answers by mass-erasing the flash.
  *
+ *   BUG_EARLY_UNPG        program one cell properly, then store the next one after PG has
+ *                         been cleared again. An emulator's plain memory takes that
+ *                         second store. The chip ignores it, so half the image is
+ *                         never written, power cut or not.
  *   BUG_WATCHDOG          feed the watchdog between flash operations, but leave it at
  *                         its reset timeout of half a second. On a device with a
  *                         hardware watchdog, a sector erase that takes a second gets
  *                         the chip reset in the middle of it, on every attempt.
+ *
+ * HOLD_PG is not a bug: it is the other common way to write flash, with PG left set
+ * over a whole run of cells. A power cut can fall between any two of them.
  *
  * The same source builds for an STM32F103 and, with -DSTM32F4, for an STM32F411. What
  * differs between them (the flash map, how to erase and program, the option bytes)
@@ -165,6 +172,22 @@ static void meta_write(uint32_t floor)
 /* One program per cell: a halfword on the F1, a word on the F4. */
 static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
 {
+#if defined(HOLD_PG)
+    flash_pg(1);
+    for (uint32_t i = 0; i < n; i += CELL) {
+        wdg_feed();
+        *(volatile cell_t *)(dst + i) = *(const cell_t *)(src + i);
+        flash_wait();
+    }
+    flash_pg(0);
+#elif defined(BUG_EARLY_UNPG)
+    for (uint32_t i = 0; i < n; i += 2 * CELL) {
+        wdg_feed();
+        flash_cell(dst + i, *(const cell_t *)(src + i));
+        if (i + CELL < n)                 /* PG is clear again by now */
+            *(volatile cell_t *)(dst + i + CELL) = *(const cell_t *)(src + i + CELL);
+    }
+#else
     for (uint32_t i = 0; i < n; i += CELL) {
         wdg_feed();
 #ifdef BUG_RESUME_COPY
@@ -173,6 +196,7 @@ static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
 #endif
         flash_cell(dst + i, *(const cell_t *)(src + i));
     }
+#endif
 }
 
 static void install(void)

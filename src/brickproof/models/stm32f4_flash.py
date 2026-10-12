@@ -12,10 +12,14 @@
 #   the option bytes are not written by the firmware. It puts the wanted values in
 #     OPTCR and sets OPTSTRT, and the chip erases and rewrites them itself.
 #
-# An operation starts when software sets STRT (erase), sets PG (program) or sets
-# OPTSTRT. The programmed cell is written by the CPU straight into flash memory, so
-# the model never sees it happen. It keeps a shadow copy of flash that only real
-# operations update, and when PG is cleared it compares the two to find what was written.
+# An erase is an operation when software sets STRT, a rewrite of the option bytes when
+# it sets OPTSTRT. A program is an operation when the CPU stores into flash while PG
+# is set. That store goes straight into Renode's flash memory, so while PG is set the
+# model listens to the CPU's memory accesses (and only then, because listening is
+# slow) and applies the chip's rules to each store as it lands: the width must be the
+# one PSIZE names, and bits can only be cleared. It also keeps a shadow copy of flash
+# that only real operations update. Whatever differs from the shadow later was stored
+# with PG clear, which the chip ignores: that is what the audit reports.
 #
 # Option bytes are 16 bytes at OB_BASE, as the chip shows them: a word at +0 holding
 # USER and RDP in its low half and their complement in its high half, and a word at +8
@@ -34,8 +38,8 @@
 # simply stops for that long. The model skips the same amount of virtual time: timers,
 # watchdogs and timeouts see a one-second sector erase as one second.
 #
-# Not modelled: PGPERR and PGAERR (the model cannot see how wide a store was), PCROP
-# (SPRMOD is kept but the nWRP bits always mean write protection), and RDP level 2.
+# Not modelled: PGAERR (a store across a 128-bit row), PCROP (SPRMOD is kept but the
+# nWRP bits always mean write protection), and RDP level 2.
 #
 # The test-only registers at 0x100..0x14C are the same as the F1 model's, see there.
 # "cut page" (0x114) takes the first address of a sector.
@@ -71,6 +75,7 @@ IWDG_KR = 0x40003000        # writing 0xCCCC here starts the independent watchdo
 NEVER = 0xFFFFFFFF
 MAGIC = 0xB81C0004          # state word 0: set once the defaults below are in place
 SR_WRPERR = 0x10
+SR_PGPERR = 0x40
 CR_PG, CR_SER, CR_MER, CR_STRT, CR_LOCK = 1, 2, 4, 1 << 16, 1 << 31
 OPTCR_OPTLOCK, OPTCR_OPTSTRT = 1, 2
 RDP_LEVEL_0 = 0xAA
@@ -100,15 +105,17 @@ def ensure_state():
         st_w(CUT_PAGE, NEVER)
         resync()
         st_w(0, MAGIC)
-        self.GetMachine().MachineReset += start_hardware_watchdog
+        self.GetMachine().MachineReset += after_reset
 
 
-def start_hardware_watchdog(machine, ob=OB_BASE, kr=IWDG_KR):
+def after_reset(machine, ob=OB_BASE, kr=IWDG_KR):
     # Runs after every reset of the machine, for as long as this emulator lives. With
     # WDG_SW (bit 5 of the USER byte) cleared the watchdog is a hardware one: it is
     # running before the first instruction, with its reset timeout of about 0.5 s.
     # The values come in as defaults because this outlives the script that defined it.
     b = machine.SystemBus
+    for c in b.GetCPUs():
+        c.SetHookAtMemoryAccess(None)           # a reset ends any program that was going on
     if not int(b.ReadByte(ob)) & 0x20:
         b.WriteDoubleWord(kr, 0xCCCC)
 
@@ -233,67 +240,55 @@ def first_difference(addr, n):
     return 0
 
 
-def in_flash(addr):
-    return FLASH_BASE <= addr < FLASH_BASE + FLASH_SIZE
+def listen(on):
+    # Hear every memory access of the CPU, or stop hearing them. Ending the current
+    # block of translated code makes the very next instruction count already: the
+    # store usually follows the write to CR at once.
+    for c in bus.GetCPUs():
+        c.SetHookAtMemoryAccess(on_access if on else None)
+        if on:
+            c.RequestTranslationBlockRestart()
 
 
-def written_cells(size):
-    # Which cells did the program that just ended write? A cell is `size` bytes at a
-    # multiple of `size`. A copy goes on from where the last one stopped, so look
-    # there first. If nothing is there, look everywhere, and take the first cell that
-    # differs plus any that directly follow it (firmware may leave PG set for a few
-    # cells). A difference somewhere else was not made by this program: leave it for
-    # the audit to report.
-    found = []
-    last = st(LAST)
-    a = last + size if last else 0
-    if a % size:
-        a = 0                           # the cell size changed since the last program
-    while a and in_flash(a) and get(a, size) != get(shadow_of(a), size):
-        found.append(a)
-        a += size
-    if not found:
-        cells = []
-        for d in all_differences():
-            c = d - d % size
-            if d < OB_BASE and (not cells or cells[-1] != c):
-                cells.append(c)
-        for c in cells:
-            if not found or c == found[-1] + size:
-                found.append(c)
-        stray = [c for c in cells if c not in found] + option_differences()
-        if stray and not st(AUDIT):
-            st_w(AUDIT, stray[0])
-    return found
+def on_access(pc, operation, virtual, addr, width, value):
+    # called by the CPU after each of its memory accesses while PG is set
+    if str(operation) != "MemoryWrite":
+        return
+    addr = int(addr)
+    if FLASH_BASE <= addr < FLASH_BASE + FLASH_SIZE:
+        program(addr, int(width), int(value))
 
 
-def settle_program(size):
-    # PG was just cleared: account for what the program wrote, the way the chip would
-    st_w(PENDING, 0)
-    found = written_cells(size)
-    if not found:
-        # flash is as it was: the program wrote the value already there. In a
-        # sequential copy that is the next cell, so say so, as a guess.
-        last = st(LAST)
-        if last:
-            st_w(LAST, last + size)
-        log("P? 0x%08X @%d" % (last + size if last else 0, T_PROGRAM_US[TIMING]))
-    for n, a in enumerate(found):
-        if n:
-            st_w(OPCOUNT, st(OPCOUNT) + 1)      # PG stayed set: each further cell is an operation
-        new = get(a, size)
-        old = get(shadow_of(a), size)
-        if is_protected(a):
-            put(a, size, old)                   # write-protected: nothing is written
-            refuse_protected(a)
-        else:
-            stored = old & new                  # a program clears bits, it cannot set them
-            put(a, size, stored)
-            put(shadow_of(a), size, stored)
-            log("P 0x%08X 0x%0*X @%d" % (a, 2 * size, stored, T_PROGRAM_US[TIMING]))
-        if n:
-            spend(T_PROGRAM_US[TIMING])         # the first one was paid for when PG was set
-        st_w(LAST, a)
+def program(a, width, value):
+    # One store into flash while PG is set. It has already landed in Renode's memory.
+    # What the chip makes of it is decided here.
+    global sr_err
+    old = get(shadow_of(a), width)
+    if st(CUT_HIT):
+        put(a, width, old)                      # the power is off
+        return
+    if not begin(False, 0):
+        put(a, width, old)                      # the power goes just before this store
+        for c in bus.GetCPUs():
+            c.RequestTranslationBlockRestart()  # and not after the rest of this block
+        return
+    spend(T_PROGRAM_US[TIMING])
+    if width != 1 << ((cr >> 8) & 3):
+        # not the width PSIZE names: the chip does not write and sets PGPERR
+        put(a, width, old)
+        sr_err |= SR_PGPERR
+        if not st(REFUSED):
+            st_w(REFUSED_AT, a)
+        st_w(REFUSED, st(REFUSED) + 1)
+        log("X 0x%08X 0x%0*X 0x%0*X" % (a, 2 * width, value, 2 * width, old))
+    elif is_protected(a):
+        put(a, width, old)                      # write-protected: nothing is written
+        refuse_protected(a)
+    else:
+        stored = old & value                    # a program clears bits, it cannot set them
+        put(a, width, stored)
+        put(shadow_of(a), width, stored)
+        log("P 0x%08X 0x%0*X @%d" % (a, 2 * width, stored, T_PROGRAM_US[TIMING]))
 
 
 def begin(erasing, addr):
@@ -342,6 +337,7 @@ def program_option_bytes(value):
 if request.IsInit:
     cr = CR_LOCK
     acr = 0
+    listening = False       # whether the CPU's memory accesses are being heard (see listen)
     keystate = 0
     optkeystate = 0
     sr_err = 0
@@ -387,8 +383,11 @@ elif request.IsWrite or request.IsRead:
                 v = old                     # a locked CR ignores everything but the keys
             cr = (v & ~(CR_LOCK | CR_STRT)) | locked      # STRT clears itself
             unlocked = not (old & CR_LOCK)
-            if st(PENDING) and not (v & CR_PG):
-                settle_program(1 << ((old >> 8) & 3))
+            # stores into flash are programs for as long as PG is set
+            programming = bool((cr & CR_PG) and not (cr & CR_LOCK))
+            if programming != listening:
+                listening = programming
+                listen(programming)
             if unlocked and (v & CR_STRT) and (v & CR_SER):
                 sector = (v >> 3) & 0xF
                 if sector < len(SECTORS):
@@ -406,10 +405,6 @@ elif request.IsWrite or request.IsRead:
                     else:
                         fill_ff(FLASH_BASE, FLASH_SIZE)
                         log("M 0x%08X @%d" % (FLASH_BASE, spend(T_MASS_US[TIMING][(v >> 8) & 3])))
-            elif unlocked and (v & CR_PG) and not (old & CR_PG):
-                if begin(False, 0):
-                    st_w(PENDING, 1)
-                    spend(T_PROGRAM_US[TIMING])
         elif o == 0x14:
             if not optcr & OPTCR_OPTLOCK:
                 optcr = v & ~OPTCR_OPTSTRT            # OPTSTRT clears itself

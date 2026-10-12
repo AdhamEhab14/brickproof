@@ -93,6 +93,11 @@ jobs:
             expect: 1
           - adapter: watchdog          # the correct build under a hardware watchdog
             expect: 0
+          - adapter: hold_pg           # PG held over runs of cells: cuts between the stores
+            expect: 0
+            torn: true
+          - adapter: bug-early_unpg    # every second cell stored after PG was cleared
+            expect: 1
           # the same demo on an STM32F411: sector erase, word programming, other option bytes
           - adapter: f411
             expect: 0
@@ -119,6 +124,11 @@ jobs:
           - adapter: f411-watchdog     # a one-second erase under a half-second watchdog, done right
             expect: 0
           - adapter: f411-bug-watchdog   # and done wrong: reset in the middle of every erase
+            expect: 1
+          - adapter: f411-hold_pg
+            expect: 0
+            torn: true
+          - adapter: f411-bug-early_unpg
             expect: 1
     name: demo (${{ matrix.adapter }})
     env:

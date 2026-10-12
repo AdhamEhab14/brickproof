@@ -82,6 +82,15 @@ static inline void flash_cell(uint32_t addr, cell_t v)
     FLASH_CR &= ~CR_PG;
 }
 
+/* Programming mode on or off, for code that writes many cells in one go. */
+static inline void flash_pg(int on)
+{
+    if (on)
+        FLASH_CR |= CR_PG;
+    else
+        FLASH_CR &= ~CR_PG;
+}
+
 static inline void flash_word(uint32_t addr, uint32_t v)
 {
     flash_cell(addr, (uint16_t)v);
