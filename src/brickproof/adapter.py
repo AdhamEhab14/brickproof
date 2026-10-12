@@ -372,6 +372,24 @@ def load(path, target=None):
                                               bool(fl.get("read_protected", False)),
                                               bool(fl.get("hardware_watchdog", False)))
 
+    ext = d.get("external_flash")
+    if ext:
+        where = "external_flash"
+        flash.ext_bus = str(_need(ext, "bus", where))
+        flash.ext_cs = str(_need(ext, "cs", where)).upper()
+        flash.ext_size = _need(ext, "size", where)
+        flash.ext_base = ext.get("address", 0xA0000000)
+        flash.ext_endurance = int(ext.get("endurance", 100000))
+        pin = flash.ext_cs
+        if not (len(pin) >= 3 and pin[0] == "P" and "A" <= pin[1] <= "K" and pin[2:].isdigit()
+                and int(pin[2:]) < 16):
+            raise AdapterError("external_flash.cs: '%s' is not a pin name like PA4" % pin)
+        if not isinstance(flash.ext_size, int) or flash.ext_size <= 0 or flash.ext_size % 0x1000 \
+                or flash.ext_size > 0x1000000:
+            raise AdapterError("external_flash.size: a multiple of 4 KB, up to 16 MB (three address bytes)")
+        if flash.ext_base < flash.base + flash.size and flash.ext_base + flash.ext_size > flash.base:
+            raise AdapterError("external_flash.address: it overlaps the internal flash")
+
     # RAM size is not optional: an emulator with more RAM than the chip hides
     # real faults (a stack access past the end of RAM just works)
     ram = _need(d, "ram", path)

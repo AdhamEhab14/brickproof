@@ -235,7 +235,7 @@ def test_sectors_must_add_up_and_fit_the_chip(tmp_path):
 
 def test_the_f411_demo_and_its_bug_builds_load():
     names = [n for n in os.listdir(DEMO) if n.startswith("f411") and n.endswith(".yaml")]
-    assert len(names) == 14
+    assert len(names) == 16
     for n in names:
         ad = adapters.load(os.path.join(DEMO, n))
         assert ad.platform == "stm32f411" and ad.flash.sectors
@@ -289,3 +289,28 @@ def test_the_crystal_is_8_mhz_unless_the_adapter_says_otherwise(tmp_path):
     assert adapters.load(str(p)).hse == 8000000
     p.write_text(MINIMAL + "clock: {hse: 25000000}\n")
     assert adapters.load(str(p)).hse == 25000000
+
+
+def test_an_external_flash_chip_becomes_part_of_the_image(tmp_path):
+    p = tmp_path / "adapter.yaml"
+    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: pa4, size: 0x100000}\n")
+    f = adapters.load(str(p)).flash
+    assert (f.ext_bus, f.ext_cs, f.ext_size, f.ext_base) == ("spi1", "PA4", 0x100000, 0xA0000000)
+    assert f.external(0xA0000000) and f.external(0xA00FFFFF) and not f.external(0xA0100000)
+    assert f.image_size == f.size + f.ob_size + 0x100000
+    p.write_text(MINIMAL)
+    assert not adapters.load(str(p)).flash.external(0xA0000000)
+
+
+@pytest.mark.parametrize("ext, message", [
+    ("{bus: spi1, cs: A4, size: 0x100000}", "pin name"),
+    ("{bus: spi1, cs: PA4, size: 0x100001}", "multiple of 4 KB"),
+    ("{bus: spi1, cs: PA4, size: 0x2000000}", "up to 16 MB"),
+    ("{bus: spi1, cs: PA4, size: 0x1000, address: 0x08000000}", "overlaps"),
+    ("{cs: PA4, size: 0x1000}", "missing 'bus'"),
+])
+def test_bad_external_flash_settings_are_rejected(tmp_path, ext, message):
+    p = tmp_path / "adapter.yaml"
+    p.write_text(MINIMAL + "external_flash: %s\n" % ext)
+    with pytest.raises(adapters.AdapterError, match=message):
+        adapters.load(str(p))

@@ -6,10 +6,14 @@
 
 /* ---- flash map ----------------------------------------------------------- */
 #define BL_BASE        0x08000000u   /* sector 0, 16 KB: bootloader              */
+#ifndef EXT_FLASH
 #define META_0         0x08004000u   /* sector 1, 16 KB: rollback floor, in two  */
 #define META_1         0x08008000u   /* sector 2, 16 KB: sectors, so one is always intact */
+#endif
 #define SLOT_A         0x08020000u   /* sector 5, 128 KB: the image that runs    */
+#ifndef EXT_FLASH
 #define SLOT_B         0x08040000u   /* sector 6, 128 KB: staging                */
+#endif
 #define SLOT_SIZE      0x20000u
 
 /* ---- uart: USART2 on PA2, the bus at the reset 16 MHz HSI ----------------- */
@@ -107,6 +111,107 @@ static inline void flash_word(uint32_t addr, uint32_t v)
 {
     flash_cell(addr, v);
 }
+
+#ifdef EXT_FLASH
+/* ---- an external SPI NOR flash chip on SPI1, chip select on PA4 -------------
+ * With EXT_FLASH the new image waits in this chip, not in an internal sector, and the
+ * rollback floor is kept there too. Offsets inside the chip: */
+#define EXT_STAGING    0x00000u      /* the staged image                         */
+#define META_0         0x10000u      /* rollback floor, in two 4 KB sectors so   */
+#define META_1         0x11000u      /* one is always intact                     */
+#define STAGED_MAX     0x2000u       /* the largest image the bootloader takes   */
+
+#define RCC_APB2ENR    REG(0x40023844u)
+#define GPIOA_BSRR     REG(0x40020018u)
+#define SPI1_CR1       REG(0x40013000u)
+#define SPI1_SR        REG(0x40013008u)
+#define SPI1_DR        REG(0x4001300Cu)
+
+static inline void ext_init(void)
+{
+    RCC_AHB1ENR |= (1u << 0);                         /* GPIOA */
+    RCC_APB2ENR |= (1u << 12);                        /* SPI1 */
+    GPIOA_BSRR = (1u << 4);                           /* chip select high: not selected */
+    /* PA4 output, PA5 to PA7 alternate function 5 (SCK, MISO, MOSI) */
+    GPIOA_MODER = (GPIOA_MODER & ~(0xFFu << 8)) | (0x1u << 8) | (0x2Au << 10);
+    GPIOA_AFRL = (GPIOA_AFRL & ~(0xFFFu << 20)) | (0x555u << 20);
+    SPI1_CR1 = (1u << 9) | (1u << 8) | (1u << 6) | (1u << 3) | (1u << 2);  /* SSM, SSI, SPE, /4, master */
+}
+
+static inline uint8_t ext_byte(uint8_t out)
+{
+    while (!(SPI1_SR & (1u << 1)))                    /* TXE */
+        ;
+    SPI1_DR = out;
+    while (!(SPI1_SR & (1u << 0)))                    /* RXNE */
+        ;
+    return (uint8_t)SPI1_DR;
+}
+
+static inline void ext_select(uint8_t command, uint32_t addr)
+{
+    GPIOA_BSRR = (1u << 20);                          /* chip select low */
+    ext_byte(command);
+    ext_byte((uint8_t)(addr >> 16));
+    ext_byte((uint8_t)(addr >> 8));
+    ext_byte((uint8_t)addr);
+}
+
+static inline void ext_release(void)
+{
+    GPIOA_BSRR = (1u << 4);
+}
+
+static inline void ext_read(uint32_t addr, void *to, uint32_t n)
+{
+    uint8_t *p = to;
+    ext_select(0x03, addr);
+    while (n--)
+        *p++ = ext_byte(0);
+    ext_release();
+}
+
+/* Every program and erase needs a write enable first, and the chip is busy for a
+ * while afterwards. */
+static inline void ext_write_enable(void)
+{
+    GPIOA_BSRR = (1u << 20);
+    ext_byte(0x06);
+    ext_release();
+}
+
+static inline void ext_wait(void)
+{
+    uint8_t status;
+    do {
+        GPIOA_BSRR = (1u << 20);
+        ext_byte(0x05);
+        status = ext_byte(0);
+        ext_release();
+        wdg_feed();
+    } while (status & 1u);
+}
+
+/* At most one 256-byte page, and not across a page boundary. */
+static inline void ext_program(uint32_t addr, const void *from, uint32_t n)
+{
+    const uint8_t *p = from;
+    ext_write_enable();
+    ext_select(0x02, addr);
+    while (n--)
+        ext_byte(*p++);
+    ext_release();
+    ext_wait();
+}
+
+static inline void ext_erase_sector(uint32_t addr)
+{
+    ext_write_enable();
+    ext_select(0x20, addr);
+    ext_release();
+    ext_wait();
+}
+#endif
 
 #ifdef BUG_SELF_LOCK
 /* Write-protect the bootloader's own sector by setting the option register to what

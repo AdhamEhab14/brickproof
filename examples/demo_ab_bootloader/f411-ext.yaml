@@ -1,0 +1,30 @@
+# The F411 demo with an external SPI NOR flash chip (see EXT_FLASH in bootloader/main.c):
+# the new image waits in the chip, and the rollback floor is kept there. Page programs
+# and sector erases of the chip are operations like those of the internal flash, counted
+# in the order they happen, and a power cut can fall on any of them.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_ext
+
+external_flash:
+  bus: spi1
+  cs: PA4
+  size: 0x100000                     # 1 MB
+
+firmware:
+  - file: prebuilt/f411_bootloader_ext.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0xA0010000                 # in the external chip
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0xA0000000                 # the staged image goes into the external chip
+    image: prebuilt/f411_app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"
+    boot_timeout: 5
+    rollback:
+      image: prebuilt/f411_app_v1.img
+      forbidden: "APP v1"

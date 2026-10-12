@@ -7,6 +7,8 @@
 
 #define REG(a)         (*(volatile uint32_t *)(a))
 
+static inline void wdg_feed(void);
+
 #ifdef STM32F4
 #include "chip_f411.h"
 #else

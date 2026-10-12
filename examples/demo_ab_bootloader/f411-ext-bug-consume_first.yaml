@@ -1,0 +1,11 @@
+# The external-flash demo marking the staged image used before copying it
+# (BUG_CONSUME_FIRST with EXT_FLASH). The mark is a page program in the external chip.
+# BrickProof should fail at least one cut.
+extends: f411-ext.yaml
+name: demo_ab_bootloader_f411_ext_bug_consume_first
+firmware:
+  - file: prebuilt/f411_bootloader_ext_bug_consume_first.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0xA0010000                 # in the external chip

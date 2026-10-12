@@ -103,6 +103,11 @@ during which the CPU stands still), so watchdogs and timeouts behave as on the b
 the firmware or a watchdog causes reboots the device as on the chip, and a hardware watchdog
 set in the option bytes runs from reset.
 
+**External flash.** Many products keep the new image in an SPI NOR flash chip next to the
+microcontroller. BrickProof models that chip too: its page programs and erases are cut,
+torn and traced together with those of the internal flash, in the order they really happen
+(`external_flash` in the adapter, `brickproof demo f411-ext`).
+
 **What the update costs the flash.** Each run reports how long the chip spends erasing and
 programming, and which page or sector is erased most often per update, set against the
 endurance the datasheet promises.
@@ -216,6 +221,8 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
   `src/brickproof/models/`; the engine itself no longer assumes either chip.
 - Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
   vary with temperature, voltage or age. Wear is counted per update, not simulated.
+- An external flash chip is modelled as SPI NOR with the 25-series commands in single-line
+  mode. Quad mode, four-byte addressing and other kinds of external memory are not.
 - Not modelled: low-power modes, so the two option bits that decide whether entering one
   resets the chip have no effect.
 

@@ -115,3 +115,21 @@ def test_the_flash_model_gets_a_shadow_as_big_as_the_flash(tmp_path):
     rcc = (tmp_path / "models" / "stm32f1_rcc.py").read_text()
     assert "\nHSE_HZ = 0x7A1200\n" in rcc, "the board's crystal reaches the clock model"
     assert 'TRACE_FILE = "%s/trace.txt"' % str(tmp_path).replace("\\", "/") in model
+
+
+def test_an_external_flash_chip_is_put_on_its_bus_with_its_chip_select(tmp_path):
+    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "f411-ext.yaml"))
+    wd.prepare(str(tmp_path), ad)
+    repl = (tmp_path / "platform.repl").read_text()
+    assert "extflash: SPI.BpSpiNor @ spi1\n    size: 0x100000\n    address: 0xA0000000\n" in repl
+    assert "    state: 0x90000000\n" in repl and "    timing: 1\n" in repl
+    assert 'traceFile: "%s/trace.txt"' % str(tmp_path).replace("\\", "/") in repl
+    assert "gpioPortA:\n    4 -> extflash@0\n" in repl
+    assert (tmp_path / "models" / "BpSpiNor.cs").exists()
+
+
+def test_without_an_external_flash_chip_nothing_of_it_is_there(tmp_path):
+    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "f411.yaml"))
+    wd.prepare(str(tmp_path), ad)
+    assert "extflash" not in (tmp_path / "platform.repl").read_text()
+    assert not (tmp_path / "models" / "BpSpiNor.cs").exists()
