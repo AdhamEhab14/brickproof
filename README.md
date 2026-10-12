@@ -10,7 +10,8 @@ which cuts brick the device, and how to reproduce each one.
 
 It came out of the power-cut tests of
 [Three-Tier-STM32-Secure-Bootloader](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader),
-where it found three real bugs. Supported chips: STM32F1 and STM32F4 (F411).
+where it found three real bugs. That bootloader's fixed release has since been cut at every one
+of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1 and STM32F4 (F411).
 
 ## Quick start
 
