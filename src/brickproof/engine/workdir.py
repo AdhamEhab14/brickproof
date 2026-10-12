@@ -18,7 +18,7 @@ EXPECT_BASE = 0x92000000        # EXPECT in the flash models: an image to compar
 # platforms are far bigger than the chips (the F103 gets 256 MB of RAM and 512 MB
 # of flash), so the engine shrinks them to the adapter's real sizes.
 MEMORIES = {
-    "stm32f103": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x00000000),
+    "stm32f103": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x08000000),
                   # where the address space is empty on the real chip: from the end of
                   # RAM to the bit-band alias, from the end of flash to system memory
                   "ram_hole_end": 0x22000000, "flash_hole_end": 0x1FFF0000,
@@ -36,8 +36,11 @@ def holes(adapter):
     info = MEMORIES[adapter.platform]
     ram_end = adapter.ram_base + adapter.ram_size
     flash_end = adapter.flash.base + adapter.flash.size
+    # flash is also seen at address 0 (the boot alias); between the end of that copy
+    # and the flash itself there is nothing
     return [("ramGuard", ram_end, info["ram_hole_end"] - ram_end),
-            ("flashGuard", flash_end, info["flash_hole_end"] - flash_end)]
+            ("flashGuard", flash_end, info["flash_hole_end"] - flash_end),
+            ("aliasGuard", adapter.flash.size, adapter.flash.base - adapter.flash.size)]
 
 
 def memory_sizes(adapter):
@@ -48,7 +51,6 @@ def memory_sizes(adapter):
     if adapter.ram_base != ram_base:
         raise ValueError("ram.base 0x%X does not match the %s platform (0x%X)"
                          % (adapter.ram_base, adapter.platform, ram_base))
-    # the flash region may start below the flash itself (boot alias at 0)
     return {ram_name: adapter.ram_size,
             flash_name: adapter.flash.base + adapter.flash.size - region_base}
 

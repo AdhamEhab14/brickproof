@@ -5,6 +5,13 @@
 // A target adapter can append its own lines (extra peripherals, clock fixes).
 using "platforms/cpus/stm32f103.repl"
 
+// An STM32 that boots from its main flash shows that flash at address 0 as well, and
+// firmware uses it (wolfBoot programs through it). Same memory, two addresses.
+flash: @ {
+        sysbus 0x08000000;
+        sysbus 0x00000000
+    }
+
 rcc: Python.PythonPeripheral @ sysbus 0x40021000
     size: 0x400
     initable: true

@@ -253,6 +253,8 @@ def on_access(pc, operation, virtual, addr, width, value):
     if str(operation) != "MemoryWrite":
         return
     addr = int(addr)
+    if addr < FLASH_SIZE:
+        addr += FLASH_BASE                      # a store through the boot alias at address 0
     if FLASH_BASE <= addr < FLASH_BASE + FLASH_SIZE or OB_BASE <= addr < OB_BASE + OB_SIZE:
         program(addr, int(width), int(value))
 
