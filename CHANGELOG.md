@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+**OpenBLT adapter.** `adapters/openblt_f103` runs OpenBLT's Nucleo-F103RB demo, reprogrammed
+over the UART with its XCP protocol, and documents what it found there.
+
 ## 0.2.0
 
 What changed after BrickProof was run on bootloaders that are not ours (wolfBoot and

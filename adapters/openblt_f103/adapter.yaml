@@ -11,7 +11,7 @@
 # then:  brickproof run adapters/openblt_f103/adapter.yaml --target <that folder>
 
 name: openblt_f103
-target: ../../../openblt/Target/Demo/ARMCM3_STM32F1_Nucleo_F103RB_GCC
+target: ../../../openblt/Target/Demo/ARMCM3_STM32F1_Nucleo_F103RB_GCC   # default: next to this repo
 
 platform:
   base: stm32f103
