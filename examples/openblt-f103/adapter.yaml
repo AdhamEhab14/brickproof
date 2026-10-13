@@ -1,0 +1,52 @@
+# OpenBLT (https://github.com/feaser/openblt) on a Nucleo-F103RB, with its own demo
+# program, reprogrammed over the UART with OpenBLT's XCP protocol.
+#
+# OpenBLT has no second slot: it erases the program and writes the new one in its place.
+# What it promises is that the bootloader itself always survives and takes a new
+# programming session. That is what is checked here: after every cut the bootloader must
+# answer, and a full programming session after it must end with the program running.
+#
+# Build both parts first, from Target/Demo/ARMCM3_STM32F1_Nucleo_F103RB_GCC:
+#   make -C Boot all && make -C Prog all
+# then:  brickproof run adapters/openblt_f103/adapter.yaml --target <that folder>
+
+name: openblt_f103
+target: ../../../openblt/Target/Demo/ARMCM3_STM32F1_Nucleo_F103RB_GCC
+
+platform:
+  base: stm32f103
+
+flash:
+  base: 0x08000000
+  size: 0x20000          # 128 KB
+  page: 0x400            # 1 KB
+
+ram:
+  size: 0x5000         # 20 KB
+
+firmware:
+  - file: Boot/bin/openblt_stm32f103.elf
+
+uart: usart2
+pins:
+  PC13: high                     # the user button released; held down, the bootloader stays
+boot_settle: 0.2
+
+driver:
+  file: driver.py
+  options:
+    program: Prog/bin/demoprog_stm32f103.srec
+    baud: 57600
+
+# The bootloader is always there. The program is there once a session has finished.
+# The CPU must be running inside one of the two.
+oracle:
+  images:
+    bootloader: {file: Boot/bin/openblt_stm32f103.elf.bin, at: 0x08000000}
+  accept: [bootloader, program]
+
+scenario:
+  name: reprogram-over-uart
+  update_time: 12
+  cut_limit: 15
+  plan: {mode: phases, per_phase: 4}
