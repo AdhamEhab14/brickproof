@@ -3,8 +3,10 @@
 #
 # Build wolfBoot first, from its folder:
 #   cp config/examples/stm32f411-blackpill.config .config
-#   make
+#   make UART_FLASH=0
 #   tools/keytools/sign --ed25519 --sha256 test-app/image.bin wolfboot_signing_private_key.der 2
+# (the stock config keeps the UPDATE and SWAP partitions on a host reached over the UART;
+# UART_FLASH=0 puts them in the chip's own flash, at the addresses the config gives)
 # then:  brickproof run adapters/wolfboot_f411/adapter.yaml --target <wolfBoot folder>
 
 name: wolfboot_f411
