@@ -13,6 +13,15 @@ It came out of the power-cut tests of
 where it found three real bugs. That bootloader's fixed release has since been cut at every one
 of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1 and STM32F4 (F411).
 
+Run on bootloaders that are not ours, it found:
+
+- **OpenBLT** (STM32F1): a cut near the end of a programming session can leave a program
+  that the bootloader starts although it is not completely written. Confirmed on a real
+  Nucleo-F103RB. Details and the adapter: [adapters/openblt_f103](adapters/openblt_f103).
+- **wolfBoot**: with partitions of one sector, the last step of an update erases the
+  bootloader itself. Confirmed in wolfBoot's own simulator:
+  [wolfSSL/wolfBoot#937](https://github.com/wolfSSL/wolfBoot/issues/937).
+
 ## Quick start
 
 You need Python 3.10+ and [Renode 1.17](https://github.com/renode/renode/releases) (put
@@ -210,7 +219,7 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 | `src/brickproof/report.py`, `regulations.py` | JUnit and HTML reports, and the regulation map |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
 | `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
-| `adapters/` | Adapters for real projects (Three-Tier bootloader) |
+| `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT) |
 | `docs/decisions.md` | Why things are the way they are, with the measurements behind them |
 
 ## Limits
