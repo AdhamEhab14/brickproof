@@ -179,7 +179,7 @@ brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
 ## In CI
 
 ```yaml
-- uses: AdhamEhab14/brickproof@v0.1.0
+- uses: AdhamEhab14/brickproof@v0.2.0
   with:
     adapter: test/brickproof.yaml
     args: --torn --depth 2 -j 3
