@@ -135,11 +135,14 @@ def hang_limit(seconds, slowest):
     """Wall-clock seconds to wait for `seconds` of emulated time before deciding the
     emulated CPU is stuck (on Renode a locked-up core means RunFor never returns).
 
-    Twenty times the slowest this machine has been seen to run, never under 30 s, and
-    never over the old fixed allowance. Too short would call a slow but healthy device
-    dead, which is a false failure, so the floor is generous: a healthy slice takes a
-    second or two. Too long only costs time on a device that really is dead."""
-    return min(60 + 120 * seconds, max(30.0, 20 * seconds * slowest))
+    Fifty times the slowest this machine has been seen to run, and never under 30 s.
+    Too short calls a slow but healthy device dead, which is a false failure; too long
+    only costs time on a device that really is dead. Renode does not run at an even
+    pace: in a long run of byte-wide flash programs (MCUboot on the F411, about 390,000
+    of them) a healthy emulator was measured taking 27 times its usual time for a second
+    of emulated time, at random places, more often in a second run in the same process.
+    Twenty times, and a fixed ceiling, called that a lock-up."""
+    return max(30.0, 50 * seconds * slowest)
 
 
 def find_renode():
@@ -616,11 +619,15 @@ class RenodeSession:
         waited = 0.0
         while waited < limit:
             step = min(step, limit - waited)
+            t0 = time.time()
             try:
                 reply = self.cmd_batch([self._run_cmd(step), self._get(REG_CUT_FIRED)],
                                        timeout=self.hang_limit(step))
             except TimeoutError:
                 raise MachineHung("emulated time stopped advancing") from None
+            if step >= 0.05:
+                # this wait learns the machine's pace too, as run_for does
+                self._slowest = max(self._slowest, (time.time() - t0) / step)
             self.virtual_time += step
             waited += step
             if self._values(reply)[-1] == 1:
