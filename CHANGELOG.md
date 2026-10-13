@@ -5,6 +5,14 @@
 **OpenBLT adapter.** `adapters/openblt_f103` runs OpenBLT's Nucleo-F103RB demo, reprogrammed
 over the UART with its XCP protocol, and documents what it found there.
 
+**wolfBoot adapter.** `adapters/wolfboot_f411` runs wolfBoot's Black Pill example and its test
+application, and documents what it found there.
+
+**Block protection in the external flash chip.** The status register's BP, TB, SEC and CMP bits
+protect part of the chip as on a Winbond W25Q; an erase or program there is ignored by the chip
+and fails the run. The status registers are part of the flash image, and
+`external_flash.status` sets them as the device ships.
+
 ## 0.2.0
 
 What changed after BrickProof was run on bootloaders that are not ours (wolfBoot and

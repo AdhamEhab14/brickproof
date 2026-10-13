@@ -44,6 +44,7 @@ external_flash:                # optional: an SPI NOR flash chip (25-series comm
   cs: PA4                      # its chip select pin
   size: 0x100000               # up to 16 MB
   # address: 0xA0000000        # how its bytes are named in traces, images and `slot:`
+  # status: 0x00               # its status register as shipped (block protection), see below
 
 ram:
   size: 0x5000                 # the real RAM size. Required: extra RAM hides stack faults
@@ -116,7 +117,7 @@ The run is only worth something if the emulated chip is the chip you ship.
 
 `external_flash` adds an SPI NOR flash chip of the common 25-series kind (Winbond W25Q,
 Macronix MX25, GigaDevice GD25): read, page program, 4 / 32 / 64 KB and chip erase, write
-enable, status, JEDEC ID, three address bytes. Its page programs and erases are operations
+enable, status registers 1 and 2, JEDEC ID, three address bytes. Its page programs and erases are operations
 like those of the internal flash, counted in the order they really happen, so a cut can fall
 on either memory and torn states and cuts during recovery cover both.
 
@@ -124,8 +125,13 @@ The chip has no address on the system bus. `address` (0xA0000000 unless you say 
 is only the name its bytes go by: a staging `slot`, a `firmware` file's `addr` or an oracle
 image's `at` at that address goes into the chip.
 
-Not modelled: the quad and dual modes, four address bytes, status register protection bits
-and suspend. Firmware that needs those needs the model extended.
+Block protection works as on a Winbond W25Q: the status register's BP, TB and SEC bits (and
+CMP in register 2) protect part of the chip, and an erase or program that touches it is
+ignored by the chip and fails the run with a message. The status registers are kept across
+power cuts. `status` sets them as the device ships: register 1, or both as `0xSSRR`.
+
+Not modelled: the quad and dual modes, four address bytes, the /WP pin and SRP, and suspend.
+Firmware that needs those needs the model extended.
 
 ## Drivers
 

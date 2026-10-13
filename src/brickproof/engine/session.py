@@ -47,6 +47,7 @@ EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to com
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
                "W": "protected"}
 NEVER = 0xFFFFFFFF
+EXT_STATUS_BYTES = 2
 
 CUT_ERASE = 1
 CUT_PROGRAM = 2
@@ -88,6 +89,7 @@ class FlashGeometry:
     ext_cs: str = ""            # its chip select pin, for example PA4
     ext_sector: int = 0x1000    # its smallest erase
     ext_endurance: int = 100000
+    ext_status: int = 0         # its status registers as shipped: register 1 | register 2 << 8
     endurance: int = 0          # erase cycles the datasheet promises per unit (0: unknown)
     # Option bytes, where the chip has them: their address, and what they hold when a
     # test starts. A flash image is then the flash followed by these bytes, so a change
@@ -121,7 +123,9 @@ class FlashGeometry:
 
     @property
     def image_size(self):
-        return self.size + self.ob_size + self.ext_size
+        # the external chip's two status registers follow its contents: they are
+        # non-volatile, so a power cut leaves them as they were, like the flash
+        return self.size + self.ob_size + self.ext_size + (EXT_STATUS_BYTES if self.ext_size else 0)
 
 
 SLOWEST_START = 6.0     # assume a slow machine until this one has been measured
@@ -468,6 +472,11 @@ class RenodeSession:
         with open(os.path.join(self.workdir, name), "rb") as f:
             return f.read()
 
+    def ext_status(self):
+        """The external chip's status registers: register 1 | register 2 << 8."""
+        reply = self.cmd("%s GetStatus" % self._ext)
+        return int(re.findall(r"^\s*(0x[0-9A-Fa-f]+|\d+)\s*$", reply, re.M)[-1], 0)
+
     def ext_load(self, data, offset=0, name="ext_load.bin"):
         with open(os.path.join(self.workdir, name), "wb") as f:
             f.write(data)
@@ -504,7 +513,7 @@ class RenodeSession:
         if self.flash.ob_size:
             image += self.read_bytes(self.flash.ob_base, self.flash.ob_size)
         if self.flash.ext_size:
-            image += self.ext_dump()
+            image += self.ext_dump() + self.ext_status().to_bytes(EXT_STATUS_BYTES, "little")
         return image
 
     def restore_flash(self, data, name="flash_restore.bin"):
@@ -523,6 +532,9 @@ class RenodeSession:
         inner = f.size + f.ob_size
         if f.ext_size and len(data) > inner:
             self.ext_load(data[inner:inner + f.ext_size])
+        status = data[inner + f.ext_size:inner + f.ext_size + EXT_STATUS_BYTES]
+        if f.ext_size and len(status) == EXT_STATUS_BYTES:
+            self.cmd("%s SetStatus 0x%X" % (self._ext, int.from_bytes(status, "little")))
 
     def flash_mismatch(self, expected, name="flash_expect.bin"):
         """First address where flash differs from `expected` (a whole-flash image), or
