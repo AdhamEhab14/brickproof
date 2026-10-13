@@ -1,0 +1,59 @@
+# wolfBoot (https://github.com/wolfSSL/wolfBoot) on an STM32F411 Black Pill, with its own
+# test application, updating v1 -> v2 by swapping the BOOT and UPDATE partitions.
+#
+# Build wolfBoot first, from its folder:
+#   cp config/examples/stm32f411-blackpill.config .config
+#   make UART_FLASH=0
+#   tools/keytools/sign --ed25519 --sha256 test-app/image.bin wolfboot_signing_private_key.der 2
+# (the stock config keeps the UPDATE and SWAP partitions on a host reached over the UART;
+# UART_FLASH=0 puts them in the chip's own flash, at the addresses the config gives)
+# then:  brickproof run adapters/wolfboot_f411/adapter.yaml --target <wolfBoot folder>
+
+name: wolfboot_f411
+target: ../../../wolfBoot             # default: next to this repo
+
+platform:
+  base: stm32f411
+
+flash:
+  base: 0x08000000
+  size: 0x80000          # 512 KB
+  sectors: [0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]
+  write_unit: 1          # wolfBoot's STM32F4 port programs a byte at a time
+
+ram:
+  size: 0x20000        # 128 KB
+
+# the device as it leaves the factory: wolfBoot, and v1 of the app in the BOOT partition
+firmware:
+  - file: factory.bin
+    addr: 0x08000000
+
+clock:
+  hse: 25000000        # the Black Pill's crystal
+
+uart: usart1
+boot_settle: 0.5
+
+driver:
+  file: driver.py
+  options:
+    image: test-app/image_v2_signed.bin     # goes into the UPDATE partition
+    update_partition: 0x08040000
+    partition_size: 0x20000
+    boot_timeout: 30
+
+# The BOOT partition must hold exactly one of the two signed images, and the CPU must be
+# running inside it. Both are right answers: wolfBoot goes back to v1 by design when
+# power is lost before v2 has confirmed itself.
+oracle:
+  images:
+    v1: {file: test-app/image_v1_signed.bin, at: 0x08020000}
+    v2: {file: test-app/image_v2_signed.bin, at: 0x08020000}
+  accept: [v1, v2]
+
+scenario:
+  name: swap-v1-to-v2
+  update_time: 30
+  cut_limit: 40
+  plan: {mode: phases, per_phase: 4}
