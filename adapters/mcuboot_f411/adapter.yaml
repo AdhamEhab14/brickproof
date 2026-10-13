@@ -1,0 +1,55 @@
+# MCUboot (https://github.com/mcu-tools/mcuboot), Zephyr build with its default
+# swap-using-scratch upgrade, on an STM32F411 Black Pill with the board's own partition
+# layout: MCUboot 32 KB, then slot 0, slot 1 and scratch, one 128 KB sector each.
+# A small app (app/) prints "APP v<n>". v2 is staged in slot 1, signed with --pad --confirm,
+# so the upgrade is permanent and v2 must be what runs after any cut.
+#
+# Build first:  python build.py <zephyr workspace> <output folder>
+# then:  brickproof run adapters/mcuboot_f411/adapter.yaml --target <output folder>
+
+name: mcuboot_f411
+target: ../../../mcuboot-out          # default: next to this repo
+
+platform:
+  base: stm32f411
+
+flash:
+  base: 0x08000000
+  size: 0x80000          # 512 KB
+  sectors: [0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]
+  write_unit: 1
+
+ram:
+  size: 0x20000        # 128 KB
+
+firmware:
+  - file: mcuboot.elf
+  - file: app_v1.img
+    addr: 0x08020000
+
+clock:
+  hse: 25000000        # the Black Pill's crystal
+
+uart: usart1
+boot_settle: 0.5
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x08040000
+    image: app_v2_staged.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"
+    boot_timeout: 30
+
+oracle:
+  images:
+    v1: {file: app_v1.img, at: 0x08020000}
+    v2: {file: app_v2.img, at: 0x08020000}
+  accept: [v2]
+
+scenario:
+  name: swap-scratch-v1-to-v2
+  update_time: 30
+  cut_limit: 40
+  plan: {mode: phases, per_phase: 4}

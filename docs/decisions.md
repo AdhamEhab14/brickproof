@@ -1080,3 +1080,40 @@ Not modelled: the /WP pin and the SRP/SRL bits (the pin is taken as high, so the
 always be written), the volatile status register writes (50h), and the individual block locks
 (WPS = 1). 4-byte addressing is left out on purpose: it matters only above 16 MB, and an image
 holds the whole chip.
+
+## 2026-10-13: A slow emulator is not a dead device
+
+MCUboot's swap on the F411 is about 392,000 byte-wide programs. Its cut runs failed with
+"the emulator hung before the cut fired", on four of the last cuts, and the baseline once
+with "locked up". None of them was a hang. Measured, one second of emulated time at a time:
+
+- a plain run: 13 to 19 s of wall time for each busy second, every time;
+- a second run in the same Renode process, with or without a trace: most seconds the same,
+  and a few, at different places each time, 95 to 201 s;
+- with the step limit raised to 15 minutes the "hung" cut passed, taking 1152 s instead of
+  about 150 s.
+
+So Renode sometimes runs more than ten times slower than its usual pace for a while. The
+hang limit allowed twenty times the slowest pace seen, with a fixed ceiling (180 s for a
+one-second slice), and the wait for a cut never learned the pace at all: it kept the
+starting guess, which gave a 0.16 s step 30 s. A step of 91 s was a "hang".
+
+Now: fifty times the slowest pace seen (27 times was measured), no ceiling, and
+`run_until_cut` learns the pace like `run_for`. A device that really locks up is still
+caught; on a slow run it takes longer to say so, which costs time, not correctness. The
+four cuts that had failed then passed, with three emulators side by side.
+
+## 2026-10-13: MCUboot
+
+`adapters/mcuboot_f411`: MCUboot built with Zephyr v4.2.0 for `blackpill_f411ce`, its
+default swap using scratch, the board's own layout (MCUboot 32 KB, then slot 0, slot 1 and
+scratch at one 128 KB sector each), ECDSA-P256 signatures (RSA-2048 does not fit 32 KB with
+Ubuntu's compiler). A small app prints its version; v2 is staged with `--pad --confirm`, so
+only v2 is accepted after a cut.
+
+The update is 391,974 operations (the Zephyr F4 driver programs a byte at a time) in 19
+phases; 14.3 s of flash time on the chip. Result: the baseline and 57 planned cuts plus two
+more, every one recovered to v2. One build mistake on the way, worth knowing: an app built
+for MCUboot on this board must be linked for slot 0 (`zephyr,code-partition`), which the
+board files do not choose; without it MCUboot jumps into an app linked for address 0 and
+the app aborts.
