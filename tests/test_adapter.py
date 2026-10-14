@@ -57,7 +57,25 @@ def test_a_cut_needs_exactly_one_position(tmp_path, cut):
 
 def test_unknown_platform_is_rejected(tmp_path):
     with pytest.raises(adapters.AdapterError, match="unknown"):
-        adapters.load(write(tmp_path, **{"stm32f103": "nrf52840"}))
+        adapters.load(write(tmp_path, **{"stm32f103": "esp32"}))
+
+
+NRF = {"stm32f103": "nrf52840",
+       "base: 0x08000000, size: 0x10000, page: 0x400": "base: 0x0, size: 0x100000, page: 0x1000",
+       "size: 0x5000": "size: 0x40000"}
+
+
+def test_an_nrf52840_has_4kb_pages_words_and_no_option_bytes(tmp_path):
+    f = adapters.load(write(tmp_path, **NRF)).flash
+    assert (f.model, f.controller, f.page, f.write_unit) == ("nrf52_flash.py", 0x4001E000, 0x1000, 4)
+    assert f.ob_base is None and f.ob_size == 0 and f.image_size == 0x100000
+
+
+def test_an_nrf52840_has_no_stm32_option_bytes_to_protect_with(tmp_path):
+    protect = {"page: 0x1000}": "page: 0x1000, write_protected: [{from: 0x0, size: 0x1000}]}"}
+    p = write(tmp_path, **dict(NRF, **protect))
+    with pytest.raises(adapters.AdapterError, match="STM32 option bytes"):
+        adapters.load(p)
 
 
 def test_raw_binary_needs_an_address(tmp_path):

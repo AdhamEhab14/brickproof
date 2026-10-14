@@ -99,7 +99,9 @@ def _fault_message(session):
     if v["refused"]:
         return ("flash rule broken: the chip refused %d program(s), first at 0x%08X, and kept "
                 "the old value. On an STM32F1 that is a cell that was not erased (PGERR), on an "
-                "STM32F4 a store that is not as wide as PSIZE says (PGPERR)" % v["refused"])
+                "STM32F4 a store that is not as wide as PSIZE says (PGPERR), on an nRF52 a store "
+                "that is not a whole aligned word or a third write to a word without an erase "
+                "(nWRITE)" % v["refused"])
     if v.get("protected"):
         n, at = v["protected"]
         if session.flash.external(at):
@@ -545,6 +547,7 @@ def _bring_up(adapter, exe, log, shared=None):
         session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
                                 vector_table=adapter.vector_table, mips=adapter.mips,
                                 reset_cmds=adapter.reset_cmds, log=log,
+                                ram=wd.MEMORIES[adapter.platform]["ram"][0],
                                 memory_sizes=wd.memory_sizes(adapter))
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)

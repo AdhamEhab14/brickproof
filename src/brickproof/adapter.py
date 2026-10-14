@@ -134,6 +134,14 @@ def stm32f4_option_bytes(flash, protected, read_protected, hardware_watchdog=Fal
     return bytes(out)
 
 
+def no_option_bytes(flash, protected, read_protected, hardware_watchdog=False):
+    """A chip without STM32-style option bytes (the nRF52's UICR is not modelled)."""
+    if protected or read_protected or hardware_watchdog:
+        raise AdapterError("flash: write_protected, read_protected and hardware_watchdog are "
+                           "STM32 option bytes; this chip has none")
+    return b""
+
+
 # What the engine has to know about each chip family it can emulate.
 #   model         the flash controller model in models/
 #   controller    where that controller sits
@@ -142,6 +150,7 @@ def stm32f4_option_bytes(flash, protected, read_protected, hardware_watchdog=Fal
 #   wrp_unit      how much flash one write-protection bit covers (None: one per sector)
 #   write_unit    bytes a program usually writes
 #   endurance     erase cycles per page or sector the datasheet promises
+#   mips          the core clock in MHz, as the emulator's default speed (72 if not given)
 CHIPS = {
     "stm32f103": dict(model="stm32f1_flash.py", controller=0x40022000, ob_base=0x1FFFF800,
                       option_bytes=stm32f1_option_bytes, wrp_unit=0x1000, write_unit=2,
@@ -149,6 +158,9 @@ CHIPS = {
     "stm32f411": dict(model="stm32f4_flash.py", controller=0x40023C00, ob_base=0x1FFFC000,
                       option_bytes=stm32f4_option_bytes, wrp_unit=None, write_unit=4,
                       endurance=10000),
+    "nrf52840": dict(model="nrf52_flash.py", controller=0x4001E000, ob_base=None,
+                     option_bytes=no_option_bytes, wrp_unit=None, write_unit=4,
+                     endurance=10000, mips=64),
 }
 PLATFORMS = tuple(CHIPS)
 
@@ -364,7 +376,7 @@ def load(path, target=None):
             raise AdapterError("flash.sectors add up to 0x%X, but flash.size is 0x%X"
                                % (sum(sizes), flash.size))
         flash.sectors = [(sum(sizes[:i]), n) for i, n in enumerate(sizes)]
-    if chip["model"] == "stm32f1_flash.py" and flash.page is None:
+    if chip["model"] in ("stm32f1_flash.py", "nrf52_flash.py") and flash.page is None:
         raise AdapterError("flash: an %s erases by page, not by sector" % base)
     if chip["model"] == "stm32f4_flash.py" and flash.sectors is None:
         raise AdapterError("flash: an %s erases by sector; list them in flash.sectors" % base)
@@ -424,7 +436,7 @@ def load(path, target=None):
         flash=flash, ram_base=ram.get("base", 0x20000000), ram_size=ram_size, firmware=firmware,
         uart=d.get("uart", "usart2"),
         vector_table=cpu.get("vector_table", flash.base),
-        mips=cpu.get("mips", 72),
+        mips=cpu.get("mips", chip.get("mips", 72)),
         reset_cmds=_parse_pins(d) + list(d.get("reset", [])),
         hse=int((d.get("clock") or {}).get("hse", 8000000)),
         boot_settle=float(d.get("boot_settle", 1.5)),

@@ -28,6 +28,14 @@ MEMORIES = {
     "stm32f411": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x08000000),
                   "ram_hole_end": 0x22000000, "flash_hole_end": 0x1FFF0000,
                   "ob_region": 0x400},
+    # flash at 0 with no alias; RAM also seen at 0x00800000 for code; FICR and UICR at
+    # 0x10000000; peripherals from 0x40000000
+    "nrf52840": {"ram": ("ram", 0x20000000), "flash": ("flash", 0x0),
+                 "holes": lambda flash_end, ram_end, ram_size: [
+                     ("flashGuard", flash_end, 0x800000 - flash_end),
+                     ("codeRamGuard", 0x800000 + ram_size, 0x10000000 - 0x800000 - ram_size),
+                     ("infoGuard", 0x10002000, 0x20000000 - 0x10002000),
+                     ("ramGuard", ram_end, 0x40000000 - ram_end)]},
 }
 
 
@@ -37,6 +45,8 @@ def holes(adapter):
     info = MEMORIES[adapter.platform]
     ram_end = adapter.ram_base + adapter.ram_size
     flash_end = adapter.flash.base + adapter.flash.size
+    if "holes" in info:
+        return info["holes"](flash_end, ram_end, adapter.ram_size)
     # flash is also seen at address 0 (the boot alias); between the end of that copy
     # and the flash itself there is nothing
     return [("ramGuard", ram_end, info["ram_hole_end"] - ram_end),

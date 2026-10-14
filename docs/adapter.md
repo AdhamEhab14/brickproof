@@ -22,18 +22,18 @@ target: ../my-firmware         # folder the file paths below are relative to
 extends: base.yaml             # optional: start from another adapter and change a few keys
 
 platform:
-  base: stm32f103              # stm32f103 or stm32f411
+  base: stm32f103              # stm32f103, stm32f411 or nrf52840
   extra: extra.repl            # optional: more Renode platform lines (peripherals your
                                # firmware needs); @ADAPTER@ is this file's folder
 
 flash:
   base: 0x08000000
   size: 0x20000                # the real size of the chip's flash
-  page: 0x400                  # STM32F1: the page size (0x400 or 0x800)
+  page: 0x400                  # STM32F1: the page size (0x400 or 0x800); nRF52840: 0x1000
   # sectors: [0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]
   #                            # STM32F4: every sector's size, in order. One of page or sectors.
-  write_unit: 2                # bytes a program usually writes (2 on F1, 4 on F4)
-  write_protected:             # what the option bytes protect on the device as shipped
+  write_unit: 2                # bytes a program usually writes (2 on F1, 4 on F4 and nRF52)
+  write_protected:             # STM32: what the option bytes protect on the device as shipped
     - {from: 0x08000000, size: 0x4000}
   read_protected: false        # RDP level 1
   hardware_watchdog: false     # WDG_SW cleared: the watchdog runs from reset, unstoppable
