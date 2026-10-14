@@ -18,9 +18,14 @@ Run on bootloaders that are not ours, it found:
 - **OpenBLT** (STM32F1): a cut near the end of a programming session can leave a program
   that the bootloader starts although it is not completely written. Confirmed on a real
   Nucleo-F103RB. Details and the adapter: [adapters/openblt_f103](adapters/openblt_f103).
-- **wolfBoot**: with partitions of one sector, the last step of an update erases the
-  bootloader itself. Confirmed in wolfBoot's own simulator:
-  [wolfSSL/wolfBoot#937](https://github.com/wolfSSL/wolfBoot/issues/937).
+- **wolfBoot** (STM32F411): with partitions of one sector, as in its own Black Pill example,
+  the last step of an update erases the bootloader itself. Confirmed in wolfBoot's own
+  simulator: [wolfSSL/wolfBoot#937](https://github.com/wolfSSL/wolfBoot/issues/937). Details
+  and the adapter: [adapters/wolfboot_f411](adapters/wolfboot_f411).
+
+It also ran on **MCUboot** (STM32F411, the Black Pill's one-sector slots, swap with
+scratch): 57 cuts over every phase of the swap, no failure.
+[adapters/mcuboot_f411](adapters/mcuboot_f411).
 
 ## Quick start
 
@@ -219,7 +224,7 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 | `src/brickproof/report.py`, `regulations.py` | JUnit and HTML reports, and the regulation map |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
 | `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
-| `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT) |
+| `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot, MCUboot) |
 | `docs/decisions.md` | Why things are the way they are, with the measurements behind them |
 
 ## Limits

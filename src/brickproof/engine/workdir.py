@@ -154,8 +154,9 @@ def prepare(workdir, adapter):
     if f.ext_size:
         shutil.copyfile(os.path.join(MODELS, "BpSpiNor.cs"), os.path.join(models, "BpSpiNor.cs"))
         repl += ('\nextflash: SPI.BpSpiNor @ %s\n    size: 0x%X\n    address: 0x%X\n    state: 0x%X\n'
-                 '    traceFile: "%s/%s"\n    timing: %d\n' % (
-                     f.ext_bus, f.ext_size, f.ext_base, STATE_BASE, _slash(workdir), TRACE_NAME, f.timing))
+                 '    traceFile: "%s/%s"\n    timing: %d\n    status1: 0x%X\n    status2: 0x%X\n' % (
+                     f.ext_bus, f.ext_size, f.ext_base, STATE_BASE, _slash(workdir), TRACE_NAME, f.timing,
+                     f.ext_status & 0xFF, f.ext_status >> 8))
         repl += "\ngpioPort%s:\n    %d -> extflash@0\n" % (f.ext_cs[1], int(f.ext_cs[2:]))
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):

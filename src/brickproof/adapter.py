@@ -380,6 +380,12 @@ def load(path, target=None):
         flash.ext_size = _need(ext, "size", where)
         flash.ext_base = ext.get("address", 0xA0000000)
         flash.ext_endurance = int(ext.get("endurance", 100000))
+        # the status registers as the device ships: block protection set at the factory
+        status = ext.get("status", 0)
+        if not isinstance(status, int) or not 0 <= status <= 0xFFFF:
+            raise AdapterError("external_flash.status: status register 1, or both as 0xSSRR "
+                               "(register 2 in the high byte)")
+        flash.ext_status = status
         pin = flash.ext_cs
         if not (len(pin) >= 3 and pin[0] == "P" and "A" <= pin[1] <= "K" and pin[2:].isdigit()
                 and int(pin[2:]) < 16):

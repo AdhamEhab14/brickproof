@@ -101,9 +101,14 @@ def _fault_message(session):
                 "the old value. On an STM32F1 that is a cell that was not erased (PGERR), on an "
                 "STM32F4 a store that is not as wide as PSIZE says (PGPERR)" % v["refused"])
     if v.get("protected"):
+        n, at = v["protected"]
+        if session.flash.external(at):
+            return ("write protection: %d erase or program operation(s) in the external flash chip "
+                    "were refused, first at 0x%08X. Its status register (BP, TB, SEC, CMP) protects "
+                    "that part, so the chip ignores the command" % (n, at))
         return ("write protection: %d erase or program operation(s) in write-protected flash "
                 "were refused, first at 0x%08X. The option bytes protect that part of flash, so the "
-                "chip changes nothing there" % v["protected"])
+                "chip changes nothing there" % (n, at))
     if v["stray"]:
         return ("flash changed at 0x%08X with no flash operation behind it (a store with PG "
                 "clear or the controller locked). The chip ignores such a write" % v["stray"])

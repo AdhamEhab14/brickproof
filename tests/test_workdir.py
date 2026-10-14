@@ -123,6 +123,7 @@ def test_an_external_flash_chip_is_put_on_its_bus_with_its_chip_select(tmp_path)
     repl = (tmp_path / "platform.repl").read_text()
     assert "extflash: SPI.BpSpiNor @ spi1\n    size: 0x100000\n    address: 0xA0000000\n" in repl
     assert "    state: 0x90000000\n" in repl and "    timing: 1\n" in repl
+    assert "    status1: 0x0\n    status2: 0x0\n" in repl      # no block protection as shipped
     assert 'traceFile: "%s/trace.txt"' % str(tmp_path).replace("\\", "/") in repl
     assert "gpioPortA:\n    4 -> extflash@0\n" in repl
     assert (tmp_path / "models" / "BpSpiNor.cs").exists()

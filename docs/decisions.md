@@ -1045,4 +1045,75 @@ short cannot leave a record that looks complete. `f411-ext-bug-consume_first` ma
 image used (a page program in the chip) before copying it.
 
 Not modelled: quad and dual modes, four address bytes, the protection bits of the status
-register, suspend and resume, and any external memory that is not SPI NOR.
+register, suspend and resume, and any external memory that is not SPI NOR. (The protection bits came
+on 2026-10-13, below.)
+
+## 2026-10-13: Block protection in the external flash chip
+
+The SPI NOR model let firmware erase and program anywhere. A real chip with block protection
+set ignores those commands, silently: no error bit, the data just stays. Firmware that sets
+protection at the factory and forgets to clear it before an update passes a plain emulator
+and fails on every device.
+
+**Model.** Status register 1 (BP0-2, TB, SEC) and register 2 (CMP), read with 05h and 35h,
+written with 01h (one or two bytes) and 31h after a write enable, from the Winbond W25Q16JV
+datasheet's protection tables (read 2026-10-13): BP = 0 protects nothing and BP = 11x
+everything; with SEC = 0, BP = 001 protects the top 64 KB (the bottom with TB) and each step
+doubles it; with SEC = 1 the steps are 4, 8, 16 and 32 KB; CMP protects the complement. The
+64 KB step is the 16 and 32 Mbit parts'; it is a constructor argument (`protectUnit`). A
+command that touches a protected byte is ignored, as on the chip, and a chip erase is ignored
+if any part is protected.
+
+**A refusal is counted, traced and fails the run**, the same way the internal flash's write
+protection does (the same two state words, a `W` line in the trace), with a message that names
+the status register rather than the option bytes.
+
+**The status registers are part of the flash image.** They are non-volatile: a power cut
+leaves them as they were. So an image is now the flash, the option bytes, the external chip,
+and its two status registers, and every cut starts from the registers it should. Writing the
+status register is not an operation of its own (it is not counted or cut).
+
+**Adapter.** `external_flash.status` gives the registers as the device ships (register 1, or
+both as 0xSSRR), so a board that leaves the factory protected is tested as it is.
+
+Not modelled: the /WP pin and the SRP/SRL bits (the pin is taken as high, so the register can
+always be written), the volatile status register writes (50h), and the individual block locks
+(WPS = 1). 4-byte addressing is left out on purpose: it matters only above 16 MB, and an image
+holds the whole chip.
+
+## 2026-10-13: A slow emulator is not a dead device
+
+MCUboot's swap on the F411 is about 392,000 byte-wide programs. Its cut runs failed with
+"the emulator hung before the cut fired", on four of the last cuts, and the baseline once
+with "locked up". None of them was a hang. Measured, one second of emulated time at a time:
+
+- a plain run: 13 to 19 s of wall time for each busy second, every time;
+- a second run in the same Renode process, with or without a trace: most seconds the same,
+  and a few, at different places each time, 95 to 201 s;
+- with the step limit raised to 15 minutes the "hung" cut passed, taking 1152 s instead of
+  about 150 s.
+
+So Renode sometimes runs more than ten times slower than its usual pace for a while. The
+hang limit allowed twenty times the slowest pace seen, with a fixed ceiling (180 s for a
+one-second slice), and the wait for a cut never learned the pace at all: it kept the
+starting guess, which gave a 0.16 s step 30 s. A step of 91 s was a "hang".
+
+Now: fifty times the slowest pace seen (27 times was measured), no ceiling, and
+`run_until_cut` learns the pace like `run_for`. A device that really locks up is still
+caught; on a slow run it takes longer to say so, which costs time, not correctness. The
+four cuts that had failed then passed, with three emulators side by side.
+
+## 2026-10-13: MCUboot
+
+`adapters/mcuboot_f411`: MCUboot built with Zephyr v4.2.0 for `blackpill_f411ce`, its
+default swap using scratch, the board's own layout (MCUboot 32 KB, then slot 0, slot 1 and
+scratch at one 128 KB sector each), ECDSA-P256 signatures (RSA-2048 does not fit 32 KB with
+Ubuntu's compiler). A small app prints its version; v2 is staged with `--pad --confirm`, so
+only v2 is accepted after a cut.
+
+The update is 391,974 operations (the Zephyr F4 driver programs a byte at a time) in 19
+phases; 14.3 s of flash time on the chip. Result: the baseline and 57 planned cuts plus two
+more, every one recovered to v2. One build mistake on the way, worth knowing: an app built
+for MCUboot on this board must be linked for slot 0 (`zephyr,code-partition`), which the
+board files do not choose; without it MCUboot jumps into an app linked for address 0 and
+the app aborts.
