@@ -11,7 +11,7 @@ which cuts brick the device, and how to reproduce each one.
 It came out of the power-cut tests of
 [Three-Tier-STM32-Secure-Bootloader](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader),
 where it found three real bugs. That bootloader's fixed release has since been cut at every one
-of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1 and STM32F4 (F411).
+of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1, STM32F4 (F411) and Nordic nRF52840.
 
 Run on bootloaders that are not ours, it found:
 
@@ -23,9 +23,10 @@ Run on bootloaders that are not ours, it found:
   simulator: [wolfSSL/wolfBoot#937](https://github.com/wolfSSL/wolfBoot/issues/937). Details
   and the adapter: [adapters/wolfboot_f411](adapters/wolfboot_f411).
 
-It also ran on **MCUboot** (STM32F411, the Black Pill's one-sector slots, swap with
-scratch): 57 cuts over every phase of the swap, no failure.
-[adapters/mcuboot_f411](adapters/mcuboot_f411).
+It also ran on **MCUboot**, on two boards with two upgrade modes: the STM32F411 Black Pill
+(one-sector slots, swap with scratch, 57 cuts) and the nRF52840 DK (swap with move, 156
+cuts). No failure on either.
+[adapters/mcuboot](adapters/mcuboot).
 
 ## Quick start
 
@@ -229,10 +230,13 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 
 ## Limits
 
-- The device is emulated. Torn-operation shapes are a model until compared with hardware.
-- Flash is modelled for STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte
-  to double-word programming). Another family needs a model of its flash controller in
-  `src/brickproof/models/`; the engine itself no longer assumes either chip.
+- The device is emulated. Two of the torn erase shapes are measured on a real STM32F103,
+  with the erase stopped by a reset; the others, and every torn program, are models. A real
+  power loss, which lets the supply sag, is not measured yet.
+- Flash is modelled for STM32F1 (pages, halfword programming), STM32F411 (sectors, byte
+  to double-word programming) and nRF52840 (4 KB pages, word programming, at most two
+  writes to a word between erases). Another family needs a model of its flash controller in
+  `src/brickproof/models/`; the engine itself does not assume any of them.
 - Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
   vary with temperature, voltage or age. Wear is counted per update, not simulated.
 - An external flash chip is modelled as SPI NOR with the 25-series commands in single-line

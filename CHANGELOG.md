@@ -13,8 +13,19 @@ protect part of the chip as on a Winbond W25Q; an erase or program there is igno
 and fails the run. The status registers are part of the flash image, and
 `external_flash.status` sets them as the device ships.
 
-**MCUboot adapter.** `adapters/mcuboot_f411` builds MCUboot and a test app for the Black Pill
-and runs its swap update; 57 cuts, no failure.
+**MCUboot adapter.** `adapters/mcuboot` builds MCUboot and a test app for the Black Pill
+(swap using scratch, 57 cuts) or the nRF52840 DK (swap using move, 156 cuts) and runs its
+update; no failure on either.
+
+**A third chip family: the nRF52840.** Its flash controller (NVMC) is modelled: 4 KB pages,
+whole aligned 32-bit words, at most two writes to a word between erases (a third, or a
+narrower store, fails the run), and the CPU stalls for the datasheet's times. BrickProof
+writes out Renode's nRF52840 platform itself, so a run does not download anything.
+
+**Torn erases measured on a real chip.** On an STM32F103 an erase stopped by a reset leaves
+single bits still 0, scattered over the page and the same cells each time: 4.5% of the old
+0 bits at once, 0.35% a little later, none after 50 us. `erase-early` and `erase-late` are
+those two shapes; the guessed shapes stay as harder cases. A program was never seen torn.
 
 **A slow emulator is not a dead device.** The hang limit is now 50 times the slowest pace seen,
 with no fixed ceiling, and the wait for a cut learns the pace too. Renode was measured running

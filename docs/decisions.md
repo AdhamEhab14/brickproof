@@ -1105,7 +1105,7 @@ four cuts that had failed then passed, with three emulators side by side.
 
 ## 2026-10-13: MCUboot
 
-`adapters/mcuboot_f411`: MCUboot built with Zephyr v4.2.0 for `blackpill_f411ce`, its
+`adapters/mcuboot` (then `adapters/mcuboot_f411`): MCUboot built with Zephyr v4.2.0 for `blackpill_f411ce`, its
 default swap using scratch, the board's own layout (MCUboot 32 KB, then slot 0, slot 1 and
 scratch at one 128 KB sector each), ECDSA-P256 signatures (RSA-2048 does not fit 32 KB with
 Ubuntu's compiler). A small app prints its version; v2 is staged with `--pad --confirm`, so
@@ -1117,3 +1117,57 @@ more, every one recovered to v2. One build mistake on the way, worth knowing: an
 for MCUboot on this board must be linked for slot 0 (`zephyr,code-partition`), which the
 board files do not choose; without it MCUboot jumps into an app linked for address 0 and
 the app aborts.
+
+## 2026-10-14: A third chip family, the nRF52840
+
+Chosen over the STM32L4 because Renode emulates the nRF52840 (UARTE, timers, RTC, clock)
+and has no L4 platform at all: the L4 would have meant a whole platform first. The nRF52 is
+also a different vendor with different flash rules, and the home of MCUboot.
+
+**The NVMC model** (`models/nrf52_flash.py`). Renode has none: its flash is plain memory.
+CONFIG.WEN says what the flash does (Ren, Wen, Een). A program is a store while WEN is Wen,
+heard through the CPU's memory-access hook as on the F4; it must be a whole, aligned 32-bit
+word (narrower is a hard fault on the chip, refused and reported here), it can only clear
+bits, and a word may be written twice between erases (nWRITE = 2; a third write is refused
+and reported). How often each word was written lives in memory (`bpCounts`), not in the
+model, because a CPU reset does not undo it on the chip. ERASEPAGE erases a 4 KB page and
+ERASEALL everything. Times from the product specification, which gives only maximums: 41 us
+a word, 85 ms a page, 169 ms for all. The test registers sit at 0x100..0x14C as on the STM32
+models; the NVMC's own start at 0x400.
+
+**The platform** is Renode's, written out (`platforms/nrf52840.repl`): the stock file applies
+an SVD it downloads at every start, only to name registers in logs, and the download failing
+prints an error the engine takes as Renode refusing a command. FICR gets CODEPAGESIZE and
+CODESIZE, because Zephyr's flash driver takes the flash size from them; without them MCUboot
+cannot read its own slots. The guards cover what is empty on this chip: after flash up to the
+RAM alias at 0x00800000, after that alias up to FICR, between UICR and RAM, and after RAM up
+to the peripherals. The engine no longer assumes an STM32: the RAM name and the CPU speed
+(64 MHz here) come from the chip.
+
+**Checked** with MCUboot on the nRF52840 DK (swap using move, the board's own partitions):
+15,400 operations in 52 phases, baseline and 156 cuts, all recovered to v2.
+
+Not modelled: partial erase, the UICR (not part of the flash image; ERASEUICR is ignored),
+ACL protection, the cache.
+
+## 2026-10-14: Torn erases, measured
+
+The torn shapes were guesses until now. Measured on a Nucleo-F103RB with a small firmware
+(running from RAM) that starts an operation and resets the chip a counted number of cycles
+later (DWT, 125 ns), then reads what is left; every delay three times.
+
+- **Erase** (22 ms when not stopped): stopped at once, 69% of the bytes were 0xFF and 4.5% of
+  the old 0 bits were still 0; at 5 us 91% and 1.2%; at 15 us 97% and 0.35%; from 50 us the
+  page was always fully erased. The bits still 0 were scattered over the whole page, nearly
+  always one in a byte, and the same cells in every repeat. Their count fits each old 0 bit
+  staying 0 on its own with one probability (4.5% predicts 31% of the bytes showing a 0;
+  measured 31%). Never a half page, never a byte keeping its old value.
+- **Program** (55 us): untouched up to 0.5 us, complete from 0.6 us; nothing in between.
+
+So two shapes are added from the measurements, `erase-early` (each old 0 bit stays 0 with
+probability 4.5%) and `erase-late` (0.35%). They are drawn after the old shapes from the
+same seed, so the old shapes' bytes, and old reports' reproduce commands, do not change. The
+guessed shapes stay: they are harder than anything seen, and passing them still means
+something. What is not known: a reset stops the flash cleanly, a power loss lets the supply
+sag. Whether the 22 ms after the first 50 us is the chip finishing what a reset cannot stop
+needs a switch on the supply.

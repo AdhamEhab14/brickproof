@@ -1,0 +1,51 @@
+# MCUboot (https://github.com/mcu-tools/mcuboot), Zephyr build with its default upgrade on
+# this board, swap using move, on an nRF52840 DK with the board's own partition layout:
+# MCUboot 48 KB, then slot 0 at 0xC000 and slot 1 at 0x82000, 472 KB of 4 KB pages each.
+# The same app (app/) prints "APP v<n>"; v2 is staged in slot 1 with --pad --confirm, so
+# the upgrade is permanent and v2 must be what runs after any cut.
+#
+# Build first:  python build.py <zephyr workspace> <output folder> nrf52840
+# then:  brickproof run adapters/mcuboot/nrf52840.yaml --target <output folder>
+
+name: mcuboot_nrf52840
+target: ../../../mcuboot-out-nrf52840    # default: next to this repo
+
+platform:
+  base: nrf52840
+
+flash:
+  base: 0x0
+  size: 0x100000
+  page: 0x1000
+
+ram:
+  size: 0x40000
+
+firmware:
+  - file: mcuboot.elf
+  - file: app_v1.img
+    addr: 0xC000
+
+uart: uart0
+boot_settle: 0.5
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x82000
+    image: app_v2_staged.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"
+    boot_timeout: 30
+
+oracle:
+  images:
+    v1: {file: app_v1.img, at: 0xC000}
+    v2: {file: app_v2.img, at: 0xC000}
+  accept: [v2]
+
+scenario:
+  name: swap-move-v1-to-v2
+  update_time: 30
+  cut_limit: 40
+  plan: {mode: phases, per_phase: 4}

@@ -4,8 +4,8 @@
 # A small app (app/) prints "APP v<n>". v2 is staged in slot 1, signed with --pad --confirm,
 # so the upgrade is permanent and v2 must be what runs after any cut.
 #
-# Build first:  python build.py <zephyr workspace> <output folder>
-# then:  brickproof run adapters/mcuboot_f411/adapter.yaml --target <output folder>
+# Build first:  python build.py <zephyr workspace> <output folder> f411
+# then:  brickproof run adapters/mcuboot/f411.yaml --target <output folder>
 
 name: mcuboot_f411
 target: ../../../mcuboot-out          # default: next to this repo
