@@ -157,8 +157,9 @@ def cmd_run(args):
                   len(ran) - computed, computed))
     torn = [r for r in out.results if r.torn]
     if torn:
-        print("%d/%d torn states survived (modelled shapes of a half-done erase or program, "
-              "not yet calibrated against silicon)" % (sum(r.passed for r in torn), len(torn)))
+        print("%d/%d torn states survived (shapes of a half-done erase or program: erase-early "
+              "and erase-late measured on an STM32F103 stopped by a reset, the others "
+              "modelled)" % (sum(r.passed for r in torn), len(torn)))
     deep = [r for r in out.results if r.depth > 1]
     if out.depth:
         note = "; stopped at the limit of %d states" % ad.depth["max_states"] if out.depth["capped"] else ""

@@ -135,7 +135,7 @@ def test_a_passing_page_says_pass_and_counts_each_group():
     assert "PASS: every run recovered" in text and "Failures" not in text
     assert "10 / 10" in text and "clean cuts passed" in text and "torn states passed" in text
     assert "Every distinct flash state the update goes through was cut." in text
-    assert "not been calibrated against real hardware" in text
+    assert "a real power loss has not been measured yet" in text
     assert "runs new" in text
 
 

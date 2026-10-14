@@ -23,7 +23,7 @@ def group(cut):
 GROUP_TITLES = {
     "baseline": "The update, uninterrupted",
     "cut": "Clean cuts: power lost between two flash operations",
-    "torn": "Torn states: power lost inside an erase or a program (modelled shapes)",
+    "torn": "Torn states: power lost inside an erase or a program",
 }
 
 
@@ -264,8 +264,10 @@ def html_page(report):
         notes.append("This adapter has no oracle section, so each verdict rests on what the "
                      "firmware reports about itself.")
     if "torn" in groups:
-        notes.append("Torn states are modelled shapes of a half-done erase or program. They follow "
-                     "what flash cells do but have not been calibrated against real hardware.")
+        notes.append("Torn states are shapes of a half-done erase or program. erase-early and "
+                     "erase-late are measured on an STM32F103 whose erase was stopped by a reset; "
+                     "the others follow what flash cells do but are not measured, and a real power "
+                     "loss has not been measured yet.")
     notes.append("Not modelled: write protection, read protection, option bytes, flash timing, wear.")
     out.append("".join("<p class='note'>%s</p>" % _e(n) for n in notes))
 

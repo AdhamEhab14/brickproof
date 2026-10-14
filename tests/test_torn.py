@@ -52,6 +52,26 @@ def test_the_erase_shapes_are_what_their_names_say():
     assert partial not in (half, almost)
 
 
+def test_the_measured_erase_shapes_leave_a_few_old_zero_bits_scattered():
+    # measured on an STM32F103: each old 0 bit stays 0 on its own, a few in a hundred
+    # at first and a few in a thousand a little later; never a block of old bytes
+    page = bytes(PAGE)                                  # all bits 0 before the erase
+    by_kind = {s.kind: page_of(s) for s in torn.states(ERASE, image_with(page), FLASH)}
+    for kind, p in torn.ERASE_MEASURED.items():
+        shape = by_kind[kind]
+        zeros = sum(8 - bin(b).count("1") for b in shape)
+        assert 0 < zeros < 3 * p * 8 * PAGE, kind
+        assert all(b != 0 for b in shape), "no byte keeps all its old bits"
+    early, late = (sum(b != 0xFF for b in by_kind[k]) for k in ("erase-early", "erase-late"))
+    assert early > late
+
+
+def test_the_measured_shapes_keep_bits_that_were_already_1():
+    old = used_page()
+    for s in torn.states(ERASE, image_with(old), FLASH, kinds=list(torn.ERASE_MEASURED)):
+        assert all(t | o == t for t, o in zip(page_of(s), old, strict=True)), s.kind
+
+
 def test_erasing_an_erased_page_has_no_torn_state():
     assert torn.states(ERASE, image_with([0xFF] * PAGE), FLASH) == []
 
