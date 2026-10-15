@@ -216,7 +216,7 @@ class M33muSession:
         # bare OK, so ask for something that must print
         if not self.gdb.monitor("vtime").startswith("vtime "):
             raise M33muError("%s is too old for BrickProof: it needs --no-realtime and the GDB "
-                             "monitor commands for test harnesses (m33mu 2331e2a or later)" % self.exe)
+                             "monitor commands for test harnesses (m33mu 23960ed or later)" % self.exe)
         info = self.gdb.monitor("flash info").split()
         self.mbase, msize = int(info[1], 16), int(info[2], 16)
         if msize != self.flash.size:
@@ -241,7 +241,7 @@ class M33muSession:
         except OSError:
             tail = ""
         if "unknown option" in tail:
-            return (": %s is too old for BrickProof (it needs --no-realtime; m33mu 2331e2a or "
+            return (": %s is too old for BrickProof (it needs --no-realtime; m33mu 23960ed or "
                     "later)" % self.exe)
         return " (exit %d): %s" % (self.proc.returncode, tail)
 
