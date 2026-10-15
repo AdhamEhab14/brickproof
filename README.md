@@ -3,7 +3,8 @@
 Pull the plug on your firmware update, in an emulator, at every point where it matters, and
 check that the device still comes back.
 
-BrickProof runs your firmware in [Renode](https://renode.io), cuts power during an update,
+BrickProof runs your firmware in an emulator ([Renode](https://renode.io), or
+[m33mu](https://github.com/danielinux/m33mu) for the chips Renode does not have), cuts power during an update,
 powers the device back up, and checks that it recovered: an approved image is installed, it is
 really running, the update was not lost, and an older image cannot sneak back in. It tells you
 which cuts brick the device, and how to reproduce each one.
@@ -11,7 +12,8 @@ which cuts brick the device, and how to reproduce each one.
 It came out of the power-cut tests of
 [Three-Tier-STM32-Secure-Bootloader](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader),
 where it found three real bugs. That bootloader's fixed release has since been cut at every one
-of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1 and STM32F4 (F411).
+of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1
+and STM32F4 (F411) on Renode, STM32H5 (H563) on m33mu.
 
 Run on bootloaders that are not ours, it found:
 
@@ -30,8 +32,10 @@ scratch): 57 cuts over every phase of the swap, no failure.
 ## Quick start
 
 You need Python 3.10+ and [Renode 1.17](https://github.com/renode/renode/releases) (put
-`renode` on PATH or set `RENODE_PATH`). No toolchain, no board, no firmware of your own: a demo
-comes with the package.
+`renode` on PATH or set `RENODE_PATH`). For an STM32H5 you need
+[m33mu](https://github.com/danielinux/m33mu) instead, commit 23960ed or later (put `m33mu` on
+PATH or set `M33MU_PATH`). No toolchain, no board, no firmware of your own: a demo comes with
+the package.
 
 ```bash
 git clone https://github.com/AdhamEhab14/brickproof
@@ -90,6 +94,13 @@ sector erase that takes a second gets the chip reset half way through, on every 
 `watchdog` and `f411-watchdog` are the correct build on such a device, and `hold_pg` and
 `f411-hold_pg` are the correct build writing flash the other common way, with programming
 mode left on over a whole run of cells.
+
+And for an **STM32H563**, on m33mu: `brickproof demo h563`. The H5 programs a 128-bit word with
+its ECC in one operation, and a word programmed once cannot be programmed again before its
+sector is erased, so the update is 26 operations and the `h563-bug-*` builds meet a chip that
+refuses what the F-series accepts. Its torn states found a bug in the port itself: a torn
+program of the "staging slot consumed" marker was retried, over the half-written word.
+The bootloader now takes any cleared bit in the marker as consumed.
 
 ## What a run covers
 
@@ -213,7 +224,7 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 
 | Path | What |
 |---|---|
-| `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
+| `src/brickproof/engine/` | Renode and m33mu drivers in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | The flash controller model (operation counting, cuts, the chip's rules, option bytes) and the memory guard |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
 | `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
@@ -231,8 +242,11 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 
 - The device is emulated. Torn-operation shapes are a model until compared with hardware.
 - Flash is modelled for STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte
-  to double-word programming). Another family needs a model of its flash controller in
-  `src/brickproof/models/`; the engine itself no longer assumes either chip.
+  to double-word programming) in `src/brickproof/models/` for Renode; m33mu models the
+  STM32H5 (128-bit programs, write protection, bank swap) itself. Another family needs a model
+  of its flash controller in one emulator or the other; the engine itself assumes neither.
+- On m33mu, option bytes are kept apart from the flash image: a run starts every cut from the
+  option bytes as shipped, and a cut while the firmware changes them is not modelled.
 - Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
   vary with temperature, voltage or age. Wear is counted per update, not simulated.
 - An external flash chip is modelled as SPI NOR with the 25-series commands in single-line
