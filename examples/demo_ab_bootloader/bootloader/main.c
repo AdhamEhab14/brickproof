@@ -142,7 +142,7 @@ static int image_check(uint32_t slot)
     if (h->magic != IMG_MAGIC || h->size == 0 || h->size > SLOT_SIZE - IMG_OFFSET)
         return 0;
 #ifdef CELL_IS_BLOCK
-    if (slot == SLOT_B && *(const volatile uint32_t *)CONSUMED != 0xFFFFFFFFu)
+    if (slot == SLOT_B && !cell_erased((const volatile cell_t *)CONSUMED))
         return 0;                         /* consumed: see consume_staging */
 #endif
 #ifdef EXT_FLASH
