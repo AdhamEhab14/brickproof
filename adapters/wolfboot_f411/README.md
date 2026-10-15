@@ -28,7 +28,8 @@ The stock config keeps the UPDATE and SWAP partitions on a host reached over the
 | File | What |
 |---|---|
 | `adapter.yaml` | the chip, the factory image, the approved images and the cut plan |
-| `driver.py` | stages v2 with the update flag set, and reads the version the app reports |
+| `adapter-custom-trailer.yaml` | the same with the fix proposed in PR #940: trailers in sectors 1 and 2 |
+| `driver.py` | stages v2 with the update flag set, and reads the version the app reports; with `trailer`, the flag goes in a trailer sector of its own |
 
 ## What it found
 
@@ -56,3 +57,25 @@ is staged with the flag already set, as this adapter does.
 
 Tested on wolfBoot master `400bce6` (2026-10-12); the same code is in v2.10.0. Reported in
 [wolfSSL/wolfBoot#937](https://github.com/wolfSSL/wolfBoot/issues/937).
+
+## The proposed fix (PR #940)
+
+wolfSSL answered within two days with
+[wolfSSL/wolfBoot#940](https://github.com/wolfSSL/wolfBoot/pull/940): a partition smaller than
+two sectors (three with `NVM_FLASH_WRITEONCE`) is now a build error, unless
+`CUSTOM_PARTITION_TRAILER` is set; on the STM32F4 that option keeps the BOOT and UPDATE
+trailers in the 16 KB sectors 1 and 2, and the Black Pill config uses it. The trigger then
+erases nothing, so storing the image and then triggering works again.
+
+`adapter-custom-trailer.yaml` runs it: the same build steps on the PR's branch, with the
+update flag staged in sector 2 (`trailer: 0x0800C000`). On `45a5909e` (2026-10-15):
+
+- the update with no cut completes and v2 runs (143,502 operations);
+- 44 cuts, every distinct flash state in 13 of the 16 phases and 8 samples in each of the
+  three long copies: all recovered. That includes every cut in the new step where a trailer
+  sector is erased and its 64 bytes written back;
+- a cut after BOOT is set to TESTING and before v2 first runs ends on v1: wolfBoot takes an
+  image in TESTING that never confirmed as a failed one and goes back. That is its design.
+
+Each trailer sector is erased twice per update, the most of any sector: 5,000 updates at the
+10,000 cycles the datasheet promises.

@@ -3,10 +3,12 @@
 ## Unreleased
 
 **OpenBLT adapter.** `adapters/openblt_f103` runs OpenBLT's Nucleo-F103RB demo, reprogrammed
-over the UART with its XCP protocol, and documents what it found there.
+over the UART with its XCP protocol, and documents what it found there, and what the
+maintainer's fix (r1326) still leaves: 4 cuts inside the boot block after its checksum.
 
 **wolfBoot adapter.** `adapters/wolfboot_f411` runs wolfBoot's Black Pill example and its test
-application, and documents what it found there.
+application, and documents what it found there. `adapter-custom-trailer.yaml` runs the fix
+proposed in wolfBoot PR #940 (trailers in sectors of their own): 44 cuts, all recovered.
 
 **Block protection in the external flash chip.** The status register's BP, TB, SEC and CMP bits
 protect part of the chip as on a Winbond W25Q; an erase or program there is ignored by the chip
