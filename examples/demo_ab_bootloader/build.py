@@ -1,5 +1,5 @@
-"""Build the demo for both chips: the bootloader (correct, and one build per known bug)
-and two app images. The STM32F411 files get an f411_ prefix.
+"""Build the demo for each chip: the bootloader (correct, and one build per known bug)
+and two app images. The STM32F411 files get an f411_ prefix, the STM32H563 ones h563_.
 
 Needs arm-none-eabi-gcc on PATH. Output goes to build/. Pass --prebuilt to also
 refresh the committed copies in prebuilt/, which is what users without a
@@ -28,6 +28,11 @@ CHIPS = [
                                    "bootloader_ext_bug_consume_first")),
     # an F4 lets a half-written cell be programmed again, so resuming a copy is fine there
     ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",)),
+    # the H563 (on m33mu): the option-byte and watchdog bugs are F-series code, and the
+    # external flash chip is wired up on the F411 only
+    ("h563_", ["-mcpu=cortex-m33", "-DSTM32H5"], "_h563",
+     ("bootloader_bug_self_lock", "bootloader_bug_watchdog", "bootloader_ext",
+      "bootloader_ext_bug_consume_first")),
 ]
 LDFLAGS = ["-Wl,--gc-sections", "-Lcommon", "-lgcc"]
 COMMON = ["common/startup.c", "common/uart.c"]

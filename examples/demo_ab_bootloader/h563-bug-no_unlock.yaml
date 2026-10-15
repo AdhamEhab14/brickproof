@@ -1,0 +1,11 @@
+# The H563 demo never unlocking the flash controller for the install
+# (see BUG_NO_UNLOCK in bootloader/main.c). In a plain emulator the update
+# appears to work; on a chip nothing is written. BrickProof should fail the baseline.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_bug_no_unlock
+firmware:
+  - file: prebuilt/h563_bootloader_bug_no_unlock.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000

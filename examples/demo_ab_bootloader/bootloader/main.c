@@ -58,9 +58,11 @@
  * HOLD_PG is not a bug: it is the other common way to write flash, with PG left set
  * over a whole run of cells. A power cut can fall between any two of them.
  *
- * The same source builds for an STM32F103 and, with -DSTM32F4, for an STM32F411. What
- * differs between them (the flash map, how to erase and program, the option bytes)
- * is in common/chip_*.h.
+ * The same source builds for an STM32F103, with -DSTM32F4 for an STM32F411 and with
+ * -DSTM32H5 for an STM32H563. What differs between them (the flash map, how to erase
+ * and program, the option bytes) is in common/chip_*.h. On the H563 a cell is a
+ * 128-bit word that is never programmed twice (CELL_IS_BLOCK): Slot B is marked
+ * consumed with a cell of its own, and the floor record is one cell.
  */
 #include "demo.h"
 
@@ -105,6 +107,10 @@ static int image_valid(uint32_t slot)
     const img_hdr_t *h = hdr(slot);
     if (h->magic != IMG_MAGIC || h->size == 0 || h->size > SLOT_SIZE - IMG_OFFSET)
         return 0;
+#ifdef CELL_IS_BLOCK
+    if (slot == SLOT_B && *(const volatile uint32_t *)CONSUMED != 0xFFFFFFFFu)
+        return 0;                         /* consumed: see consume_staging */
+#endif
 #ifdef EXT_FLASH
     if (slot == SLOT_B && h->size > STAGED_MAX - IMG_OFFSET)
         return 0;                         /* more than was read from the chip */
@@ -121,13 +127,16 @@ static int same_image(uint32_t a, uint32_t b)
     return hdr(a)->version == hdr(b)->version && hdr(a)->crc == hdr(b)->crc;
 }
 
-/* Clear Slot B's magic. Programming zeros over written flash is allowed on both
- * chips, so this is cheap and needs no erase. */
+/* Clear Slot B's magic. Programming zeros over written flash is allowed on the F1
+ * and the F4, so this is cheap and needs no erase. The H563 does not program a cell
+ * twice, so there Slot B gets a consumed marker in a cell of its own. */
 static void consume_staging(void)
 {
-#ifdef EXT_FLASH
+#if defined(EXT_FLASH)
     staged[0] = 0;
     ext_program(EXT_STAGING, &staged[0], 4);
+#elif defined(CELL_IS_BLOCK)
+    flash_cell(CONSUMED, CELL_ZERO);
 #else
     flash_word(SLOT_B, 0);
 #endif
@@ -155,6 +164,10 @@ static void meta_store(uint32_t target, uint32_t seq, uint32_t floor)
     ext_erase_sector(target);
     ext_program(target, record, sizeof record);
     ext_program(target + 8, &magic, sizeof magic);
+#elif defined(CELL_IS_BLOCK)
+    /* the whole record is one cell: one program, all of it or none */
+    flash_erase(target, 1);
+    flash_cell(target, (cell_t){{seq, floor, META_MAGIC, 0xFFFFFFFFu}});
 #else
     flash_erase(target, 1);
     flash_word(target + 0, seq);
@@ -212,7 +225,11 @@ static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
     flash_pg(1);
     for (uint32_t i = 0; i < n; i += CELL) {
         wdg_feed();
+#ifdef CELL_IS_BLOCK
+        cell_store(dst + i, (const cell_t *)(src + i));
+#else
         *(volatile cell_t *)(dst + i) = *(const cell_t *)(src + i);
+#endif
         flash_wait();
     }
     flash_pg(0);
@@ -221,13 +238,21 @@ static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
         wdg_feed();
         flash_cell(dst + i, *(const cell_t *)(src + i));
         if (i + CELL < n)                 /* PG is clear again by now */
+#ifdef CELL_IS_BLOCK
+            cell_store(dst + i + CELL, (const cell_t *)(src + i + CELL));
+#else
             *(volatile cell_t *)(dst + i + CELL) = *(const cell_t *)(src + i + CELL);
+#endif
     }
 #else
     for (uint32_t i = 0; i < n; i += CELL) {
         wdg_feed();
 #ifdef BUG_RESUME_COPY
+#ifdef CELL_IS_BLOCK
+        if (cell_same((const cell_t *)(dst + i), (const cell_t *)(src + i)))
+#else
         if (*(const cell_t *)(dst + i) == *(const cell_t *)(src + i))
+#endif
             continue;                     /* already there from the interrupted attempt */
 #endif
         flash_cell(dst + i, *(const cell_t *)(src + i));
@@ -261,13 +286,21 @@ static void install(void)
      * area, so a bad image cannot keep the device rebooting for ever. Two attempts
      * already started and not finished: give up on this update. */
     const volatile cell_t *tries = (const volatile cell_t *)(SLOT_B + 0x10);
+#ifdef CELL_IS_BLOCK
+    if (cell_clear(&tries[0]) && cell_clear(&tries[1])) {
+#else
     if (tries[0] == 0 && tries[1] == 0) {
+#endif
         uart_puts("BL: giving up on this update\r\n");
         consume_staging();
         flash_lock();
         return;
     }
+#ifdef CELL_IS_BLOCK
+    flash_cell(SLOT_B + 0x10 + (cell_clear(&tries[0]) ? CELL : 0), CELL_ZERO);
+#else
     flash_cell(SLOT_B + 0x10 + (tries[0] ? 0 : CELL), 0);
+#endif
 #endif
 #ifndef BUG_NAIVE_FLOOR
     meta_write(version);

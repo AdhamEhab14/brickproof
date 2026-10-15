@@ -1,0 +1,10 @@
+# The correct H563 demo bootloader on a device whose application slot was
+# write-protected by mistake (a production-line setting, the WRPSG option bytes).
+# An emulator with plain flash memory lets the update through. On the chip nothing
+# in Slot A can be erased or programmed.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_bug_protected_slot
+flash:
+  write_protected:
+    - {from: 0x0C000000, size: 0x8000}      # the bootloader, as intended
+    - {from: 0x0C010000, size: 0x10000}     # Slot A, by mistake

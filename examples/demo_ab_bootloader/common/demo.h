@@ -9,8 +9,10 @@
 
 static inline void wdg_feed(void);
 
-#ifdef STM32F4
+#if defined(STM32F4)
 #include "chip_f411.h"
+#elif defined(STM32H5)
+#include "chip_h563.h"
 #else
 #include "chip_f103.h"
 #endif
@@ -29,14 +31,17 @@ typedef struct {
     uint32_t crc;        /* CRC-32 of those bytes */
 } img_hdr_t;
 
-/* ---- registers both chips have in the same place -------------------------- */
-#define USART2_SR      REG(0x40004400u)
-#define USART2_DR      REG(0x40004404u)
-#define USART2_BRR     REG(0x40004408u)
-#define USART2_CR1     REG(0x4000440Cu)
+/* ---- registers the F1 and the F4 have in the same place -------------------- */
+#ifndef UART_SR                       /* USART2; the H563's UART is in chip_h563.h */
+#define UART_SR        REG(0x40004400u)
+#define UART_DR        REG(0x40004404u)
+#define UART_BRR       REG(0x40004408u)
+#define UART_CR1       REG(0x4000440Cu)
+#define UART_CR1_ON    ((1u << 13) | (1u << 3))  /* UE, TE */
+#endif
 #define SCB_VTOR       REG(0xE000ED08u)
 
-/* ---- independent watchdog (in the same place on both chips) ------------------ */
+/* ---- independent watchdog (in the same place on all three chips) ------------- */
 #define IWDG_KR        REG(0x40003000u)
 #define IWDG_PR        REG(0x40003004u)
 #define IWDG_SR        REG(0x4000300Cu)

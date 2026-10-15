@@ -1,0 +1,14 @@
+# The H563 demo with a retry limit (see BUG_RETRY_LIMIT in bootloader/main.c): after two
+# interrupted install attempts it gives up on the update. It survives any single
+# power cut, clean or torn. Only a second cut, during the recovery from a first
+# one, shows the bug, so this one needs depth 2 to be caught.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_bug_retry_limit
+firmware:
+  - file: prebuilt/h563_bootloader_bug_retry_limit.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000
+scenario:
+  depth: 2
