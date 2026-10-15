@@ -210,12 +210,15 @@ needs_m33mu = pytest.mark.skipif(_m33mu() is None, reason="no m33mu with the har
 def test_the_h563_demo_recovers_from_cuts():
     ad = adapters.load(os.path.join(DEMO, "h563.yaml"))
     ad.plan = None
-    ad.cuts = [adapters.Cut(name="op-%d" % n, at_op=n) for n in (0, 5, 40, 92, 96)]
+    ad.cuts = [adapters.Cut(name="op-%d" % n, at_op=n) for n in (0, 2, 10, 24, 25)]
     out = runner.run(ad)
     assert out.passed, [(r.cut, r.message) for r in out.results if not r.passed]
-    assert len(out.trace) == 98
+    # one operation per 128-bit flash word: the floor record, the slot erase, 21 words
+    # of app, the header, the consumed marker
+    assert len(out.trace) == 26
+    assert all(op.get("size", 16) == 16 for op in out.trace if op["kind"] == "program")
     cut = out.results[2]
-    assert (cut.fired, cut.kind, cut.addr, cut.op_index) == (True, "erase", 0x0C010000, 5)
+    assert (cut.fired, cut.kind, cut.addr, cut.op_index) == (True, "erase", 0x0C010000, 2)
     assert not any(r.rewound for r in out.results)     # m33mu cuts before the operation
 
 
@@ -223,6 +226,6 @@ def test_the_h563_demo_recovers_from_cuts():
 def test_the_h563_demo_catches_a_bug():
     ad = adapters.load(os.path.join(DEMO, "h563-bug-consume_first.yaml"))
     ad.plan = None
-    ad.cuts = [adapters.Cut(name="op-6", at_op=6)]
+    ad.cuts = [adapters.Cut(name="op-3", at_op=3)]     # Slot B consumed, Slot A erased
     out = runner.run(ad)
     assert out.results[0].passed and not out.results[1].passed
