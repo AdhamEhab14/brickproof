@@ -21,7 +21,9 @@
 #define SECTOR_SIZE    0x2000u
 
 /* Slot B's consumed marker: a cell of its own in the header area, which images
- * leave erased (the app starts at +0x200). */
+ * leave erased (the app starts at +0x200). Any bit cleared anywhere in it means
+ * consumed: a program of it that the power cut short must not be retried, as
+ * the cell cannot be programmed twice. */
 #define CONSUMED       (SLOT_B + 0x40u)
 
 /* ---- uart: USART3 on PD8, the Nucleo-H563ZI's virtual COM port ------------
@@ -75,6 +77,11 @@ static inline int cell_same(const volatile cell_t *a, const cell_t *b)
 static inline int cell_clear(const volatile cell_t *a)
 {
     return (a->w[0] | a->w[1] | a->w[2] | a->w[3]) == 0;
+}
+
+static inline int cell_erased(const volatile cell_t *a)
+{
+    return (a->w[0] & a->w[1] & a->w[2] & a->w[3]) == 0xFFFFFFFFu;
 }
 
 static inline void flash_wait(void)
