@@ -26,6 +26,15 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**A failing state on a real board.** `brickproof export adapter.yaml --cut N [--torn KIND]`
+writes the flash a cut leaves (the same bytes the run started the emulator from), the
+option bytes and an external chip in files of their own, and the programming commands. Each
+failure in the HTML and JUnit reports has its export command next to its reproduce command.
+
+**The torn-write kit in the repository.** `hardware/torn_f103` is the firmware that measured
+torn writes on a Nucleo-F103RB, with both runs' results; `tools/torn_fit.py` turns a run into
+the numbers `torn.py` uses, and a test checks they still match.
+
 **Torn erases measured on a real chip.** On an STM32F103 an erase stopped by a reset leaves
 single bits still 0, scattered over the page and the same cells each time: 4.5% of the old
 0 bits at once, 0.35% a little later, none after 50 us. `erase-early` and `erase-late` are

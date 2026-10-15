@@ -56,6 +56,17 @@ def reproduce(report, cut):
     return base
 
 
+def export_command(report, cut):
+    """A command that writes the flash this result started from, for a real board.
+    None where there is no single such state (the baseline, cuts in a row)."""
+    if cut["baseline"] or cut["depth"] > 1 or cut["op_index"] is None or not cut["fired"]:
+        return None
+    base = "brickproof export %s --cut %d" % (report["adapter_file"], cut["op_index"])
+    if cut["torn"]:
+        return "%s --torn %s -o op-%d-%s.bin" % (base, cut["torn"], cut["op_index"], cut["torn"])
+    return "%s -o op-%d.bin" % (base, cut["op_index"])
+
+
 # ---- JUnit ---------------------------------------------------------------------
 
 def junit(report):
@@ -88,6 +99,8 @@ def junit(report):
             out.append(head + ">\n    <skipped message=%s/>\n  </testcase>" % quoteattr(c["message"]))
         else:
             detail = "%s\n%s\nreproduce: %s" % (c["message"], where(c), reproduce(report, c))
+            if export_command(report, c):
+                detail += "\non a board: %s" % export_command(report, c)
             out.append(head + ">\n    <failure message=%s>%s</failure>\n  </testcase>" % (
                 quoteattr(c["message"] or "failed"), escape(detail)))
     out.append("</testsuite>")
@@ -156,6 +169,8 @@ def _rows(report, cuts, with_repro):
         row = "<tr>" + "".join("<td>%s</td>" % x for x in cells) + "<td class='msg'>%s" % _e(note)
         if with_repro:
             row += "<br><code>%s</code>" % _e(reproduce(report, c))
+            if export_command(report, c):
+                row += "<br><code>%s</code>" % _e(export_command(report, c))
         rows.append(row + "</td></tr>")
     return ("<div class='wrap'><table><tr><th>Result</th><th>Run</th><th>Op</th><th>Where</th>"
             "<th>Time</th><th>Finding</th></tr>%s</table></div>" % "".join(rows))

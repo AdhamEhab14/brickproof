@@ -174,9 +174,20 @@ plan (every): 167 cut(s) over 167 distinct flash states (168 operations): every 
 | `--json`, `--junit`, `--html FILE` | reports |
 
 The HTML report is one self-contained page: the verdict, what was covered and what was
-sampled, each failure with a command that reproduces it, the SHA-256 of every firmware file
+sampled, each failure with a command that reproduces it and one that exports its flash
+for a real board, the SHA-256 of every firmware file
 tested, and where the evidence fits in UN R156 and the EU Cyber Resilience Act
 ([how that map is made](docs/regulations.md)).
+
+To check a failure on a real board, export the flash that cut leaves and program it:
+
+```bash
+brickproof export my_adapter.yaml --cut 3232 -o op-3232.bin        # add --torn KIND for a torn state
+```
+
+It writes `op-3232.bin` (the chip's flash; option bytes and an external flash chip get files
+of their own) and `op-3232.txt` with the ST-LINK or nrfjprog commands. The bytes are the ones
+the run powered the emulator up from.
 
 Exit codes: `0` every cut recovered, `1` at least one failed, `2` adapter error, `3` BrickProof
 itself failed (including its own flash self-check).
@@ -230,9 +241,11 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 | `src/brickproof/oracle.py` | The outside judge: approved image installed, and really running |
 | `src/brickproof/runner.py`, `pool.py` | A campaign: baseline, cuts, torn states, depth, over one or many emulators |
 | `src/brickproof/report.py`, `regulations.py` | JUnit and HTML reports, and the regulation map |
+| `src/brickproof/export.py` | A cut's flash as files for a real board |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
 | `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
 | `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot, MCUboot) |
+| `hardware/torn_f103/`, `tools/torn_fit.py` | The firmware that measured torn writes on a real STM32F103, its results, and the tool that turns them into `torn.py`'s numbers |
 | `docs/decisions.md` | Why things are the way they are, with the measurements behind them |
 
 ## Limits

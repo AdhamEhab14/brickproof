@@ -1,5 +1,6 @@
 """brickproof run adapter.yaml      cut power during the update and judge each cut
 brickproof trace adapter.yaml    show what the update does to flash, uninterrupted
+brickproof export adapter.yaml   write the flash a cut leaves, to put on a real board
 
 Exit codes: 0 every cut recovered, 1 at least one cut failed,
 2 the adapter is wrong, 3 BrickProof itself failed (Renode missing, crashed...).
@@ -10,6 +11,7 @@ import os
 import sys
 
 from brickproof import adapter as adapters
+from brickproof import export as exports
 from brickproof import report as reports
 from brickproof import runner
 from brickproof import torn as torns
@@ -232,6 +234,29 @@ def cmd_trace(args):
     return 0 if results[0].passed else 1
 
 
+def cmd_export(args):
+    ad = _load(args)
+    if ad is None:
+        return 2
+    _make_dirs(args.out, args.renode_log)
+    print("BrickProof: running the update of %s once, to export the state at operation %d"
+          % (ad.name, args.cut), flush=True)
+    out = _run(ad, args, baseline_only=True)
+    if out is None:
+        return 3
+    if not out.results[0].passed:
+        print("the update fails even with no power cut: nothing to export", file=sys.stderr)
+        return 1
+    try:
+        files = exports.write(ad, out.pre, out.trace, args.out, args.cut, args.torn)
+    except ValueError as e:
+        print("export: %s" % e, file=sys.stderr)
+        return 2
+    for part, path in files.items():
+        print("%-26s %s" % (part, path))
+    return 0
+
+
 def main(argv=None):
     # a Windows console in a legacy code page cannot print every character a device
     # may send; show a placeholder rather than die with an encoding error
@@ -270,6 +295,19 @@ def main(argv=None):
     common(t)
     t.add_argument("-o", "--out", help="write every operation as JSONL to this file")
     t.set_defaults(func=cmd_trace)
+
+    e = sub.add_parser("export", help="write the flash a cut leaves, to put on a real board",
+                       description="Runs the update once, uninterrupted, and writes the flash "
+                                   "as a cut just before operation N leaves it (the same bytes a "
+                                   "run's cut there starts from), with a note on how to program "
+                                   "it.")
+    common(e)
+    e.add_argument("--cut", type=int, required=True, metavar="N", help="the operation, as a run reports it")
+    e.add_argument("--torn", choices=torns.KINDS, metavar="KIND",
+                   help="leave operation N half done, in this shape: %s" % ", ".join(torns.KINDS))
+    e.add_argument("-o", "--out", default="state.bin", help="the flash image (default state.bin); "
+                   "the other files go next to it")
+    e.set_defaults(func=cmd_export)
 
     args = p.parse_args(argv)
     return args.func(args)

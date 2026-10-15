@@ -217,3 +217,22 @@ def test_the_page_has_the_map_with_its_disclaimer_and_links():
     assert "Where this evidence fits" in text and "A map, not a verdict" in text
     assert "7.2.2.1.1" in text and "Annex I, Part I, (2)(h)" in text
     assert "href='https://unece.org/" in page and "href='https://eur-lex.europa.eu/" in page
+
+
+def test_each_failure_says_how_to_put_its_state_on_a_board():
+    report = make_report(FakeDevice(no_recovery=True))
+    failed = [c for c in report["cuts"] if not c["passed"] and not c["skipped"]]
+    assert failed
+    for c in failed:
+        n = c["op_index"]
+        assert reports.export_command(report, c) == (
+            "brickproof export adapters/fake/adapter.yaml --cut %d -o op-%d.bin" % (n, n))
+    assert reports.export_command(report, failed[0]) in reports.html_page(report)
+    assert "on a board: " + reports.export_command(report, failed[0]) in reports.junit(report)
+
+
+def test_cuts_in_a_row_have_no_single_state_to_export():
+    report = bad()
+    deep = [c for c in report["cuts"] if c["depth"] > 1 and not c["passed"]]
+    assert deep
+    assert all(reports.export_command(report, c) is None for c in deep)

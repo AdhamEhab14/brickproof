@@ -432,6 +432,7 @@ class Outcome:
     inputs: list = field(default_factory=list)   # the firmware files tested, with their hashes
     jobs: int = 1               # how many emulators shared the work
     shard: dict = None          # set when this run made only its share of the cuts
+    pre: bytes = None           # the whole flash image with the update staged, before it ran
 
     @property
     def passed(self):
@@ -476,7 +477,7 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     # anything, so that is checked first and a failure ends the run.
     golden = Golden(adapter, pre, oracle)
     baseline = run_cut(session, driver, adapter, None, golden)
-    out = Outcome(results=[baseline], trace=golden.ops, jobs=len(pool))
+    out = Outcome(results=[baseline], trace=golden.ops, jobs=len(pool), pre=bytes(pre))
     if on_result:
         on_result(baseline)
     if not baseline.passed:
