@@ -3,6 +3,7 @@
 #         new user runs it: the correct one must survive a cut at every flash
 #         state and every torn state, and each bug build must be caught (exit code 1,
 #         not 0 or 3).
+# demo-m33mu - the same on the STM32H563, emulated by m33mu, through the action.
 # action, docker, package - the three ways BrickProof is handed to someone else, each
 #         built and used for real.
 # model-rules - the flash models' chip rules, checked one by one in Renode.
@@ -410,6 +411,65 @@ jobs:
           name: storage-${{ matrix.store }}
           path: brickproof-out/
 
+  # the demo on the STM32H563. m33mu emulates it; the action builds m33mu at the
+  # commit it pins (once, then from its cache) and runs the adapter
+  demo-m33mu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - adapter: h563             # the correct build: every clean cut, every torn state,
+            expect: 0                 # and a second cut during recovery
+            args: -j 3 --torn --depth 2
+          - adapter: h563-hold_pg
+            expect: 0
+            args: -j 3 --torn
+          - adapter: h563-bug-consume_first
+            expect: 1
+          - adapter: h563-bug-trust_header
+            expect: 1
+          - adapter: h563-bug-naive_floor
+            expect: 1
+          - adapter: h563-bug-pop_after_switch   # the core locks up on every boot
+            expect: 1
+          - adapter: h563-bug-no_erase           # a 128-bit word programmed twice: refused
+            expect: 1
+          - adapter: h563-bug-no_unlock
+            expect: 1
+          - adapter: h563-bug-early_unpg
+            expect: 1
+          - adapter: h563-bug-protected_slot     # WRPSG protects the app slot by mistake
+            expect: 1
+          - adapter: h563-bug-resume_copy        # only torn states catch it (torn: true in it)
+            expect: 1
+          - adapter: h563-bug-retry_limit        # only two cuts in a row catch it (depth 2 in it)
+            expect: 1
+    name: demo-m33mu (${{ matrix.adapter }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cut power during the demo update
+        id: bp
+        uses: ./
+        continue-on-error: true
+        with:
+          adapter: examples/demo_ab_bootloader/${{ matrix.adapter }}.yaml
+          args: ${{ matrix.expect == 1 && '--fail-fast' || matrix.args }}
+          artifact-name: demo-m33mu-${{ matrix.adapter }}
+
+      - name: Check the exit code
+        run: |
+          echo "exit code ${{ steps.bp.outputs.exit-code }}, expected ${{ matrix.expect }}"
+          [ "${{ steps.bp.outputs.exit-code }}" = "${{ matrix.expect }}" ]
+
+      - name: The m33mu backend's tests, against this m33mu
+        if: matrix.adapter == 'h563'
+        run: |
+          pip install pytest
+          M33MU_PATH="$HOME/m33mu-bin/m33mu" python -m pytest -v tests/test_m33mu.py
+
   # the GitHub Action, used the way another repository would use it
   action:
     runs-on: ubuntu-latest
@@ -445,6 +505,9 @@ jobs:
           set +e
           docker run --rm brickproof demo no_erase --fail-fast
           [ $? -eq 1 ]
+
+      - name: The demo on the STM32H563, on the image's m33mu
+        run: docker run --rm brickproof demo h563 --plan phases --per-phase 1 -j 3
 
   # the package builds, installs clean, and brings the demo
   package:
