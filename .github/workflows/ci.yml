@@ -5,6 +5,7 @@
 #         not 0 or 3).
 # action, docker, package - the three ways BrickProof is handed to someone else, each
 #         built and used for real.
+# mcuboot - MCUboot from its prebuilt files on the Black Pill and the nRF52840 DK.
 # e2e   - builds the Three-Tier bootloader (the first real target), then cuts power
 #         during its FBL self-update in Renode and checks it recovers each time.
 name: CI
@@ -136,6 +137,30 @@ jobs:
             depth: 2
           - adapter: f411-ext-bug-consume_first
             expect: 1
+          # and on an nRF52840: 4 KB pages, no flash keys, two writes to a word between erases
+          - adapter: nrf52
+            expect: 0
+            torn: true
+            depth: 2
+          - adapter: nrf52-bug-consume_first
+            expect: 1
+          - adapter: nrf52-bug-trust_header
+            expect: 1
+          - adapter: nrf52-bug-naive_floor
+            expect: 1
+          - adapter: nrf52-bug-pop_after_switch
+            expect: 1
+          - adapter: nrf52-bug-no_erase
+            expect: 1
+          - adapter: nrf52-bug-retry_limit
+            expect: 1
+          - adapter: nrf52-bug-early_unpg   # stores made with CONFIG back to read-only
+            expect: 1
+          - adapter: nrf52-bug-nwrite       # a third write to a word without an erase
+            expect: 1
+          - adapter: nrf52-hold_pg
+            expect: 0
+            torn: true
     name: demo (${{ matrix.adapter }})
     env:
       RENODE_VERSION: "1.17.0"
@@ -185,6 +210,66 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: demo-${{ matrix.adapter }}
+          path: brickproof-out/
+
+  # MCUboot from its committed prebuilt files, on both boards. A full campaign takes over an
+  # hour per board on a runner (392,000 byte programs on the F411), so CI cuts every edge
+  # between phases, one sample inside each long phase, and powers three in four of those
+  # cuts up from the computed state; the real ones check that state byte for byte. Every
+  # F411 cut redoes the rest of a 128 KB byte-by-byte swap, so its 42 cuts are split over
+  # four runners; the four shards together are the whole plan.
+  mcuboot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {board: f411, shard: 1/4}
+          - {board: f411, shard: 2/4}
+          - {board: f411, shard: 3/4}
+          - {board: f411, shard: 4/4}
+          - {board: nrf52840, shard: 1/1}
+    name: mcuboot (${{ matrix.board }} ${{ matrix.shard }})
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Cut power during MCUboot's swap
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          out=brickproof-out/mcuboot-${{ matrix.board }}-$(echo "${{ matrix.shard }}" | tr / -)
+          brickproof run adapters/mcuboot/${{ matrix.board }}.yaml --per-phase 1 --real-every 4 -j 3 \
+            --shard "${{ matrix.shard }}" --json "$out.json" --junit "$out.xml" --html "$out.html"
+
+      - name: Upload results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcuboot-${{ matrix.board }}-${{ strategy.job-index }}
           path: brickproof-out/
 
   # the GitHub Action, used the way another repository would use it

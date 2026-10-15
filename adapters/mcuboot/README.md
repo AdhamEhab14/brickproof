@@ -13,7 +13,15 @@ the upgrade is permanent: after any cut, v2 must be installed in slot 0 and runn
 
 ## Running it
 
-You need a Zephyr workspace with MCUboot (`west init`, `west update`, with `hal_stm32` and
+The built firmware for both boards is committed in `prebuilt/`, so this needs nothing but
+BrickProof and Renode:
+
+```bash
+brickproof run adapters/mcuboot/f411.yaml -j 3 --html mcuboot-f411.html
+brickproof run adapters/mcuboot/nrf52840.yaml -j 3
+```
+
+To build it yourself (another MCUboot or Zephyr, another configuration), you need a Zephyr workspace with MCUboot (`west init`, `west update`, with `hal_stm32` and
 `hal_nordic`), and either the Zephyr SDK or `arm-none-eabi-gcc`
 (`ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb`).
 
@@ -34,6 +42,7 @@ partition. It does not change how an upgrade is done.
 | `f411.yaml`, `nrf52840.yaml` | the chip, the approved images and the cut plan |
 | `build.py` | builds MCUboot and the app for one board, signs v1 and v2 |
 | `app/` | the app, with an overlay that links it for slot 0 |
+| `prebuilt/f411/`, `prebuilt/nrf52840/` | `build.py`'s output for each board, which the adapters use unless `--target` says otherwise |
 
 ## What it found
 

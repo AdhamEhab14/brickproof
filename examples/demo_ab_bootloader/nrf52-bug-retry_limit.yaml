@@ -10,3 +10,5 @@ firmware:
     addr: 0x10000
   - file: prebuilt/meta_floor1.bin
     addr: 0x4000
+scenario:
+  depth: 2

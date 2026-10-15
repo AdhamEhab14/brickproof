@@ -28,6 +28,10 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**MCUboot and the nRF52840 in CI.** `adapters/mcuboot/prebuilt` holds MCUboot and the test
+app built for both boards, so the adapters run with no Zephyr workspace. CI runs both
+(`mcuboot (f411)`, `mcuboot (nrf52840)`) and the nRF52840 demo builds.
+
 **A failing state on a real board.** `brickproof export adapter.yaml --cut N [--torn KIND]`
 writes the flash a cut leaves (the same bytes the run started the emulator from), the
 option bytes and an external chip in files of their own, and the programming commands. Each

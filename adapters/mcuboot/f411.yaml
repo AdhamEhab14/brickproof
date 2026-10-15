@@ -8,7 +8,7 @@
 # then:  brickproof run adapters/mcuboot/f411.yaml --target <output folder>
 
 name: mcuboot_f411
-target: ../../../mcuboot-out          # default: next to this repo
+target: prebuilt/f411                 # built by build.py (see prebuilt/README.md); --target for your own
 
 platform:
   base: stm32f411
