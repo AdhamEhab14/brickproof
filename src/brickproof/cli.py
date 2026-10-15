@@ -4,7 +4,7 @@ brickproof export adapter.yaml   write the flash a cut leaves, to put on a real 
 brickproof adapter-from-zephyr   write an MCUboot adapter from a Zephyr build
 
 Exit codes: 0 every cut recovered, 1 at least one cut failed,
-2 the adapter is wrong, 3 BrickProof itself failed (Renode missing, crashed...).
+2 the adapter is wrong, 3 BrickProof itself failed (emulator missing, crashed...).
 """
 import argparse
 import json
@@ -328,8 +328,9 @@ def main(argv=None):
         if adapter:
             c.add_argument("adapter", help="adapter YAML file")
         c.add_argument("--target", help="firmware project folder (overrides the adapter's 'target')")
-        c.add_argument("--keep", action="store_true", help="keep the Renode work folder")
-        c.add_argument("--renode-log", help="write Renode's own output to this file")
+        c.add_argument("--keep", action="store_true", help="keep the emulator's work folder")
+        c.add_argument("--renode-log", "--emulator-log", dest="renode_log",
+                       help="write the emulator's own output (Renode or m33mu) to this file")
         c.add_argument("-j", "--jobs", metavar="N",
                        help="emulators to run side by side: a number, or 'auto' for one per "
                             "core but one. The results do not depend on it (default 1)")

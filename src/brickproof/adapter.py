@@ -45,7 +45,7 @@ class Adapter:
     folder: str
     target: str
     platform: str
-    platform_extra: str
+    platform_extra: str           # Renode only: more platform lines
     flash: FlashGeometry
     ram_base: int
     ram_size: int
@@ -73,6 +73,8 @@ class Adapter:
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
     cuts: list = field(default_factory=list)
+    emulator: str = "renode"      # renode, or m33mu (see CHIPS)
+    optbytes: dict = field(default_factory=dict)   # m33mu: option bytes as shipped, by name
 
     def load_driver(self, session):
         """Import the driver module and return its driver object for this session."""
@@ -229,7 +231,28 @@ CHIPS = {
                      option_bytes=nrf52_uicr, wrp_unit=None, write_unit=4,
                      endurance=10000, mips=64, mass_erase_ob=True),
 }
-PLATFORMS = tuple(CHIPS)
+
+# Chips emulated by m33mu instead of Renode. m33mu models the whole chip, so its
+# memory sizes are fixed and the adapter must name them as they are; the flash
+# controller, its rules and its timing are m33mu's.
+#   cpu          m33mu's name for it (--cpu)
+#   flash        (size, erase unit, the aliases flash is seen at)
+#   ram          (size, the aliases RAM is seen at)
+#   uarts        UART names an adapter can give, and their base addresses
+#   wrpsg        how write protection is set: option byte per bank, flash per bit
+M33MU_CHIPS = {
+    # RM0481 / DS14258: 2 MB in two banks of 128 sectors of 8 KB, 640 KB of SRAM.
+    # A program writes 128 bits; 10 kcycles endurance.
+    "stm32h563": dict(cpu="stm32h563", flash=(0x200000, 0x2000, (0x08000000, 0x0C000000)),
+                      ram=(0xA0000, (0x20000000, 0x30000000)), write_unit=16, endurance=10000,
+                      uarts={"usart1": 0x40013800, "usart2": 0x40004400, "usart3": 0x40004800,
+                             "uart4": 0x40004C00, "uart5": 0x40005000, "usart6": 0x40006400,
+                             "uart7": 0x40007800, "uart8": 0x40007C00, "uart9": 0x40008000,
+                             "usart10": 0x40006800, "usart11": 0x40006C00, "uart12": 0x40008400,
+                             "lpuart1": 0x44002400},
+                      wrpsg=(("WRPSG1", "WRPSG2"), 0x8000)),
+}
+PLATFORMS = tuple(CHIPS) + tuple(M33MU_CHIPS)
 
 # flash.timing: how long erases and programs take in the emulator
 TIMINGS = {"none": 0, "typical": 1, "max": 2}
@@ -501,7 +524,12 @@ def load(path, target=None):
     if base not in PLATFORMS:
         raise AdapterError("platform.base: unknown '%s' (have: %s)" % (base, ", ".join(PLATFORMS)))
     extra = plat.get("extra")
+    if base in M33MU_CHIPS:
+        return _load_m33mu(d, path, folder, name, target, base)
 
+    if "option_bytes" in d:
+        raise AdapterError("option_bytes: only for chips m33mu emulates; on %s use "
+                           "flash.write_protected, read_protected and hardware_watchdog" % base)
     fl = _need(d, "flash", path)
     chip = CHIPS[base]
     flash = FlashGeometry(base=_need(fl, "base", "flash"), size=_need(fl, "size", "flash"),
@@ -659,6 +687,134 @@ def load(path, target=None):
         content_faults=_parse_content(scenario, target, oracle),
         link_cuts=_parse_link(scenario),
         bit_errors=_parse_bit_errors(scenario, oracle),
+        plan=_parse_plan(scenario),
+        torn=_parse_torn(scenario),
+        torn_seed=int(scenario.get("torn_seed", 0)),
+        depth=_parse_depth(scenario),
+        driver_file=os.path.join(folder, drv["file"]) if drv.get("file") else None,
+        driver_builtin=drv.get("builtin"),
+        driver_options=drv.get("options", {}) or {},
+        cuts=cuts,
+    )
+
+
+# Keys that only mean something to Renode. An m33mu adapter that gives one would be
+# describing a device it does not get, so it is refused rather than ignored.
+RENODE_ONLY = {
+    ("platform", "extra"): "more Renode platform lines",
+    ("reset",): "Renode monitor commands",
+    ("pins",): "pin levels set through Renode",
+    ("external_flash",): "the Renode SPI NOR model",
+    ("clock",): "the board clock fed to Renode's clock model",
+    ("cpu", "mips"): "Renode's emulated CPU speed",
+}
+
+
+def _firmware(d, path, target):
+    firmware = []
+    for i, fw in enumerate(_need(d, "firmware", path)):
+        file = _need(fw, "file", "firmware[%d]" % i)
+        addr = fw.get("addr")
+        if not file.lower().endswith(".elf") and addr is None:
+            raise AdapterError("firmware[%d]: a raw binary needs 'addr'" % i)
+        firmware.append((os.path.normpath(os.path.join(target, file)), addr))
+    return firmware
+
+
+def _wrpsg(flash, protected, names, group):
+    """flash.write_protected as the WRPSG option bytes: one per bank, a cleared bit
+    protecting one group of sectors (RM0481 7.11.35)."""
+    bank = flash.size // len(names)
+    values = [0xFFFFFFFF] * len(names)
+    for where, start, size in _protected_ranges(flash, protected):
+        off = start - flash.base
+        if off % group or size % group:
+            raise AdapterError("%s: the chip protects whole groups of 0x%X bytes; start and "
+                               "size must be multiples of that" % (where, group))
+        for g in range(off // group, (off + size) // group):
+            b, bit = divmod(g * group, bank)
+            values[b] &= ~(1 << (bit // group))
+    return {n: v for n, v in zip(names, values, strict=True) if v != 0xFFFFFFFF}
+
+
+def _load_m33mu(d, path, folder, name, target, base):
+    chip = M33MU_CHIPS[base]
+    for keys, what in RENODE_ONLY.items():
+        node = d
+        for k in keys:
+            node = node.get(k) if isinstance(node, dict) else None
+        if node is not None:
+            raise AdapterError("%s: %s, which %s does not use (m33mu emulates this chip)"
+                               % (".".join(keys), what, base))
+
+    fl = _need(d, "flash", path)
+    size, unit, aliases = chip["flash"]
+    fbase = _need(fl, "base", "flash")
+    if fbase not in aliases:
+        raise AdapterError("flash.base: %s flash is at %s"
+                           % (base, " or ".join("0x%08X" % a for a in aliases)))
+    if _need(fl, "size", "flash") != size:
+        raise AdapterError("flash.size: %s has 0x%X bytes of flash" % (base, size))
+    if fl.get("page", unit) != unit or "sectors" in fl:
+        raise AdapterError("flash: %s erases sectors of 0x%X bytes; give page: 0x%X or leave it out"
+                           % (base, unit, unit))
+    flash = FlashGeometry(base=fbase, size=size, page=unit,
+                          write_unit=fl.get("write_unit", chip["write_unit"]),
+                          controller=0, model="", endurance=chip["endurance"])
+    timing = fl.get("timing", "typical")
+    if timing not in TIMINGS:
+        raise AdapterError("flash.timing: unknown '%s' (have: %s)" % (timing, ", ".join(TIMINGS)))
+    flash.timing = TIMINGS[timing]
+    if fl.get("read_protected") or fl.get("hardware_watchdog"):
+        raise AdapterError("flash: read_protected and hardware_watchdog are not modelled for %s" % base)
+
+    optbytes = {}
+    for opt, value in (d.get("option_bytes") or {}).items():
+        if not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFF:
+            raise AdapterError("option_bytes.%s: a 32-bit number" % opt)
+        optbytes[str(opt)] = value
+    names, group = chip["wrpsg"]
+    for opt, value in _wrpsg(flash, fl.get("write_protected") or [], names, group).items():
+        if opt in optbytes:
+            raise AdapterError("option_bytes.%s and flash.write_protected both set it; use one" % opt)
+        optbytes[opt] = value
+
+    ram = _need(d, "ram", path)
+    ram_size, ram_aliases = chip["ram"]
+    if _need(ram, "size", "ram") != ram_size:
+        raise AdapterError("ram.size: %s has 0x%X bytes of RAM" % (base, ram_size))
+    ram_base = ram.get("base", ram_aliases[0])
+    if ram_base not in ram_aliases:
+        raise AdapterError("ram.base: %s RAM is at %s"
+                           % (base, " or ".join("0x%08X" % a for a in ram_aliases)))
+
+    uart = d.get("uart", "usart2")
+    if isinstance(uart, str):
+        if uart.lower() not in chip["uarts"]:
+            raise AdapterError("uart: %s has %s, or give a base address"
+                               % (base, ", ".join(sorted(chip["uarts"]))))
+        uart = chip["uarts"][uart.lower()]
+
+    cpu = d.get("cpu", {})
+    drv = _need(d, "driver", path)
+    scenario = d.get("scenario") or {}
+    cuts = [cut for i, c in enumerate(scenario.get("cuts") or []) for cut in _parse_cuts(i, c)]
+    if bool(drv.get("file")) == bool(drv.get("builtin")):
+        raise AdapterError("driver: give exactly one of file or builtin")
+
+    return Adapter(
+        path=path, name=name, folder=folder, target=target,
+        platform=base, platform_extra=None, emulator="m33mu", optbytes=optbytes,
+        flash=flash, ram_base=ram_base, ram_size=ram_size, firmware=_firmware(d, path, target),
+        uart=uart,
+        vector_table=cpu.get("vector_table", flash.base),
+        mips=0,
+        reset_cmds=[],
+        boot_settle=float(d.get("boot_settle", 1.5)),
+        cut_limit=float(scenario.get("cut_limit", 30.0)),
+        update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),
+        check_states=bool(scenario.get("check_states", True)),
+        oracle=_parse_oracle(d, target),
         plan=_parse_plan(scenario),
         torn=_parse_torn(scenario),
         torn_seed=int(scenario.get("torn_seed", 0)),

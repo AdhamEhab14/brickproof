@@ -1,5 +1,5 @@
-"""Build the folder a Renode run works in: models with the target's geometry, the
-platform file, and copies of the firmware under paths without spaces."""
+"""Build the folder a run works in: copies of the firmware under paths without spaces
+and, for Renode, models with the target's geometry and the platform file."""
 import os
 import re
 import shutil
@@ -137,6 +137,8 @@ def platform_text(platform, models_dir, extra_file=None, adapter_dir=None, sizes
 
 def prepare(workdir, adapter):
     """Fill `workdir` for `adapter`; return the firmware list as session-relative paths."""
+    if adapter.emulator == "m33mu":
+        return copy_firmware(workdir, adapter)      # m33mu brings its own chip
     models = os.path.join(workdir, "models")
     os.makedirs(models, exist_ok=True)
     for name in os.listdir(MODELS):
@@ -205,7 +207,11 @@ def prepare(workdir, adapter):
                  '    filename: "%s/%s.py"\n' % (name, base, size, _slash(models), name))
     with open(os.path.join(workdir, "platform.repl"), "w", newline="\n") as f:
         f.write(repl)
+    return copy_firmware(workdir, adapter)
 
+
+def copy_firmware(workdir, adapter):
+    """Copy the firmware into `workdir/fw`; return [(relative path, address)]."""
     fw_dir = os.path.join(workdir, "fw")
     os.makedirs(fw_dir, exist_ok=True)
     firmware = []

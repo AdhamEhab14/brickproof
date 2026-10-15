@@ -20,6 +20,7 @@ from brickproof import trace as traces
 from brickproof.adapter import Cut
 from brickproof.engine import workdir as wd
 from brickproof.pool import Pool
+from brickproof.engine.m33mu import M33muSession, find_m33mu
 from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
 
 KIND_NAMES = {0: "none", 1: "erase", 2: "program"}
@@ -107,7 +108,10 @@ def _fault_message(session):
         return ("flash rule broken: the chip refused %d program(s), first at 0x%08X, and kept "
                 "the old value. On an STM32F1 that is a cell that was not erased (PGERR), on an "
                 "STM32F4 a store that is not as wide as PSIZE says (PGPERR) or does not fit in one "
-                "16-byte flash row (PGAERR), on an nRF52 a store that is not a whole aligned word "
+                "16-byte flash row (PGAERR), on an STM32L4 a double word that is not erased "
+                "(PROGERR), not two whole words in order (SIZERR, PGAERR) or programmed while an "
+                "earlier error was still flagged (PGSERR), on an STM32H5 a 128-bit word that was "
+                "already programmed (PGSERR), on an nRF52 a store that is not a whole aligned word "
                 "or a third write to a word without an erase (nWRITE)" % v["refused"])
     if v.get("pcrop"):
         if session.flash.model == "nrf52_flash.py":
@@ -776,6 +780,21 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     return out
 
 
+def find_emulator(adapter):
+    """The executable of the emulator this adapter's chip runs on."""
+    if adapter.emulator == "m33mu":
+        exe = find_m33mu()
+        if not exe:
+            raise RuntimeError("m33mu not found: set M33MU_PATH or put m33mu on PATH "
+                               "(%s is emulated by m33mu, https://github.com/danielinux/m33mu)"
+                               % adapter.platform)
+        return exe
+    exe = find_renode()
+    if not exe:
+        raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
+    return exe
+
+
 def _bring_up(adapter, exe, log, shared=None):
     """One emulator, booted, with the update staged. Returns (session, driver, work folder).
     `shared` is what the first driver exported, so that every worker starts an update
@@ -783,11 +802,16 @@ def _bring_up(adapter, exe, log, shared=None):
     work = tempfile.mkdtemp(prefix="brickproof-")
     try:
         firmware = wd.prepare(work, adapter)
-        session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
-                                vector_table=adapter.vector_table, mips=adapter.mips,
-                                reset_cmds=adapter.reset_cmds, log=log,
-                                ram=wd.MEMORIES[adapter.platform]["ram"][0],
-                                memory_sizes=wd.memory_sizes(adapter))
+        if adapter.emulator == "m33mu":
+            session = M33muSession(exe, work, adapter.flash, firmware, cpu=adapter.platform,
+                                   uart=adapter.uart, optbytes=adapter.optbytes,
+                                   vector_table=adapter.vector_table, log=log)
+        else:
+            session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
+                                    vector_table=adapter.vector_table, mips=adapter.mips,
+                                    reset_cmds=adapter.reset_cmds, log=log,
+                                    ram=wd.MEMORIES[adapter.platform]["ram"][0],
+                                    memory_sizes=wd.memory_sizes(adapter))
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
@@ -807,11 +831,9 @@ def _bring_up(adapter, exe, log, shared=None):
 
 def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, baseline_only=False,
         on_plan=None, jobs=1):
-    """Start Renode (`jobs` of them), stage the update and run the campaign (up to the
-    first failure with fail_fast). Returns an Outcome."""
-    exe = find_renode()
-    if not exe:
-        raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
+    """Start the emulator (`jobs` of them), stage the update and run the campaign (up
+    to the first failure with fail_fast). Returns an Outcome."""
+    exe = find_emulator(adapter)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     inputs = []
     for path, _addr in adapter.firmware:
