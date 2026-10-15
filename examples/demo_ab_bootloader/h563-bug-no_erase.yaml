@@ -1,0 +1,12 @@
+# The H563 demo copying the new image over the old one without erasing first
+# (see BUG_NO_ERASE in bootloader/main.c). The H563 programs a 128-bit word with its
+# ECC, and a word already programmed cannot be programmed again: the chip refuses it.
+# Plain emulator memory would just store the new value. BrickProof should fail the baseline.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_bug_no_erase
+firmware:
+  - file: prebuilt/h563_bootloader_bug_no_erase.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000

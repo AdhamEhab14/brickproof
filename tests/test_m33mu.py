@@ -1,10 +1,13 @@
-"""The m33mu backend: adapters for the chips it emulates, its trace and addresses."""
+"""The m33mu backend: adapters for the chips it emulates, its trace and addresses, and
+(when an m33mu with the harness commands is installed) the demo run end to end."""
 import os
+import subprocess
 import textwrap
 
 import pytest
 
 from brickproof import adapter as adapters
+from brickproof import runner
 from brickproof.engine import m33mu as m33mu_engine
 from brickproof.engine.session import CUT_ERASE, CUT_PROGRAM, FlashGeometry
 
@@ -187,3 +190,39 @@ def test_a_cut_on_erase_is_armed_at_m33mus_address(tmp_path):
     s = session_with(tmp_path)
     s.set_cut_on_erase(0x08020000)
     assert s.gdb.sent == ["flash cut erase 0xC020000"]
+
+
+# ---- end to end, with a real m33mu ----------------------------------------------
+
+def _m33mu():
+    exe = m33mu_engine.find_m33mu()
+    if not exe:
+        return None
+    out = subprocess.run([exe, "--no-realtime"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, timeout=30).stdout
+    return None if "unknown option" in out else exe
+
+
+needs_m33mu = pytest.mark.skipif(_m33mu() is None, reason="no m33mu with the harness commands")
+
+
+@needs_m33mu
+def test_the_h563_demo_recovers_from_cuts():
+    ad = adapters.load(os.path.join(DEMO, "h563.yaml"))
+    ad.plan = None
+    ad.cuts = [adapters.Cut(name="op-%d" % n, at_op=n) for n in (0, 5, 40, 92, 96)]
+    out = runner.run(ad)
+    assert out.passed, [(r.cut, r.message) for r in out.results if not r.passed]
+    assert len(out.trace) == 98
+    cut = out.results[2]
+    assert (cut.fired, cut.kind, cut.addr, cut.op_index) == (True, "erase", 0x0C010000, 5)
+    assert not any(r.rewound for r in out.results)     # m33mu cuts before the operation
+
+
+@needs_m33mu
+def test_the_h563_demo_catches_a_bug():
+    ad = adapters.load(os.path.join(DEMO, "h563-bug-consume_first.yaml"))
+    ad.plan = None
+    ad.cuts = [adapters.Cut(name="op-6", at_op=6)]
+    out = runner.run(ad)
+    assert out.results[0].passed and not out.results[1].passed

@@ -1,5 +1,6 @@
-/* USART2 on PA2 (the Nucleo's ST-LINK virtual COM port), 115200 8N1, polled.
- * Nothing touches the clocks, so the bus runs at the chip's reset HSI. On the
+/* The console UART, 115200 8N1, polled: USART2 on PA2 on the F1, the F4 and the L4 (the
+ * Nucleo's ST-LINK virtual COM port), USART3 on PD8 on the H563 (the Nucleo-H563ZI's).
+ * Nothing touches the clocks, so the bus runs at the chip's reset clock. On the
  * nRF52840 it is UARTE0, whose details are in chip_nrf52.h. */
 #include "demo.h"
 

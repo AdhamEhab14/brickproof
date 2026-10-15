@@ -21,6 +21,12 @@
 #define GPIOA_MODER    REG(0x48000000u)
 #define GPIOA_AFRL     REG(0x48000020u)
 #define UART_BRR_115200 35u          /* 4 MHz / 115200 */
+/* USART2 has the newer layout here: ISR and TDR, UE in bit 0 */
+#define UART_SR        REG(0x4000441Cu)
+#define UART_DR        REG(0x40004428u)
+#define UART_BRR       REG(0x4000440Cu)
+#define UART_CR1       REG(0x40004400u)
+#define UART_CR1_ON    ((1u << 0) | (1u << 3))   /* UE, TE */
 
 static inline void uart_pins(void)
 {

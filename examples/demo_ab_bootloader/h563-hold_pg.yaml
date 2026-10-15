@@ -1,0 +1,11 @@
+# The correct H563 demo written the other common way: PG is set once and left set over a
+# whole run of cells (see HOLD_PG in bootloader/main.c). A power cut can fall between
+# any two of those programs, and every one of them must recover.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_hold_pg
+firmware:
+  - file: prebuilt/h563_bootloader_hold_pg.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000
