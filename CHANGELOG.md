@@ -22,6 +22,10 @@ whole aligned 32-bit words, at most two writes to a word between erases (a third
 narrower store, fails the run), and the CPU stalls for the datasheet's times. BrickProof
 writes out Renode's nRF52840 platform itself, so a run does not download anything.
 
+**The demo on the nRF52840.** `brickproof demo nrf52` (98 cuts, every flash state) and nine
+more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
+new one, `nwrite` (a third write to a word without an erase).
+
 **Torn erases measured on a real chip.** On an STM32F103 an erase stopped by a reset leaves
 single bits still 0, scattered over the page and the same cells each time: 4.5% of the old
 0 bits at once, 0.35% a little later, none after 50 us. `erase-early` and `erase-late` are

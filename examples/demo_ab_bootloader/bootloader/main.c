@@ -51,6 +51,11 @@
  *                         its reset timeout of half a second. On a device with a
  *                         hardware watchdog, a sector erase that takes a second gets
  *                         the chip reset in the middle of it, on every attempt.
+ *   BUG_NWRITE            (nRF52840 only) record the install's progress by clearing one
+ *                         more bit of the same word after each step. Fine on an STM32F4,
+ *                         which lets a word be programmed again and again. The nRF52
+ *                         allows two writes to a word between erases, and the third
+ *                         one is outside what the chip guarantees.
  *
  * EXT_FLASH (STM32F411 only) is not a bug either: the new image waits in an external SPI
  * NOR flash chip, and the rollback floor is kept there too.
@@ -58,9 +63,9 @@
  * HOLD_PG is not a bug: it is the other common way to write flash, with PG left set
  * over a whole run of cells. A power cut can fall between any two of them.
  *
- * The same source builds for an STM32F103 and, with -DSTM32F4, for an STM32F411. What
- * differs between them (the flash map, how to erase and program, the option bytes)
- * is in common/chip_*.h.
+ * The same source builds for an STM32F103, with -DSTM32F4 for an STM32F411 and with
+ * -DNRF52 for an nRF52840. What differs between them (the flash map, how to erase and
+ * program, the option bytes) is in common/chip_*.h.
  */
 #include "demo.h"
 
@@ -205,6 +210,16 @@ static void meta_write(uint32_t floor)
 
 /* ---- install -------------------------------------------------------------- */
 
+#ifdef BUG_NWRITE
+/* One bit per step, cleared in the staged image's unused header area. */
+static void progress(uint32_t step)
+{
+    flash_word(SLOT_B + 0x14, ~((2u << step) - 1u));
+}
+#else
+#define progress(step) ((void)0)
+#endif
+
 /* One program per cell: a halfword on the F1, a word on the F4. */
 static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
 {
@@ -272,6 +287,7 @@ static void install(void)
 #ifndef BUG_NAIVE_FLOOR
     meta_write(version);
 #endif
+    progress(0);
 #ifdef BUG_CONSUME_FIRST
     img_hdr_t h = *hdr(SLOT_B);           /* keep a RAM copy, Slot B is about to lose it */
     consume_staging();
@@ -282,10 +298,12 @@ static void install(void)
 #endif
     flash_erase(SLOT_A, IMG_OFFSET + body);
 #endif
+    progress(1);
 #ifdef BUG_TRUST_HEADER
     copy_cells(SLOT_A, SLOT_B, sizeof(img_hdr_t));
 #endif
     copy_cells(SLOT_A + IMG_OFFSET, SLOT_B + IMG_OFFSET, body);
+    progress(2);
 #if defined(BUG_CONSUME_FIRST)
     copy_cells(SLOT_A, (uint32_t)&h, sizeof(img_hdr_t));
 #elif !defined(BUG_TRUST_HEADER)

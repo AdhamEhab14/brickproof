@@ -1,0 +1,60 @@
+# The same demo on an nRF52840: 4 KB pages at address 0, aligned 32-bit word programs,
+# v1 -> v2. Nothing like an STM32 to drive: no keys, one CONFIG register that says
+# whether a store is a program or an erase is allowed, and a word may be written at
+# most twice between two erases. Runs from the committed prebuilt/ files:
+#
+#   brickproof demo nrf52
+#
+# The nrf52-bug-*.yaml files next to this one swap in a bootloader with a known bug.
+
+name: demo_ab_bootloader_nrf52
+target: .
+
+platform:
+  base: nrf52840
+
+flash:
+  base: 0x0
+  size: 0x100000         # 1 MB
+  page: 0x1000           # 4 KB
+  write_unit: 4
+
+ram:
+  size: 0x40000          # 256 KB. Not optional: extra emulated RAM hides stack faults
+
+# the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
+firmware:
+  - file: prebuilt/nrf52_bootloader.elf
+  - file: prebuilt/nrf52_app_v1.img
+    addr: 0x10000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x4000
+
+uart: uart0
+boot_settle: 0.3
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x30000
+    image: prebuilt/nrf52_app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    boot_timeout: 5
+    rollback:
+      image: prebuilt/nrf52_app_v1.img
+      forbidden: "APP v1"
+
+# Judged from outside the firmware: the bytes in Slot A must be exactly one of
+# these images, and the core must be running inside it, not in a fault handler.
+oracle:
+  images:
+    v1: {file: prebuilt/nrf52_app_v1.img, at: 0x10000}
+    v2: {file: prebuilt/nrf52_app_v2.img, at: 0x10000}
+  accept: [v2]                       # a cut must not lose the update: only the new one will do
+
+scenario:
+  name: update-v1-to-v2
+  cut_limit: 3                       # virtual seconds; a page erase takes 85 ms
+  update_time: 2
+  plan: every                        # cut at every distinct flash state the update goes through

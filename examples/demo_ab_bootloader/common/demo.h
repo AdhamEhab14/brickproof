@@ -1,5 +1,5 @@
 /* Shared by the demo bootloader and the demo app: the image header, the chip
- * (flash map, flash primitives, UART pins) and the registers both chips share. */
+ * (flash map, flash primitives, UART pins) and the registers both STM32s share. */
 #ifndef DEMO_H
 #define DEMO_H
 
@@ -9,7 +9,9 @@
 
 static inline void wdg_feed(void);
 
-#ifdef STM32F4
+#if defined(NRF52)
+#include "chip_nrf52.h"
+#elif defined(STM32F4)
 #include "chip_f411.h"
 #else
 #include "chip_f103.h"
@@ -29,14 +31,15 @@ typedef struct {
     uint32_t crc;        /* CRC-32 of those bytes */
 } img_hdr_t;
 
-/* ---- registers both chips have in the same place -------------------------- */
+#ifndef NRF52
+/* ---- registers both STM32s have in the same place ------------------------- */
 #define USART2_SR      REG(0x40004400u)
 #define USART2_DR      REG(0x40004404u)
 #define USART2_BRR     REG(0x40004408u)
 #define USART2_CR1     REG(0x4000440Cu)
 #define SCB_VTOR       REG(0xE000ED08u)
 
-/* ---- independent watchdog (in the same place on both chips) ------------------ */
+/* ---- independent watchdog (in the same place on both STM32s) ------------------ */
 #define IWDG_KR        REG(0x40003000u)
 #define IWDG_PR        REG(0x40003004u)
 #define IWDG_SR        REG(0x4000300Cu)
@@ -58,6 +61,7 @@ static inline void wdg_stretch(void)
         ;
     IWDG_KR = 0xAAAAu;
 }
+#endif
 
 /* ---- uart.c -------------------------------------------------------------- */
 void uart_init(void);

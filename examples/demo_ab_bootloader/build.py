@@ -1,5 +1,5 @@
-"""Build the demo for both chips: the bootloader (correct, and one build per known bug)
-and two app images. The STM32F411 files get an f411_ prefix.
+"""Build the demo for every chip: the bootloader (correct, and one build per known bug)
+and two app images. The STM32F411 files get an f411_ prefix, the nRF52840 ones nrf52_.
 
 Needs arm-none-eabi-gcc on PATH. Output goes to build/. Pass --prebuilt to also
 refresh the committed copies in prebuilt/, which is what users without a
@@ -25,9 +25,19 @@ CFLAGS = ["-mthumb", "-Os", "-g", "-Wall", "-Wextra", "-Werror",
 CHIPS = [
     # an F1 page erase is far shorter than the watchdog's timeout: no bug to show there
     ("", ["-mcpu=cortex-m3"], "", ("bootloader_bug_watchdog", "bootloader_ext",
-                                   "bootloader_ext_bug_consume_first")),
+                                   "bootloader_ext_bug_consume_first", "bootloader_bug_nwrite")),
     # an F4 lets a half-written cell be programmed again, so resuming a copy is fine there
-    ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",)),
+    ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",
+                                                         "bootloader_bug_nwrite")),
+    # the nRF52 has no flash keys to forget, a 4 KB page erase is far shorter than any
+    # watchdog timeout, a half-written word may be written once more, and the UICR (where
+    # it keeps its protection settings) is not modelled yet
+    ("nrf52_", ["-mcpu=cortex-m4", "-DNRF52"], "_nrf52", ("bootloader_bug_resume_copy",
+                                                         "bootloader_bug_no_unlock",
+                                                         "bootloader_bug_self_lock",
+                                                         "bootloader_bug_watchdog",
+                                                         "bootloader_ext",
+                                                         "bootloader_ext_bug_consume_first")),
 ]
 LDFLAGS = ["-Wl,--gc-sections", "-Lcommon", "-lgcc"]
 COMMON = ["common/startup.c", "common/uart.c"]
@@ -45,6 +55,7 @@ BOOTLOADERS = {
     "bootloader_bug_self_lock": ["-DBUG_SELF_LOCK"],
     "bootloader_bug_watchdog": ["-DBUG_WATCHDOG"],
     "bootloader_bug_early_unpg": ["-DBUG_EARLY_UNPG"],
+    "bootloader_bug_nwrite": ["-DBUG_NWRITE"],
     "bootloader_hold_pg": ["-DHOLD_PG"],        # not a bug: PG held over a run of cells
     # not bugs: the staged image and the rollback floor in an external SPI NOR flash chip
     "bootloader_ext": ["-DEXT_FLASH"],

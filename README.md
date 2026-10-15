@@ -92,6 +92,13 @@ sector erase that takes a second gets the chip reset half way through, on every 
 `f411-hold_pg` are the correct build writing flash the other common way, with programming
 mode left on over a whole run of cells.
 
+And for an **nRF52840**, which has no flash keys at all: one register (CONFIG) says whether a
+store is a program, whether an erase is allowed, or neither. `brickproof demo nrf52` and the
+`nrf52-bug-*` builds have the mistakes that apply there (`early_unpg` becomes a store made
+with CONFIG back to read-only). It has one of its own, `nrf52-bug-nwrite`: progress kept by
+clearing one more bit of the same word after each step. An STM32F4 takes that; the nRF52
+promises only two writes to a word between erases.
+
 ## What a run covers
 
 **Clean cuts.** A golden run traces every flash operation of the update. After a power loss

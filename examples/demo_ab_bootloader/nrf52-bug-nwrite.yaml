@@ -1,0 +1,12 @@
+# The nRF52840 demo writing the same word a third time without an erase (see BUG_NWRITE
+# in bootloader/main.c). An STM32F4 would take it. The nRF52 promises two writes per
+# word between erases (nWRITE), and the model refuses the third. BrickProof should fail
+# the baseline.
+extends: nrf52.yaml
+name: demo_ab_bootloader_nrf52_bug_nwrite
+firmware:
+  - file: prebuilt/nrf52_bootloader_bug_nwrite.elf
+  - file: prebuilt/nrf52_app_v1.img
+    addr: 0x10000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x4000
