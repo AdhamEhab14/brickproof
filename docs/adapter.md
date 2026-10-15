@@ -22,7 +22,7 @@ target: ../my-firmware         # folder the file paths below are relative to
 extends: base.yaml             # optional: start from another adapter and change a few keys
 
 platform:
-  base: stm32f103              # stm32f103, stm32f411, stm32l476 or nrf52840
+  base: stm32f103              # stm32f103, stm32f411, stm32l476, nrf52840 (Renode); stm32h563 (m33mu, see below)
   extra: extra.repl            # optional: more Renode platform lines (peripherals your
                                # firmware needs); @ADAPTER@ is this file's folder
 
@@ -146,6 +146,43 @@ The run is only worth something if the emulated chip is the chip you ship.
 - `flash.timing`: `typical` by default. Use `max` when the question is whether a watchdog or
   a timeout survives the slowest erase the datasheet allows. `none` makes operations take no
   time, which is faster and less true.
+
+## A chip m33mu emulates
+
+`platform.base: stm32h563` runs on [m33mu](https://github.com/danielinux/m33mu) instead of
+Renode (commit 23960ed or later, on PATH or in `M33MU_PATH`). m33mu models the whole chip, so
+the adapter describes it as it is and BrickProof checks that it does:
+
+```yaml
+platform:
+  base: stm32h563
+flash:
+  base: 0x0C000000             # the secure alias, or 0x08000000; the size is the chip's,
+  size: 0x200000               # and sectors are 8 KB (page: 0x2000, or leave it out)
+  write_protected:             # as on the chip: whole groups of four sectors (32 KB)
+    - {from: 0x0C000000, size: 0x8000}
+ram:
+  base: 0x30000000             # or 0x20000000
+  size: 0xA0000
+uart: usart3                   # usart1..usart3, uart4, uart5, usart6, uart7..uart9,
+                               # usart10, usart11, uart12, lpuart1, or a base address
+option_bytes:                  # the option bytes as the device ships, by m33mu's names
+  SWAP_BANK: 0                 # also WRPSG1, WRPSG2, SECWM1, SECWM2
+```
+
+`flash.write_protected` becomes the `WRPSG1` / `WRPSG2` option bytes; give one or the other.
+The keys that only mean something to Renode (`platform.extra`, `reset`, `pins`, `clock`,
+`cpu.mips`, `external_flash`) are refused rather than ignored.
+
+What the chip does on a power cut comes from m33mu's model of it: a program writes a 128-bit
+word with its ECC, as one operation, and a word cannot be programmed twice; write protection,
+the TrustZone watermarks and the bank swap act as RM0481 says, and `flash.timing` uses the
+datasheet's figures (31 us per word, 2 ms per sector, typical). A cut lands exactly before its
+operation, so no program is ever rewound. A core that locks up stays locked up until the next
+power cycle, as on silicon.
+
+Option bytes are not part of the flash image here: every cut starts from the option bytes as
+shipped.
 
 ## An external flash chip
 

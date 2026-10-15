@@ -25,6 +25,14 @@ the chip's erase or its write) and wear per page. The F411 demo keeps its rollba
 `f411-ee-bug-no_invalidate` rewrites a record without clearing its old magic first: every
 clean cut passes it, and only the torn writes catch it.
 
+**m33mu: chips Renode does not have.** `platform.base: stm32h563` runs on
+[m33mu](https://github.com/danielinux/m33mu), driven over its GDB server's monitor commands
+(`engine/m33mu.py`). Its first chip is the STM32H563: 128-bit programs that cannot be repeated,
+WRPSG write protection, option bytes kept by name (`option_bytes` in the adapter). The demo
+builds for it too (`brickproof demo h563` and the `h563-bug-*` builds); its torn states found a
+bug in that port, fixed. The action builds m33mu when the adapter needs it. The Docker image does
+not carry it (m33mu is AGPL-3.0): build it yourself to run the H563 there.
+
 **OpenBLT adapter.** `adapters/openblt_f103` runs OpenBLT's Nucleo-F103RB demo, reprogrammed
 over the UART with its XCP protocol, and documents what it found there, and what the
 maintainer's fix (r1326) still leaves: 4 cuts inside the boot block after its checksum.

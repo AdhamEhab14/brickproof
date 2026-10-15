@@ -3,7 +3,8 @@
 Pull the plug on your firmware update, in an emulator, at every point where it matters, and
 check that the device still comes back.
 
-BrickProof runs your firmware in [Renode](https://renode.io), cuts power during an update,
+BrickProof runs your firmware in an emulator ([Renode](https://renode.io), or
+[m33mu](https://github.com/danielinux/m33mu) for the chips Renode does not have), cuts power during an update,
 powers the device back up, and checks that it recovered: an approved image is installed, it is
 really running, the update was not lost, and an older image cannot sneak back in. It tells you
 which cuts brick the device, and how to reproduce each one.
@@ -11,7 +12,8 @@ which cuts brick the device, and how to reproduce each one.
 It came out of the power-cut tests of
 [Three-Tier-STM32-Secure-Bootloader](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader),
 where it found three real bugs. That bootloader's fixed release has since been cut at every one
-of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1, STM32F4 (F411) and Nordic nRF52840.
+of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1,
+STM32F4 (F411), STM32L4 (L476) and Nordic nRF52840 on Renode, STM32H5 (H563) on m33mu.
 
 Run on bootloaders that are not ours, it found:
 
@@ -31,8 +33,10 @@ cuts). No failure on either.
 ## Quick start
 
 You need Python 3.10+ and [Renode 1.17](https://github.com/renode/renode/releases) (put
-`renode` on PATH or set `RENODE_PATH`). No toolchain, no board, no firmware of your own: a demo
-comes with the package.
+`renode` on PATH or set `RENODE_PATH`). For an STM32H5 you need
+[m33mu](https://github.com/danielinux/m33mu) instead, commit 23960ed or later (put `m33mu` on
+PATH or set `M33MU_PATH`). No toolchain, no board, no firmware of your own: a demo comes with
+the package.
 
 ```bash
 git clone https://github.com/AdhamEhab14/brickproof
@@ -98,6 +102,18 @@ store is a program, whether an erase is allowed, or neither. `brickproof demo nr
 with CONFIG back to read-only). It has one of its own, `nrf52-bug-nwrite`: progress kept by
 clearing one more bit of the same word after each step. An STM32F4 takes that; the nRF52
 promises only two writes to a word between erases.
+
+And for an **STM32L476**: `brickproof demo l476`. Every 64 bits of its flash carry ECC, and an
+erase or program cut short leaves the ECC wrong, so the next read of that double word raises
+an NMI. The bootloader has to catch it; `l476-bug-no_ecc_nmi` does not, and only torn states
+find that.
+
+And for an **STM32H563**, on m33mu: `brickproof demo h563`. The H5 programs a 128-bit word with
+its ECC in one operation, and a word programmed once cannot be programmed again before its
+sector is erased, so the update is 26 operations and the `h563-bug-*` builds meet a chip that
+refuses what the F-series accepts. Its torn states found a bug in the port itself: a torn
+program of the "staging slot consumed" marker was retried, over the half-written word.
+The bootloader now takes any cleared bit in the marker as consumed.
 
 ## What a run covers
 
@@ -268,11 +284,14 @@ docker run --rm ghcr.io/adhamehab14/brickproof              # the demo
 docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml --html report.html
 ```
 
+The image brings Renode, so it runs every chip but the STM32H563. m33mu is AGPL-3.0 and is
+not shipped in it: build m33mu yourself (or use the GitHub Action, which builds it) for that one.
+
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
+| `src/brickproof/engine/` | Renode and m33mu drivers in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | The flash controller model (operation counting, cuts, the chip's rules, option bytes) and the memory guard |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
 | `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
@@ -294,9 +313,13 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
   with the erase stopped by a reset; the others, and every torn program, are models. A real
   power loss, which lets the supply sag, is not measured yet.
 - Flash is modelled for STM32F1 (pages, halfword programming), STM32F411 (sectors, byte
-  to double-word programming) and nRF52840 (4 KB pages, word programming, at most two
-  writes to a word between erases). Another family needs a model of its flash controller in
-  `src/brickproof/models/`; the engine itself does not assume any of them.
+  to double-word programming), STM32L476 (2 KB pages, 64-bit programs with ECC) and nRF52840
+  (4 KB pages, word programming, at most two writes to a word between erases) in
+  `src/brickproof/models/` for Renode; m33mu models the STM32H5 (128-bit programs, write
+  protection, bank swap) itself. Another family needs a model of its flash controller in one
+  emulator or the other; the engine itself assumes neither.
+- On m33mu, option bytes are kept apart from the flash image: a run starts every cut from the
+  option bytes as shipped, and a cut while the firmware changes them is not modelled.
 - Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
   vary with temperature, voltage or age. Wear is counted per update, not simulated.
 - An external flash chip is modelled as SPI NOR with the 25-series commands in single-line
