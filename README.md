@@ -29,6 +29,10 @@ It also ran on **MCUboot** (STM32F411, the Black Pill's one-sector slots, swap w
 scratch): 57 cuts over every phase of the swap, no failure.
 [adapters/mcuboot_f411](adapters/mcuboot_f411).
 
+And on **wolfBoot** on an STM32H563 with TrustZone, emulated by m33mu (its `stm32h5-tz` config,
+swap update): 171 cuts, 403 torn states and 323 second cuts during recovery, no failure.
+[adapters/wolfboot_h563](adapters/wolfboot_h563).
+
 ## Quick start
 
 You need Python 3.10+ and [Renode 1.17](https://github.com/renode/renode/releases) (put
@@ -235,7 +239,7 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 | `src/brickproof/report.py`, `regulations.py` | JUnit and HTML reports, and the regulation map |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
 | `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
-| `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot, MCUboot) |
+| `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot on the F411 and the H563, MCUboot) |
 | `docs/decisions.md` | Why things are the way they are, with the measurements behind them |
 
 ## Limits

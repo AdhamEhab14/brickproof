@@ -10,6 +10,10 @@ builds for it too (`brickproof demo h563` and the `h563-bug-*` builds); its torn
 bug in that port, fixed. The action builds m33mu when the adapter needs it, and the Docker image
 carries it.
 
+**wolfBoot on the STM32H563.** `adapters/wolfboot_h563` runs wolfBoot's `stm32h5-tz` example
+with the test application of wolfBoot's own emulator CI, swapping v1 for v4: 171 cuts, 403 torn
+states and 323 second cuts during recovery, no failure.
+
 **OpenBLT adapter.** `adapters/openblt_f103` runs OpenBLT's Nucleo-F103RB demo, reprogrammed
 over the UART with its XCP protocol, and documents what it found there.
 

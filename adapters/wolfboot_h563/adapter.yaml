@@ -1,0 +1,53 @@
+# wolfBoot (https://github.com/wolfSSL/wolfBoot) on an STM32H563 with TrustZone, emulated by
+# m33mu: wolfBoot and its wolfCrypt secure service in the secure world, the test application
+# that wolfBoot's own emulator CI uses in the non-secure world, updating v1 -> v4 by swapping
+# the BOOT and UPDATE partitions sector by sector (config/examples/stm32h5-tz.config).
+#
+# Build wolfBoot, its two signed test applications and the factory image first: the steps
+# are in README.md here. Then:
+#   brickproof run adapters/wolfboot_h563/adapter.yaml --target <wolfBoot folder>
+
+name: wolfboot_h563
+target: ../../../wolfBoot             # default: next to this repo
+
+platform:
+  base: stm32h563
+
+flash:
+  base: 0x08000000                    # the non-secure alias, where the application runs
+  size: 0x200000
+
+ram:
+  base: 0x20000000
+  size: 0xA0000
+
+# the device as it leaves the factory: wolfBoot, and v1 of the app in the BOOT partition
+firmware:
+  - file: factory_brickproof.bin
+    addr: 0x08000000
+
+uart: usart3
+boot_settle: 2
+
+driver:
+  file: driver.py
+  options:
+    image: test-app/emu-test-apps/stm32h563/image_v4_signed.bin   # into the UPDATE partition
+    update_partition: 0x08100000      # 0x0C100000 in the config: the same flash, secure alias
+    partition_size: 0xA0000
+    boot_timeout: 10
+
+# The BOOT partition must hold exactly one of the two signed images, and the CPU must be
+# running inside it. Both are right answers: wolfBoot goes back to v1 by design when
+# power is lost before v4 has confirmed itself.
+oracle:
+  images:
+    v1: {file: test-app/emu-test-apps/stm32h563/image_v1_signed.bin, at: 0x08060000}
+    v4: {file: test-app/emu-test-apps/stm32h563/image_v4_signed.bin, at: 0x08060000}
+  accept: [v1, v4]
+
+scenario:
+  name: swap-v1-to-v4
+  update_time: 10
+  cut_limit: 15
+  plan: {mode: phases, per_phase: 4}
