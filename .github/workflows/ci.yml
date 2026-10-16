@@ -139,6 +139,13 @@ jobs:
             depth: 2
           - adapter: f411-ext-bug-consume_first
             expect: 1
+          - adapter: f411-ee           # rollback floor in an I2C EEPROM
+            expect: 0
+            torn: true
+            depth: 2
+          - adapter: f411-ee-bug-no_invalidate   # passes every clean cut; only torn writes catch it
+            expect: 1
+            torn: true
           # and on an nRF52840: 4 KB pages, no flash keys, two writes to a word between erases
           - adapter: nrf52
             expect: 0

@@ -25,19 +25,22 @@ CFLAGS = ["-mthumb", "-Os", "-g", "-Wall", "-Wextra", "-Werror",
 CHIPS = [
     # an F1 page erase is far shorter than the watchdog's timeout: no bug to show there
     ("", ["-mcpu=cortex-m3"], "", ("bootloader_bug_watchdog", "bootloader_ext",
-                                   "bootloader_ext_bug_consume_first", "bootloader_bug_nwrite")),
+                                   "bootloader_ext_bug_consume_first", "bootloader_bug_nwrite",
+                                   "bootloader_ee", "bootloader_ee_bug_no_invalidate")),
     # an F4 lets a half-written cell be programmed again, so resuming a copy is fine there
     ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",
                                                          "bootloader_bug_nwrite")),
     # the nRF52 has no flash keys to forget, a 4 KB page erase is far shorter than any
-    # watchdog timeout, a half-written word may be written once more, and the UICR (where
-    # it keeps its protection settings) is not modelled yet
+    # watchdog timeout, a half-written word may be written once more, and its protection
+    # (the ACL) is set at run time, not in option bytes a cut can leave half rewritten
     ("nrf52_", ["-mcpu=cortex-m4", "-DNRF52"], "_nrf52", ("bootloader_bug_resume_copy",
                                                          "bootloader_bug_no_unlock",
                                                          "bootloader_bug_self_lock",
                                                          "bootloader_bug_watchdog",
                                                          "bootloader_ext",
-                                                         "bootloader_ext_bug_consume_first")),
+                                                         "bootloader_ext_bug_consume_first",
+                                                         "bootloader_ee",
+                                                         "bootloader_ee_bug_no_invalidate")),
 ]
 LDFLAGS = ["-Wl,--gc-sections", "-Lcommon", "-lgcc"]
 COMMON = ["common/startup.c", "common/uart.c"]
@@ -60,6 +63,9 @@ BOOTLOADERS = {
     # not bugs: the staged image and the rollback floor in an external SPI NOR flash chip
     "bootloader_ext": ["-DEXT_FLASH"],
     "bootloader_ext_bug_consume_first": ["-DEXT_FLASH", "-DBUG_CONSUME_FIRST"],
+    # not a bug: the rollback floor in an I2C EEPROM
+    "bootloader_ee": ["-DEEPROM_FLOOR"],
+    "bootloader_ee_bug_no_invalidate": ["-DEEPROM_FLOOR", "-DBUG_EE_NO_INVALIDATE"],
 }
 APP_VERSIONS = (1, 2)
 META_MAGIC = 0x4D455441
@@ -76,7 +82,7 @@ def run(cmd):
 
 def outputs():
     """Every file a build leaves for the adapters to load."""
-    names = ["meta_floor1.bin"]
+    names = ["meta_floor1.bin", "meta_floor1_seq2.bin"]
     for prefix, _, _, skip in CHIPS:
         names += ["%s%s.elf" % (prefix, b) for b in BOOTLOADERS if b not in skip]
         names += ["%sapp_v%d.img" % (prefix, v) for v in APP_VERSIONS]
@@ -104,6 +110,9 @@ def build(out):
     # the device as shipped: v1 installed, floor already at 1
     with open(os.path.join(HERE, out, "meta_floor1.bin"), "wb") as f:
         f.write(floor_record(1, 1))
+    # and one that has been updated before: both floor records written, the newer second
+    with open(os.path.join(HERE, out, "meta_floor1_seq2.bin"), "wb") as f:
+        f.write(floor_record(2, 1))
 
 
 if __name__ == "__main__":

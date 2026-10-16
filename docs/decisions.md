@@ -1581,3 +1581,122 @@ purpose, which is what Zephyr's settings FCB backend already is. The settings-on
 exercises FCB's append, CRC, sector rotation and init under every cut, and found both FCB
 problems (zephyrproject-rtos/zephyr#122446 and the addition to #121749). A second adapter with
 our own compaction would mostly test that compaction, so there is none.
+
+## 2026-10-16: An I2C EEPROM (plan item 10)
+
+A C# model (`BpI2cEeprom.cs`, an `II2CPeripheral`) for the 24-series, attached to the
+platform's own I2C controller, so firmware drives it through the real controller model. It
+shares the flash model's operation count, cut point and trace switch, as the SPI NOR model
+does, so one numbering covers every memory.
+
+**A write is not a program.** A 24-series EEPROM erases the bytes it was given and writes
+them in one internal cycle, all bytes of the page at once. So a write can set bits as well
+as clear them, and a cut inside one leaves the page part way through the erase (old 0 bits
+partly back to 1), erased (0xFF), or part way through the write (from 0xFF, part of the new
+value's 0 bits cleared). The flash torn shapes all assume old AND new and would never give
+the case that matters: an old record coming back as 0xFF, or half new under a magic the
+write had not reached yet. The EEPROM has three shapes of its own, `page-erasing`,
+`page-erased` and `page-writing`, chosen by address (`trace.in_eeprom`). They are models,
+like most flash shapes; nothing was measured on a real EEPROM.
+
+A first version mixed whole bytes (each byte old, 0xFF or new). The chip does not write
+byte by byte, and with that model the demo bug below was caught only by luck, so it went.
+
+**Where it sits.** It comes last in the flash image, after the external flash and its status
+bytes, so images saved before it existed keep their layout. Its unit in `locate` is the
+page, which is what a write can touch.
+
+**Timing.** The write cycle (5 ms, the 24LC256's maximum, which the datasheet also gives as
+the only figure) is spent, but the model never NAKs its address while busy. That is the same
+choice as the SPI NOR model, which never reports busy. Firmware that polls correctly sees
+one poll succeed. Firmware that forgets to poll would work in the emulator and fail on a real
+chip, which is a known gap.
+
+**Renode's I2C controller** (STM32F1_I2C, also used for the F4) does not end the transfer
+before a repeated start, so a random read reaches the model as a word address with no stop
+and then a read. The model takes a pending word address at the start of a read.
+tests/renode/test_eeprom_rules.py checks this; it fails without the fix.
+
+**The demo.** `EEPROM_FLOOR` keeps the F411 demo's rollback floor in a 24C256 on I2C1, a
+record per 64-byte page, through a bare-metal polling I2C driver. The device ships as one
+that has been updated before (both records written), so the next record goes over an old
+one. The correct build clears the old magic, writes seq and floor, then the magic: three
+writes, each harmless to cut. `BUG_EE_NO_INVALIDATE` skips the first. Between two writes
+the page holds the old record or the new seq and floor under the old magic, which is still
+right, so every clean cut passes. A torn record write leaves seq and floor at anything
+under a valid magic, and the newest-looking record names a floor no image meets.
+
+Not modelled: the write-protect pin, the chip select address pins beyond the bus address,
+and the 24C04 to 24C16 kind that puts address bits in the bus address.
+
+## 2026-10-16: The nRF52's UICR, partial erase and ACL (plan item 7)
+
+From the nRF52840 Product Specification (NVMC, UICR, ACL chapters) and the register fields
+in Nordic's MDK (nrf52840_bitfields.h, nrfx v3.0.0), which settles what the specification
+pages leave unclear: ACL PERM's WRITE is bit 1 and READ bit 2, ERASEPAGEPARTIALCFG's
+DURATION is 7 bits of milliseconds (10 after reset).
+
+**UICR.** It is flash, with the code area's rules, and the engine already had a place for
+memory like it: the STM32 option bytes. So the nRF52's option bytes are now its UICR,
+0x400 bytes at 0x10001000 (the last register, REGOUT0, is at 0x304), after the code area
+in an image. Images saved for the nRF52 before this are 0x400 bytes shorter. ERASEALL
+erases the UICR too, which an STM32 mass erase does not do to its option bytes, so the
+geometry says which (`mass_erase_ob`) and the replay and `value_before` follow it.
+`read_protected: true` writes APPROTECT as Enabled (0x00); what APPROTECT does to a debugger
+is not modelled, since the engine is not a debugger. Partial erase does not apply to the
+UICR (the specification says so), and the model ignores it there.
+
+**Partial erase.** The specification: a page is erased once the partial erase time spent on
+it reaches tERASEPAGE, and its bits are undefined until then. Undefined is not something a
+replay can reproduce, so the model makes it definite: each 0 bit of the page needs its own
+share of tERASEPAGE (an integer hash of its position, spread evenly), and reads 1 once the
+time spent passes it. The same function is in the model and in `trace.py`, and a Renode
+test checks that the model's page equals the replay's after 1, 4 and 8 steps. The page so
+far is old data with bits flipped to 1, never anything a program could not have reached;
+firmware reading it as data before the erase is done sees a mix, as it would on the chip.
+Each step is an operation (traced as `Q`, kind `partial_erase`, with the time so far), so
+a cut can fall between any two. The time spent is kept per page in model memory, not in the
+image: after a power cut a page starts from zero again, so firmware that starts its erase
+over erases for longer than it needs, which is the safe side of not knowing. A completed
+partial erase counts as one erase cycle for wear. Torn states are not made for a partial
+step: it is already a part of an erase.
+
+**ACL.** Eight regions, each register written once until a reset, enforced once its address
+is on a page boundary and its size a whole number of pages. On the chip a blocked access is
+a bus fault. Here a blocked write or erase is refused and fails the run as write protection
+(the STM32 models' registers and message), and a blocked read is counted and fails it as a
+protected read (the PCROP registers). The specification does not say whether ERASEPAGE and
+ERASEALL are blocked in a region; the model blocks them, on the side of reporting.
+
+**A Renode quirk for the rule tests:** a single `b .` stops Renode from taking a new PC from
+the monitor, so test snippets end in `nop` and a branch back to it.
+
+## 2026-10-16: 4-byte addresses; no quad mode (plan item 9)
+
+**4-byte addresses** follow the W25Q256JV datasheet, for chips over 16 MB: B7h and E9h
+enter and leave 4-byte mode, ADS (status register 3, bit 0) reports it, ADP (bit 1, stored)
+sets it at power-up; 13h, 0Ch, 12h, 21h, 5Ch and DCh take four address bytes in either
+mode; in 3-byte mode the extended address register (C5h with a write enable, C8h to read,
+volatile) is the top byte. That chip has no SEC bit and four BP bits, so its block
+protection table is its own: BP = n protects 64 KB << (n - 1) from the top, or with TB from
+the bottom, until it covers everything. A chip of 16 MB or less ignores all of these
+commands, as a W25Q128 does, so firmware that sends them to the wrong chip sees them do
+nothing. `external_flash.size` goes to 64 MB (a W25Q512).
+
+The plan said this needs sparse flash images. It does not, up to 64 MB: an image is held
+whole, and a 64 MB chip makes each saved state 64 MB bigger, which costs memory and time
+but works. Sparse images would make a campaign on a big chip cheaper, not possible; they
+wait until someone needs one.
+
+**Quad and dual modes are not modelled.** Renode's SPI controllers on these chips (STM32
+SPI, nRF52 SPIM) move one bit per clock. Firmware cannot send a quad command through one,
+so a quad read in the model could never be reached. The controllers that can (an STM32
+QUADSPI, the nRF52840 QSPI) are where the work would be: the F411 has no QUADSPI, and
+Zephyr's nRF QSPI driver hangs in Renode (found with the storage adapters). This stays
+out until a target with a working quad controller needs it.
+
+**Checked** in Renode (tests/renode/test_spinor_4byte_rules.py, the f411-ext chip made
+32 MB through the fixture's new ADJUST hook): the 4-byte commands above 16 MB, 4-byte mode
+for the 3-byte commands, the extended address register and its loss at power cycle, ADP at
+power-up, the BP3-BP0 table at the top, the bottom and all of it. On the 1 MB chip, B7h and
+13h do nothing.

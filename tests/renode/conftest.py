@@ -24,8 +24,12 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(scope="module")
 def chip(request):
-    """A booted emulator for the demo adapter the test module names in ADAPTER."""
+    """A booted emulator for the demo adapter the test module names in ADAPTER, changed
+    by the module's ADJUST(adapter) if it has one."""
     ad = adapters.load(os.path.join(DEMO, request.module.ADAPTER))
+    adjust = getattr(request.module, "ADJUST", None)
+    if adjust:
+        adjust(ad)
     work = tempfile.mkdtemp(prefix="bp-rules-")
     s = RenodeSession(find_renode(), work, ad.flash, wd.prepare(work, ad), uart=ad.uart,
                       vector_table=ad.vector_table, mips=ad.mips, reset_cmds=ad.reset_cmds,

@@ -110,6 +110,9 @@ def _fault_message(session):
                 "16-byte flash row (PGAERR), on an nRF52 a store that is not a whole aligned word "
                 "or a third write to a word without an erase (nWRITE)" % v["refused"])
     if v.get("pcrop"):
+        if session.flash.model == "nrf52_flash.py":
+            return ("protected read: %d read(s) in an ACL region with READ disabled, first at "
+                    "0x%08X. The chip blocks them with a bus fault" % v["pcrop"])
         return ("proprietary code read as data: %d read(s) of a PCROP sector, first at 0x%08X. "
                 "The chip only lets that code run; a data read gets RDERR, not the code"
                 % v["pcrop"])
@@ -119,6 +122,10 @@ def _fault_message(session):
             return ("write protection: %d erase or program operation(s) in the external flash chip "
                     "were refused, first at 0x%08X. Its status register (BP, TB, SEC, CMP) protects "
                     "that part, so the chip ignores the command" % (n, at))
+        if session.flash.model == "nrf52_flash.py":
+            return ("write protection: %d erase or program operation(s) in an ACL region with WRITE "
+                    "disabled were refused, first at 0x%08X. The chip blocks them with a bus fault"
+                    % (n, at))
         return ("write protection: %d erase or program operation(s) in write-protected flash "
                 "were refused, first at 0x%08X. The option bytes protect that part of flash, so the "
                 "chip changes nothing there" % (n, at))

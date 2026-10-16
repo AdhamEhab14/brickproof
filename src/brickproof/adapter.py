@@ -165,12 +165,21 @@ def stm32f4_option_bytes(flash, protected, read_protected, hardware_watchdog=Fal
     return bytes(out)
 
 
-def no_option_bytes(flash, protected, read_protected, hardware_watchdog=False, pcrop=()):
-    """A chip without STM32-style option bytes (the nRF52's UICR is not modelled)."""
-    if protected or read_protected or hardware_watchdog or pcrop:
-        raise AdapterError("flash: write_protected, read_protected and hardware_watchdog are "
-                           "STM32 option bytes; this chip has none")
-    return b""
+UICR_SIZE = 0x400                 # the nRF52840's UICR registers end at REGOUT0, 0x304
+UICR_APPROTECT = 0x208
+
+
+def nrf52_uicr(flash, protected, read_protected, hardware_watchdog=False, pcrop=()):
+    """The nRF52's UICR as shipped: erased, but for APPROTECT when read_protected is set.
+    It has no write protection of its own (the ACL is set by firmware at run time)."""
+    if protected or hardware_watchdog or pcrop or int(read_protected) > 1:
+        raise AdapterError("flash: write_protected, hardware_watchdog, pcrop and read protection "
+                           "level 2 are STM32 option bytes; on an nRF52 only read_protected "
+                           "(APPROTECT) applies, and write protection is the ACL, set at run time")
+    uicr = bytearray([0xFF]) * UICR_SIZE
+    if read_protected:
+        uicr[UICR_APPROTECT:UICR_APPROTECT + 4] = (0xFFFFFF00).to_bytes(4, "little")
+    return bytes(uicr)
 
 
 # What the engine has to know about each chip family it can emulate.
@@ -189,9 +198,10 @@ CHIPS = {
     "stm32f411": dict(model="stm32f4_flash.py", controller=0x40023C00, ob_base=0x1FFFC000,
                       option_bytes=stm32f4_option_bytes, wrp_unit=None, write_unit=4,
                       endurance=10000),
-    "nrf52840": dict(model="nrf52_flash.py", controller=0x4001E000, ob_base=None,
-                     option_bytes=no_option_bytes, wrp_unit=None, write_unit=4,
-                     endurance=10000, mips=64),
+    # the nRF52's option bytes are its UICR, and its ERASEALL erases them too
+    "nrf52840": dict(model="nrf52_flash.py", controller=0x4001E000, ob_base=0x10001000,
+                     option_bytes=nrf52_uicr, wrp_unit=None, write_unit=4,
+                     endurance=10000, mips=64, mass_erase_ob=True),
 }
 PLATFORMS = tuple(CHIPS)
 
@@ -471,7 +481,8 @@ def load(path, target=None):
     flash = FlashGeometry(base=_need(fl, "base", "flash"), size=_need(fl, "size", "flash"),
                           page=fl.get("page"), write_unit=fl.get("write_unit", chip["write_unit"]),
                           controller=chip["controller"], model=chip["model"], ob_base=chip["ob_base"],
-                          wrp_unit=chip["wrp_unit"], endurance=chip["endurance"])
+                          wrp_unit=chip["wrp_unit"], endurance=chip["endurance"],
+                          mass_erase_ob=chip.get("mass_erase_ob", False))
     timing = fl.get("timing", "typical")
     if timing not in TIMINGS:
         raise AdapterError("flash.timing: unknown '%s' (have: %s)" % (timing, ", ".join(TIMINGS)))
@@ -508,6 +519,19 @@ def load(path, target=None):
                                               int(read_protected),
                                               bool(fl.get("hardware_watchdog", False)),
                                               pcrop=fl.get("pcrop") or [])
+    uicr = fl.get("uicr")
+    if uicr:
+        # UICR words as the device ships (nRF52 only): {offset: value}, for example REGOUT0
+        if chip["option_bytes"] is not nrf52_uicr or not isinstance(uicr, dict):
+            raise AdapterError("flash.uicr: {offset: value} words of an nRF52's UICR")
+        ob = bytearray(flash.option_bytes)
+        for off, value in uicr.items():
+            if not (isinstance(off, int) and isinstance(value, int) and off % 4 == 0
+                    and 0 <= off < UICR_SIZE and 0 <= value <= 0xFFFFFFFF):
+                raise AdapterError("flash.uicr: offset 0x%X: a word offset below 0x%X, a 32-bit value"
+                                   % (off if isinstance(off, int) else 0, UICR_SIZE))
+            ob[off:off + 4] = value.to_bytes(4, "little")
+        flash.option_bytes = bytes(ob)
 
     ext = d.get("external_flash")
     if ext:
@@ -533,10 +557,41 @@ def load(path, target=None):
         if flash.ext_wp and flash.ext_wp == flash.ext_cs:
             raise AdapterError("external_flash.wp: the same pin as cs")
         if not isinstance(flash.ext_size, int) or flash.ext_size <= 0 or flash.ext_size % 0x1000 \
-                or flash.ext_size > 0x1000000:
-            raise AdapterError("external_flash.size: a multiple of 4 KB, up to 16 MB (three address bytes)")
+                or flash.ext_size > 0x4000000:
+            raise AdapterError("external_flash.size: a multiple of 4 KB, up to 64 MB (over 16 MB the "
+                               "chip has 4-byte addresses)")
         if flash.ext_base < flash.base + flash.size and flash.ext_base + flash.ext_size > flash.base:
             raise AdapterError("external_flash.address: it overlaps the internal flash")
+
+    ee = d.get("external_eeprom")
+    if ee:
+        where = "external_eeprom"
+        flash.eeprom_bus = str(_need(ee, "bus", where))
+        flash.eeprom_size = _need(ee, "size", where)
+        flash.eeprom_base = ee.get("address", 0xB0000000)
+        flash.eeprom_i2c = ee.get("i2c_address", 0x50)
+        flash.eeprom_page = ee.get("page", 32)
+        flash.eeprom_address_bytes = ee.get("address_bytes", 2 if flash.eeprom_size > 256 else 1)
+        flash.eeprom_endurance = int(ee.get("endurance", 1000000))
+
+        def power_of_two(n):
+            return isinstance(n, int) and n > 0 and n & (n - 1) == 0
+
+        if not power_of_two(flash.eeprom_size) or flash.eeprom_size > 0x10000:
+            raise AdapterError("external_eeprom.size: a power of two, up to 64 KB (a 24C512)")
+        if not power_of_two(flash.eeprom_page) or flash.eeprom_page > flash.eeprom_size:
+            raise AdapterError("external_eeprom.page: a power of two, no bigger than the EEPROM")
+        if flash.eeprom_address_bytes not in (1, 2) \
+                or flash.eeprom_size > 1 << (8 * flash.eeprom_address_bytes):
+            raise AdapterError("external_eeprom.address_bytes: 1 (up to 256 bytes) or 2")
+        if not isinstance(flash.eeprom_i2c, int) or not 0x08 <= flash.eeprom_i2c <= 0x77:
+            raise AdapterError("external_eeprom.i2c_address: a 7-bit address, 0x08 to 0x77")
+        spans = [(flash.base, flash.size, "the internal flash")]
+        if flash.ext_size:
+            spans.append((flash.ext_base, flash.ext_size, "the external flash"))
+        for start, size, name in spans:
+            if flash.eeprom_base < start + size and flash.eeprom_base + flash.eeprom_size > start:
+                raise AdapterError("external_eeprom.address: it overlaps %s" % name)
 
     # RAM size is not optional: an emulator with more RAM than the chip hides
     # real faults (a stack access past the end of RAM just works)

@@ -1,0 +1,14 @@
+# The EEPROM demo rewriting a floor record without clearing its old magic first
+# (BUG_EE_NO_INVALIDATE). Every clean cut passes: between two writes the record is either
+# the old one or the new one. A record write cut short leaves seq and floor half done under
+# the old, still valid, magic, and BrickProof should fail at least one torn state.
+extends: f411-ee.yaml
+name: demo_ab_bootloader_f411_ee_bug_no_invalidate
+firmware:
+  - file: prebuilt/f411_bootloader_ee_bug_no_invalidate.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0xB0000000
+  - file: prebuilt/meta_floor1_seq2.bin
+    addr: 0xB0000040

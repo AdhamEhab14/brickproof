@@ -65,10 +65,24 @@ NRF = {"stm32f103": "nrf52840",
        "size: 0x5000": "size: 0x40000"}
 
 
-def test_an_nrf52840_has_4kb_pages_words_and_no_option_bytes(tmp_path):
+def test_an_nrf52840_has_4kb_pages_words_and_its_uicr_for_option_bytes(tmp_path):
     f = adapters.load(write(tmp_path, **NRF)).flash
     assert (f.model, f.controller, f.page, f.write_unit) == ("nrf52_flash.py", 0x4001E000, 0x1000, 4)
-    assert f.ob_base is None and f.ob_size == 0 and f.image_size == 0x100000
+    # the UICR comes after the code area in an image, erased as shipped, and ERASEALL wipes it
+    assert f.ob_base == 0x10001000 and f.option_bytes == bytes([0xFF]) * 0x400
+    assert f.image_size == 0x100000 + 0x400 and f.mass_erase_ob
+
+
+def test_nrf52840_uicr_words_and_approtect(tmp_path):
+    uicr = {"page: 0x1000}": "page: 0x1000, read_protected: true, uicr: {0x304: 5}}"}
+    f = adapters.load(write(tmp_path, **dict(NRF, **uicr))).flash
+    assert f.option_bytes[0x208:0x20C] == bytes([0x00, 0xFF, 0xFF, 0xFF])     # APPROTECT enabled
+    assert f.option_bytes[0x304:0x308] == bytes([5, 0, 0, 0])                 # REGOUT0 3.3 V
+    bad = {"page: 0x1000}": "page: 0x1000, uicr: {0x302: 5}}"}
+    with pytest.raises(adapters.AdapterError, match="word offset"):
+        adapters.load(write(tmp_path, **dict(NRF, **bad)))
+    with pytest.raises(adapters.AdapterError, match="nRF52"):
+        adapters.load(write(tmp_path, **{"page: 0x400}": "page: 0x400, uicr: {0x304: 5}}"}))
 
 
 def test_an_nrf52840_has_no_stm32_option_bytes_to_protect_with(tmp_path):
@@ -253,7 +267,7 @@ def test_sectors_must_add_up_and_fit_the_chip(tmp_path):
 
 def test_the_f411_demo_and_its_bug_builds_load():
     names = [n for n in os.listdir(DEMO) if n.startswith("f411") and n.endswith(".yaml")]
-    assert len(names) == 16
+    assert len(names) == 18
     for n in names:
         ad = adapters.load(os.path.join(DEMO, n))
         assert ad.platform == "stm32f411" and ad.flash.sectors
@@ -340,7 +354,7 @@ def test_an_external_chip_can_ship_with_its_block_protection_set(tmp_path):
 @pytest.mark.parametrize("ext, message", [
     ("{bus: spi1, cs: A4, size: 0x100000}", "pin name"),
     ("{bus: spi1, cs: PA4, size: 0x100001}", "multiple of 4 KB"),
-    ("{bus: spi1, cs: PA4, size: 0x2000000}", "up to 16 MB"),
+    ("{bus: spi1, cs: PA4, size: 0x8000000}", "up to 64 MB"),
     ("{bus: spi1, cs: PA4, size: 0x1000, address: 0x08000000}", "overlaps"),
     ("{cs: PA4, size: 0x1000}", "missing 'bus'"),
 ])

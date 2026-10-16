@@ -116,3 +116,13 @@ def test_without_wps_the_block_locks_do_not_matter(chip):
     command(chip, WREN)
     command(chip, PROGRAM, *addr(a), 0x5A)
     assert byte_at(chip, a) == 0x5A
+
+
+def test_a_chip_of_16_mb_or_less_has_no_4_byte_commands(chip):
+    fresh(chip)
+    a = 0x22000
+    command(chip, 0xB7)                                 # enter 4-byte mode: not on this chip
+    command(chip, WREN)
+    command(chip, PROGRAM, *addr(a), 0x66)
+    assert byte_at(chip, a) == 0x66                     # still three address bytes
+    assert command(chip, 0x13, 0, *addr(a), 0)[5] == 0  # 13h is not a read here

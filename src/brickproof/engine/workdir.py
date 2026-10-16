@@ -30,7 +30,7 @@ MEMORIES = {
                   "ob_region": 0x400},
     # flash at 0 with no alias; RAM also seen at 0x00800000 for code; FICR and UICR at
     # 0x10000000; peripherals from 0x40000000
-    "nrf52840": {"ram": ("ram", 0x20000000), "flash": ("flash", 0x0),
+    "nrf52840": {"ram": ("ram", 0x20000000), "flash": ("flash", 0x0), "ob_region": 0x1000,
                  "holes": lambda flash_end, ram_end, ram_size: [
                      ("flashGuard", flash_end, 0x800000 - flash_end),
                      ("codeRamGuard", 0x800000 + ram_size, 0x10000000 - 0x800000 - ram_size),
@@ -177,6 +177,13 @@ def prepare(workdir, adapter):
         for port in sorted({pin[1] for pin in lines}):
             repl += "\ngpioPort%s:\n" % port + "".join(
                 "    %d -> extflash@%d\n" % (int(pin[2:]), n) for pin, n in lines.items() if pin[1] == port)
+    # an I2C EEPROM: its model and where it sits on the bus
+    if f.eeprom_size:
+        shutil.copyfile(os.path.join(MODELS, "BpI2cEeprom.cs"), os.path.join(models, "BpI2cEeprom.cs"))
+        repl += ('\neeprom: I2C.BpI2cEeprom @ %s 0x%X\n    size: 0x%X\n    address: 0x%X\n    state: 0x%X\n'
+                 '    traceFile: "%s/%s"\n    pageSize: %d\n    addressBytes: %d\n    timing: %d\n' % (
+                     f.eeprom_bus, f.eeprom_i2c, f.eeprom_size, f.eeprom_base, STATE_BASE, _slash(workdir),
+                     TRACE_NAME, f.eeprom_page, f.eeprom_address_bytes, f.timing))
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):
         text = _set_const(guard, "GUARD_BASE", base)

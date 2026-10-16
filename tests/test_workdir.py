@@ -165,4 +165,4 @@ def test_an_nrf52840_gets_its_own_flash_controller_and_no_svd_download(tmp_path)
     model = (work / "models" / "nrf52_flash.py").read_text()
     assert "\nPAGE = 0x1000\n" in model and "\nFLASH_SIZE = 0x100000\n" in model
     assert not (work / "models" / "stm32f4_flash.py").exists()
-    assert "bpOptionBytes" not in repl
+    assert "bpOptionBytes: Memory.MappedMemory @ sysbus 0x10001000" in repl       # the UICR

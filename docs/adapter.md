@@ -35,7 +35,8 @@ flash:
   write_unit: 2                # bytes a program usually writes (2 on F1, 4 on F4 and nRF52)
   write_protected:             # STM32: what the option bytes protect on the device as shipped
     - {from: 0x08000000, size: 0x4000}
-  read_protected: false        # true: RDP level 1; 2: level 2 (STM32F4), for good
+  read_protected: false        # true: RDP level 1 (nRF52: APPROTECT); 2: level 2 (STM32F4), for good
+  # uicr: {0x304: 5}           # nRF52: UICR words as shipped, by offset (here REGOUT0 = 3.3 V)
   # pcrop:                     # STM32F4: sectors of proprietary code (SPRMOD), instead of
   #   - {from: 0x08060000, size: 0x20000}   # write_protected: run only, no data reads
   hardware_watchdog: false     # WDG_SW cleared: the watchdog runs from reset, unstoppable
@@ -44,10 +45,19 @@ flash:
 external_flash:                # optional: an SPI NOR flash chip (25-series commands)
   bus: spi1                    # the SPI controller it is wired to
   cs: PA4                      # its chip select pin
-  size: 0x100000               # up to 16 MB
+  size: 0x100000               # up to 64 MB; over 16 MB it has 4-byte addresses
   # address: 0xA0000000        # how its bytes are named in traces, images and `slot:`
   # status: 0x00               # its status registers as shipped: 1, or 0xTTSSRR for 1-3
   # wp: PA3                    # the pin wired to its /WP (otherwise /WP reads high)
+
+external_eeprom:               # optional: an I2C EEPROM (24-series)
+  bus: i2c1                    # the I2C controller it is wired to
+  size: 0x8000                 # a power of two, up to 64 KB
+  # page: 32                   # bytes one write can cover; it wraps inside the page
+  # i2c_address: 0x50          # its 7-bit bus address
+  # address_bytes: 2           # 1 for chips up to 256 bytes (the default there), else 2
+  # address: 0xB0000000        # how its bytes are named in traces, images and `slot:`
+  # endurance: 1000000         # write cycles per page the datasheet promises
 
 ram:
   size: 0x5000                 # the real RAM size. Required: extra RAM hides stack faults
@@ -109,6 +119,15 @@ The run is only worth something if the emulated chip is the chip you ship.
   RDERR on the chip; the run fails with "proprietary code read as data". It shares the nWRP
   bits with `write_protected`, so it is one or the other. `read_protected: 2` is level 2,
   after which the option bytes cannot change at all.
+- nRF52: the UICR is the chip's option bytes and part of the flash image, after the code
+  area. It starts erased; `read_protected: true` sets APPROTECT, and `flash.uicr` sets any
+  other word, such as REGOUT0 on a board powered from the high-voltage regulator. Stores into
+  it are programs under the same rules as the code area (whole words, two writes between
+  erases), ERASEUICR erases it, and ERASEALL erases it together with the code area. Write
+  protection is the ACL, which firmware sets after every reset: a write or an erase in a
+  region it blocks fails the run as write protection, a read it blocks as a protected read.
+  Partial erase (ERASEPAGEPARTIAL) erases a page once the steps add up to tERASEPAGE (85 ms);
+  until then the page holds the old data with some bits already flipped to 1.
 - `flash.hardware_watchdog`: true if the option bytes make the independent watchdog a
   hardware one. It then runs from reset with its default timeout (about 0.4 s on an F1,
   0.5 s on an F4), and a chip that stands still through a long erase gets reset.
@@ -125,7 +144,7 @@ The run is only worth something if the emulated chip is the chip you ship.
 
 `external_flash` adds an SPI NOR flash chip of the common 25-series kind (Winbond W25Q,
 Macronix MX25, GigaDevice GD25): read, page program, 4 / 32 / 64 KB and chip erase, write
-enable, status registers 1 and 2, JEDEC ID, three address bytes. Its page programs and erases are operations
+enable, status registers 1 to 3, JEDEC ID. Its page programs and erases are operations
 like those of the internal flash, counted in the order they really happen, so a cut can fall
 on either memory and torn states and cuts during recovery cover both.
 
@@ -136,10 +155,38 @@ image's `at` at that address goes into the chip.
 Block protection works as on a Winbond W25Q: the status register's BP, TB and SEC bits (and
 CMP in register 2) protect part of the chip, and an erase or program that touches it is
 ignored by the chip and fails the run with a message. The status registers are kept across
-power cuts. `status` sets them as the device ships: register 1, or both as `0xSSRR`.
+power cuts. `status` sets them as the device ships: register 1, or `0xTTSSRR` for all three.
+`wp` names the pin wired to /WP: with SRP set and /WP low, status writes are refused. SRL,
+volatile status writes (50h) and individual block locks (WPS) work as on a W25Q16JV.
 
-Not modelled: the quad and dual modes, four address bytes, the /WP pin and SRP, and suspend.
-Firmware that needs those needs the model extended.
+A chip over 16 MB is the W25Q256JV kind: 4-byte addresses, with B7h and E9h to enter and
+leave 4-byte mode (status register 3's ADP sets the mode at power-up), the 4-byte commands
+13h, 0Ch, 12h, 21h, 5Ch and DCh, the extended address register (C5h, C8h) for 3-byte
+commands above 16 MB, and that chip's block protection (BP3-BP0 and TB). A smaller chip
+ignores those commands, as a W25Q128 does. A big chip costs memory and time: every saved
+flash state holds all of it.
+
+Not modelled: the quad and dual modes (the SPI controllers emulated here move one bit at a
+time, so firmware cannot use them through one), and suspend.
+
+## An I2C EEPROM
+
+`external_eeprom` adds a 24-series I2C EEPROM (Microchip 24LC, ST M24, Atmel AT24) on one of
+the chip's I2C controllers: random and sequential reads, byte and page writes, one or two
+word address bytes. Each write is an operation like a flash program, counted with the
+flash's operations in the order they happen, so a cut can fall on it. A write covers one
+page at most; bytes past the end of the page wrap to its start, as on the chip.
+
+Unlike flash, a write sets each byte to its new value, whatever was there: the chip erases
+the bytes and writes them in one cycle. A write cut short is therefore not an AND of old and
+new. Its torn states are `page-erasing` (some old 0 bits back to 1), `page-erased` (0xFF,
+nothing written yet) and `page-writing` (part of the new value's 0 bits cleared). Wear is
+counted per page against `endurance`.
+
+Like the external flash, the EEPROM has no address on the system bus, and `address`
+(0xB0000000 unless you say otherwise) is only the name its bytes go by. It comes last in a
+flash image. The write cycle time (5 ms) is spent, but the chip never answers busy:
+firmware that polls for the acknowledge gets it at once.
 
 ## Drivers
 

@@ -20,6 +20,13 @@ at a known number of cycles, three times each:
   program  a halfword was untouched up to 0.5 us and complete from 0.6 us: no torn
            program was seen.
 
+An EEPROM page write is both, in one internal cycle: the chip erases the bytes it was
+given (0 bits to 1), then writes them (1 bits to 0), every byte of the page at once. Cut
+short, `page-erasing` has some of the old 0 bits flipped, `page-erased` all of them and
+nothing written yet, `page-writing` some of the bits the new value clears cleared. Unlike a
+flash program the result need not be old AND new: an old record can come back as 0xFF.
+Models too; nothing was measured on an EEPROM.
+
 A reset is not a power loss, which lets the supply sag rather than stopping the
 operation cleanly, so the other shapes stay as harder cases: a clean half, a scattered
 random part, an almost-finished one, and the torn programs. They are models, not
@@ -38,7 +45,8 @@ ERASE_KINDS = ("erase-early", "erase-late", "erase-half", "erase-partial", "eras
 # measured (see the top): the chance an old 0 bit is still 0 when the erase is stopped
 ERASE_MEASURED = {"erase-early": 0.045, "erase-late": 0.0035}
 PROGRAM_KINDS = ("program-low", "program-high", "program-partial")
-KINDS = ERASE_KINDS + PROGRAM_KINDS
+PAGE_KINDS = ("page-erasing", "page-erased", "page-writing")
+KINDS = ERASE_KINDS + PROGRAM_KINDS + PAGE_KINDS
 
 
 @dataclass
@@ -89,6 +97,15 @@ def _torn_programs(old, target, rng, size=2):
     return {k: v for k, v in out.items() if v not in (old, done)}
 
 
+def _torn_pages(old, new, rng):
+    """{kind: bytes} for EEPROM bytes whose write from `old` to `new` was cut short:
+    in the erase half of the cycle, after it, or in the write half. Every bit gets there on
+    its own, with even odds."""
+    erasing = bytes(b | rng.getrandbits(8) for b in old)
+    writing = bytes(0xFF & ~(~w & rng.getrandbits(8)) for w in new)
+    return {"page-erasing": erasing, "page-erased": bytes([0xFF]) * len(new), "page-writing": writing}
+
+
 def states(op, before, flash, kinds=KINDS, seed=0):
     """The torn states of one traced operation. `before` is the whole flash just before
     it. States equal to the flash before or after the operation are left out (those
@@ -110,6 +127,14 @@ def states(op, before, flash, kinds=KINDS, seed=0):
             torn = _torn_erases(page, _rng(seed, op["index"], kind))[kind]
             if torn != after:
                 add(kind, bytes(before[:off]) + torn + bytes(before[off + unit:]))
+    elif op["kind"] == "program" and "value" in op and traces.in_eeprom(op["addr"], flash):
+        size = traces.size_of(op, flash)
+        old = bytes(before[off:off + size])
+        new = op["value"].to_bytes(size, "little")
+        for kind in PAGE_KINDS:
+            torn = _torn_pages(old, new, _rng(seed, op["index"], kind))[kind]
+            if torn != new:
+                add(kind, bytes(before[:off]) + torn + bytes(before[off + size:]))
     elif op["kind"] == "program" and "value" in op:
         size = traces.size_of(op, flash)
         old = int.from_bytes(before[off:off + size], "little")

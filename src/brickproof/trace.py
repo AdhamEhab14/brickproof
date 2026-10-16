@@ -15,6 +15,34 @@ import json
 from dataclasses import dataclass
 
 
+# nRF52 partial erase (ERASEPAGEPARTIAL): a page is erased once the time spent on it adds
+# up to tERASEPAGE, and the bits are undefined until then. Each 0 bit needs its own share of
+# that time before it reads 1, spread evenly and the same on every run. The flash model
+# (models/nrf52_flash.py) has the same function.
+T_PAGE_ERASE = 85000
+
+
+def partial_needs(i):
+    """Microseconds of partial erase bit i of a page (8 * byte offset + bit) needs."""
+    h = (i * 2654435761) & 0xFFFFFFFF
+    h ^= h >> 15
+    return 1 + h % T_PAGE_ERASE
+
+
+def partially_erased(page, total_us):
+    """A page after `total_us` microseconds of partial erase."""
+    if total_us >= T_PAGE_ERASE:
+        return bytes([0xFF]) * len(page)
+    out = bytearray(page)
+    for off, b in enumerate(page):
+        if b != 0xFF:
+            for bit in range(8):
+                if not (b >> bit) & 1 and partial_needs(8 * off + bit) <= total_us:
+                    b |= 1 << bit
+            out[off] = b
+    return bytes(out)
+
+
 def size_of(op, flash):
     """How many bytes a program wrote: recorded with the operation, or the chip's usual unit."""
     return op.get("size") or flash.write_unit
@@ -25,10 +53,18 @@ def _external(addr, flash):
     return ext is not None and ext <= addr < ext + flash.ext_size
 
 
+def in_eeprom(addr, flash):
+    base = getattr(flash, "eeprom_base", None)
+    return base is not None and base <= addr < base + flash.eeprom_size
+
+
 def locate(addr, flash):
     """(offset, erase size) of an address in a flash image: where it sits, and how much an
     erase there wipes. The image is the flash, then the option bytes where the chip has
-    them (erasing those wipes all of them), then an external flash chip if there is one."""
+    them (erasing those wipes all of them), then an external flash chip if there is one,
+    then an I2C EEPROM (which is never erased: its unit is the page one write covers)."""
+    if in_eeprom(addr, flash):
+        return flash.eeprom_offset + (addr - flash.eeprom_base), flash.eeprom_page
     if _external(addr, flash):
         return flash.size + flash.ob_size + (addr - flash.ext_base), flash.ext_sector
     ob = getattr(flash, "ob_base", None)
@@ -103,7 +139,11 @@ def cost(ops, flash):
     page or sector that is erased most often in one update."""
     erased = {}
     for op in ops:
-        if op["kind"] == "erase" and _external(op["addr"], flash):
+        if op["kind"] == "program" and in_eeprom(op["addr"], flash):
+            # an EEPROM has no erase: every write cycle wears the page it falls in
+            page = op["addr"] - (op["addr"] - flash.eeprom_base) % flash.eeprom_page
+            erased[page] = erased.get(page, 0) + 1
+        elif op["kind"] == "erase" and _external(op["addr"], flash):
             # a big erase wears every sector it covers
             for a in range(op["addr"], op["addr"] + erase_span(op, flash)[1], flash.ext_sector):
                 erased[a] = erased.get(a, 0) + 1
@@ -113,12 +153,18 @@ def cost(ops, flash):
         elif op["kind"] == "mass_erase":
             for start, _ in flash.units():
                 erased[start] = erased.get(start, 0) + 1
+        elif op["kind"] == "partial_erase" and op.get("total_us", 0) >= T_PAGE_ERASE:
+            # partial erases wear a page once they add up to a whole erase
+            start = erase_start(op["addr"], flash)
+            erased[start] = erased.get(start, 0) + 1
     out = {"flash_time_s": round(sum(op.get("us", 0) for op in ops) / 1e6, 6),
            "erases": sum(erased.values()), "most_erased": None, "updates_to_wear_out": None}
     if erased:
         # wear is judged against what each memory promises: the unit that uses up the
         # largest share of its endurance per update is the one that fails first
         def endurance_of(a):
+            if in_eeprom(a, flash):
+                return flash.eeprom_endurance
             return (flash.ext_endurance if _external(a, flash) else getattr(flash, "endurance", 0)) or 0
 
         def share(a):
@@ -176,8 +222,15 @@ def value_before(ops, index, pre, flash):
         if op["kind"] == "program":
             if op["addr"] == addr and "value" in op and size_of(op, flash) == size:
                 return op["value"]
-        elif op["kind"] == "mass_erase" and flash.base <= addr < flash.base + flash.size:
+        elif op["kind"] == "mass_erase" and (flash.base <= addr < flash.base + flash.size or (
+                getattr(flash, "mass_erase_ob", False) and flash.ob_base is not None
+                and flash.ob_base <= addr < flash.ob_base + flash.ob_size)):
             return (1 << (8 * size)) - 1
+        elif op["kind"] == "partial_erase" and op["addr"] <= addr < op["addr"] + _wiped(op, flash):
+            # bits part way through: replay up to here instead of guessing
+            off, _ = locate(addr, flash)
+            image = Replay(pre, ops, flash).at(index)
+            return int.from_bytes(image[off:off + size], "little")
         elif op["kind"] == "erase" and op["addr"] <= addr < op["addr"] + _wiped(op, flash):
             return (1 << (8 * size)) - 1
     off, _ = locate(addr, flash)
@@ -213,6 +266,13 @@ class Replay:
                 self.image[off:off + size] = bytes([0xFF]) * size
             elif op["kind"] == "mass_erase":
                 self.image[:self.flash.size] = bytes([0xFF]) * self.flash.size
+                if getattr(self.flash, "mass_erase_ob", False) and self.flash.ob_size:
+                    end = self.flash.size + self.flash.ob_size
+                    self.image[self.flash.size:end] = bytes([0xFF]) * self.flash.ob_size
+            elif op["kind"] == "partial_erase":
+                off, size = erase_span(op, self.flash)
+                self.image[off:off + size] = partially_erased(bytes(self.image[off:off + size]),
+                                                              op["total_us"])
             elif op["kind"] == "program" and "value" in op:
                 off, _ = locate(op["addr"], self.flash)
                 size = size_of(op, self.flash)

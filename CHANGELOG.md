@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+**External flash chips over 16 MB.** `external_flash.size` goes up to 64 MB. A chip over
+16 MB has 4-byte addresses as on a W25Q256JV: 4-byte mode (B7h/E9h, ADP at power-up), the
+4-byte commands, the extended address register, and its BP3-BP0 protection table.
+
+**The nRF52's UICR, partial erase and ACL.** The UICR is part of the flash image: stores into
+it are programs, ERASEUICR erases it and ERASEALL erases it with the code area, and
+`read_protected` (APPROTECT) and `flash.uicr` set it as shipped. ERASEPAGEPARTIAL erases a
+page once its steps add up to tERASEPAGE, leaving it part way until then. The ACL blocks
+writes, erases and reads in its regions until reset, and a blocked access fails the run.
+
+**An I2C EEPROM.** `external_eeprom` adds a 24-series EEPROM on an I2C controller. Its page
+writes are operations a cut can fall on, with torn states of their own (part way through
+the chip's erase or its write) and wear per page. The F411 demo keeps its rollback floor there in `f411-ee`, and
+`f411-ee-bug-no_invalidate` rewrites a record without clearing its old magic first: every
+clean cut passes it, and only the torn writes catch it.
+
 **OpenBLT adapter.** `adapters/openblt_f103` runs OpenBLT's Nucleo-F103RB demo, reprogrammed
 over the UART with its XCP protocol, and documents what it found there, and what the
 maintainer's fix (r1326) still leaves: 4 cuts inside the boot block after its checksum.

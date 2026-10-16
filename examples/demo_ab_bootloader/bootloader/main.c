@@ -60,6 +60,9 @@
  * EXT_FLASH (STM32F411 only) is not a bug either: the new image waits in an external SPI
  * NOR flash chip, and the rollback floor is kept there too.
  *
+ * EEPROM_FLOOR (STM32F411 only, not a bug) keeps the rollback floor in an I2C EEPROM.
+ * BUG_EE_NO_INVALIDATE with it rewrites a record without clearing its old magic first.
+ *
  * HOLD_PG is not a bug: it is the other common way to write flash, with PG left set
  * over a whole run of cells. A power cut can fall between any two of them.
  *
@@ -76,6 +79,10 @@ typedef struct {
     uint32_t floor;
     uint32_t magic;               /* written last: a torn record has no magic */
 } meta_t;
+
+#ifdef EEPROM_FLOOR
+static meta_t meta_copy[2];
+#endif
 
 #ifdef EXT_FLASH
 /* With an external flash chip the staged image is read into RAM once at start-up, and
@@ -142,9 +149,12 @@ static void consume_staging(void)
 
 static const meta_t *meta(uint32_t page)
 {
-#ifdef EXT_FLASH
+#if defined(EXT_FLASH)
     meta_t *m = &meta_copy[page == META_1];
     ext_read(page, m, sizeof *m);
+#elif defined(EEPROM_FLOOR)
+    meta_t *m = &meta_copy[page == META_1];
+    ee_read(page, m, sizeof *m);
 #else
     const meta_t *m = (const meta_t *)page;
 #endif
@@ -160,6 +170,17 @@ static void meta_store(uint32_t target, uint32_t seq, uint32_t floor)
     ext_erase_sector(target);
     ext_program(target, record, sizeof record);
     ext_program(target + 8, &magic, sizeof magic);
+#elif defined(EEPROM_FLOOR)
+    uint32_t record[3] = { seq, floor, META_MAGIC };
+    /* An EEPROM needs no erase, so the page may still hold an older record with a valid
+     * magic. Clear that first: a write cut short can leave anything in seq and floor, and
+     * the old magic would vouch for it. Then the record, then the magic. */
+#ifndef BUG_EE_NO_INVALIDATE
+    uint32_t none = 0;
+    ee_write(target + 8, &none, sizeof none);
+#endif
+    ee_write(target, record, 8);
+    ee_write(target + 8, &record[2], 4);
 #else
     flash_erase(target, 1);
     flash_word(target + 0, seq);
@@ -351,6 +372,9 @@ int main(void)
 #ifdef EXT_FLASH
     ext_init();
     ext_read(EXT_STAGING, staged, sizeof staged);
+#endif
+#ifdef EEPROM_FLOOR
+    ee_init();
 #endif
     uint32_t floor = meta_floor();
 

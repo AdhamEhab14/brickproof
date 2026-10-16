@@ -103,10 +103,11 @@ flashctl: Python.PythonPeripheral @ sysbus 0x4001E000
 bpState: Memory.MappedMemory @ sysbus 0x90000000
     size: 0x1000
 
-// How often each flash word was written since its page was erased (one byte a word),
-// kept here and not in the model because a CPU reset does not undo it on the chip.
+// How often each flash and UICR word was written since its erase (one byte a word), then
+// partial erase time per page, kept here and not in the model because a CPU reset does
+// not undo either on the chip.
 bpCounts: Memory.MappedMemory @ sysbus 0x93000000
-    size: 0x40000
+    size: 0x41000
 
 sysbus:
     init:
@@ -115,4 +116,3 @@ sysbus:
         Tag <0x10000014, 0x10000017> "CODESIZE" 0x100
         Tag <0x100000a0, 0x100000a3> "DEVICEADDRTYPE" 0x1
         Tag <0x100000a4, 0x100000a7> "DEVICEADDR[0]" 0xAABBCCDD
-        Tag <0x10001200, 0x10001203> "PSELRESET"
