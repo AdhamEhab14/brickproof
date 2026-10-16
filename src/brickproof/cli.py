@@ -1,6 +1,7 @@
 """brickproof run adapter.yaml      cut power during the update and judge each cut
 brickproof trace adapter.yaml    show what the update does to flash, uninterrupted
 brickproof export adapter.yaml   write the flash a cut leaves, to put on a real board
+brickproof adapter-from-zephyr   write an MCUboot adapter from a Zephyr build
 
 Exit codes: 0 every cut recovered, 1 at least one cut failed,
 2 the adapter is wrong, 3 BrickProof itself failed (Renode missing, crashed...).
@@ -293,6 +294,27 @@ def cmd_export(args):
     return 0
 
 
+def cmd_adapter_from_zephyr(args):
+    from brickproof import zephyr_adapter
+    try:
+        d = zephyr_adapter.describe(args.build)
+    except (OSError, KeyError, ValueError) as e:
+        print("adapter-from-zephyr: %s" % e, file=sys.stderr)
+        return 2
+    out_dir = os.path.dirname(os.path.abspath(args.out))
+    try:
+        images = os.path.relpath(os.path.abspath(args.images), out_dir)
+    except ValueError:                  # another drive (Windows): no relative path there
+        images = os.path.abspath(args.images)
+    text = zephyr_adapter.adapter_yaml(d, images, args.alive, args.expect)
+    _make_dirs(args.out)
+    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    print("%s: %s, %s, slot 0 at 0x%X, slot 1 at 0x%X" % (args.out, d["soc"], d["mode"],
+                                                          d["slot0"][0], d["slot1"][0]))
+    return 0
+
+
 def main(argv=None):
     # a Windows console in a legacy code page cannot print every character a device
     # may send; show a placeholder rather than die with an encoding error
@@ -344,6 +366,18 @@ def main(argv=None):
     e.add_argument("-o", "--out", default="state.bin", help="the flash image (default state.bin); "
                    "the other files go next to it")
     e.set_defaults(func=cmd_export)
+
+    z = sub.add_parser("adapter-from-zephyr", help="write an MCUboot adapter from a Zephyr build",
+                       description="Reads an MCUboot build folder (zephyr/zephyr.dts and "
+                                   "zephyr/.config) and writes an adapter for MCUboot and an app "
+                                   "whose signed images are in --images.")
+    z.add_argument("build", help="the MCUboot build folder `west build` made")
+    z.add_argument("--images", required=True,
+                   help="folder with mcuboot.elf, app_v1.img, app_v2_staged.img and app_v2.img")
+    z.add_argument("-o", "--out", default="adapter.yaml", help="the adapter to write")
+    z.add_argument("--alive", default="APP v[0-9]", help="regex: an app is running")
+    z.add_argument("--expect", default="APP v2", help="regex: the new app is running")
+    z.set_defaults(func=cmd_adapter_from_zephyr)
 
     args = p.parse_args(argv)
     return args.func(args)

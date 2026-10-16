@@ -1458,3 +1458,24 @@ is the depth exploration's job.
 **Checked** in Renode: `brickproof demo resume_copy --soak 10 --seed 1` (a bug only a torn
 program shows) failed at its 10th test, a torn program at op 73, after about 10 seconds. The
 correct demo with `--soak 3 --seed 1`: 1,038 tests (885 cuts, 153 torn states), no failure.
+
+## 2026-10-16: Adapters from a Zephyr build (plan item 20)
+
+Writing an MCUboot adapter by hand means copying numbers out of the board's devicetree. The
+build already has them all: `zephyr/zephyr.dts` (the devicetree after every overlay) gives the
+flash (base, size, write and erase block size), the RAM, the partitions and the console UART
+(`/chosen`), and an STM32 board's crystal (`clk_hse`); MCUboot's `zephyr/.config` gives the
+chip (`CONFIG_SOC`) and the upgrade mode (`CONFIG_BOOT_SWAP_USING_SCRATCH`, `_MOVE`, ...).
+`brickproof adapter-from-zephyr` reads those two files with a small parser of the flattened
+devicetree (nodes, labels, properties; no dtc needed) and writes the adapter, with the images
+folder relative to it.
+
+Only the MCUboot build is read: the app's devicetree carries the same partitions. What the
+devicetree does not say is the STM32F4's sector layout, so the chip table holds it for the
+parts BrickProof models. `--alive` and `--expect` name what the app prints (by default the
+test app's "APP v[0-9]" and "APP v2").
+
+**Checked**: from the Black Pill and nRF52840 DK builds (their devicetree and Kconfig are in
+tests/fixtures/zephyr), the generated adapters equal adapters/mcuboot/f411.yaml and
+nrf52840.yaml in every field a run uses (chip, flash layout, RAM, UART, crystal, firmware,
+driver options, oracle). The generated nRF52840 adapter, run with the CI settings: 111 of 111.

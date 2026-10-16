@@ -238,6 +238,15 @@ Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103). E
 brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
 ```
 
+For MCUboot built with Zephyr, the adapter can be written from the build:
+
+```bash
+brickproof adapter-from-zephyr build/mcuboot --images <folder with the signed images> -o adapter.yaml
+```
+
+It reads the chip, MCUboot's upgrade mode, the flash, the RAM, the slots, the console UART
+and an STM32 board's crystal from `zephyr/zephyr.dts` and `zephyr/.config`.
+
 ## In CI
 
 ```yaml

@@ -28,6 +28,11 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**Adapters from a Zephyr build.** `brickproof adapter-from-zephyr <MCUboot build folder>
+--images <folder>` writes an MCUboot adapter from the build's devicetree and Kconfig. For the
+Black Pill and the nRF52840 DK it gives the same adapter as the hand-written ones, and the
+generated nRF52840 adapter runs with the same result.
+
 **Soak runs.** `--soak MINUTES --seed N`: after the baseline, random clean cuts and torn
 states (powered up from the computed state) until the time is up or one fails, each with its
 reproduce and export commands. A soak on the demo's `resume_copy` bug finds it within 10
