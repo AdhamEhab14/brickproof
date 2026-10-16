@@ -13,6 +13,8 @@ GitHub's ubuntu-latest runner on 2026-10-16:
 | File | What |
 |---|---|
 | `nrf52840/nvs.elf`, `nvs.bin` | the workload on Zephyr NVS, 3 sectors of 4 KB at 0xF8000 |
+| `nrf52840/zms.elf`, `zms.bin` | the workload on ZMS, 3 sectors of 4 KB at 0xF8000 |
+| `nrf52840/settings_fcb.elf`, `settings_fcb.bin` | the workload on the settings subsystem's FCB backend, 3 sectors of 4 KB at 0xF8000 |
 | `nrf52840/littlefs.elf`, `littlefs.bin` | the workload on littlefs, the 32 KB storage partition at 0xF8000 |
 
 Each `.bin` is `arm-none-eabi-objcopy -O binary` of its ELF: the bytes loading the ELF puts
