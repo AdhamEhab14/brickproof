@@ -1786,3 +1786,75 @@ flash, which is m33mu's side.
 
 m33mu does not build on this machine (no Linux toolchain), so the H563 lane is checked on
 GitHub's runners only.
+
+## 2026-10-16: Low-power modes (plan item 4)
+
+Renode takes every WFI as a light sleep: any interrupt ends it, and RAM is intact. On the
+chip, WFI with SLEEPDEEP is Stop or Standby, and Standby loses RAM and ends in a reset. Both
+ways the plain emulator is wrong for an update: firmware that pauses in Standby either sleeps
+for ever (nothing wakes it: a false failure) or wakes with RAM it should have lost (a false
+pass).
+
+**STM32F1 and F4** (RM0008 and RM0383, PWR): a Python model at 0x40007000 (`stm32_pwr.py`,
+the same address on both) with CR (LPDS, PDDS, CWUF, CSBF) and CSR (WUF, SBF, EWUP). It sees
+the core enter WFI through Renode's WFI hook. SLEEPDEEP and PDDS: Standby, RAM zeroed, the
+core stopped, and a wake WAKE_AFTER_US later through a reset with SBF and WUF set. SLEEPDEEP
+alone: Stop, the SysTick held until the core leaves WFI (other timers keep counting in the
+emulator, which they do not on the chip: a known gap). nRST_STDBY / nRST_STOP cleared in the
+USER option byte (F1 bits 2 and 1, F4 bits 7 and 6): entering the mode resets at once, RAM
+kept. SBF, WUF and PWR's CR live in the state memory, because the reset that ends Standby
+reruns the model's script; CR is cleared by every reset and SBF by a power cycle, as a
+power-on reset does, which also cancels a wake still to come. The hook is set up the first
+time firmware touches PWR, which entering Standby or Stop always does.
+
+**The wake** cannot come from what started it on the board (an RTC alarm, the WKUP pin, a
+button), none of which a power-fail test drives, so the adapter says when:
+`low_power.wake_after`, 0.5 s unless given.
+
+**nRF52** (Product Specification, POWER): SYSTEMOFF powers the chip off, RAM is lost (RAM
+retention not modelled), and a wake comes back through a reset. Renode's NRF_CLOCK owns that
+register block, so this is a bus watchpoint on SYSTEMOFF (`nrf52_power.py`, included once
+when the machine is made). RESETREAS is not modelled.
+
+**Checked:** tests/renode/test_pwr_rules.py (Standby loses RAM and wakes with SBF set,
+nRST_STDBY cleared turns it into a reset with RAM kept, a power cycle clears SBF) and the
+nRF52 rule test for System OFF. The demo pauses an install once in Standby right after Slot A
+is erased (`STANDBY_PAUSE`, F1 and F411) and asks SBF whether it already has; every cut and
+torn state recovers. `BUG_STANDBY_RAM` keeps that in a RAM variable start-up leaves alone, so
+every wake pauses again: it fails at the baseline. The same bug build without the PWR model
+also fails, but because nothing ever wakes the core, and so would the correct build: the
+model is what lets the correct one pass.
+
+## 2026-10-16: Reset during an erase is covered by the torn states (plan item 3)
+
+The plan: when a watchdog or the firmware resets the chip during an erase, apply the measured
+torn shape if the reset falls in its first 50 us, else finish the erase. Both halves are
+already what happens. The measured shapes (`erase-early`, 4.5% of old 0 bits still 0, and
+`erase-late`, 0.35%) were measured with exactly that, a reset at a counted cycle (the torn
+kit, 2026-10-14), and every `--torn` campaign applies them at every erase. From 50 us on the
+measurement found the page fully erased, which is what the models do when a reset comes
+after the erase. So the flash a mid-erase reset leaves is already among the states tested.
+
+What a reset adds over a power cut is that RAM survives it. That only matters to firmware
+that keeps state in RAM across a reset (a `.noinit` variable), which the Standby work above
+now covers where it matters most. The plan's acceptance case, a demo bug that resets in the
+middle of an erase, is `f411-bug-watchdog` (a one-second sector erase under a half-second
+hardware watchdog), caught in CI since 2026-10-11.
+
+A separate path would only be needed if a real power loss turns out to tear an erase
+differently from a reset: that is the power-cut rig's question (item 27), not this one's.
+
+## 2026-10-16: SD cards, evaluated and left out (rest of plan item 10)
+
+The common bootloader case is reading: the update is a file on the card, written to flash.
+Reads change nothing a cut can tear, and every flash operation of such an update is counted
+as usual, so that case needs no model of ours. Renode has an SD card model of its own
+(`SD.SDCard`); adding it through `platform.extra` should cover it, but that is not tried
+here yet.
+
+Cuts during SD writes are a different matter. A card's controller remaps sectors behind its
+own flash translation layer, and what a power loss leaves behind there (the sector written,
+its neighbours, the mapping) is not documented by any card maker and differs between cards.
+Torn shapes for it would be invented, not measured, which this project does not do for its
+other memories. SD writes stay out until there is a measured basis, for instance from the
+power-cut rig on a few cards.

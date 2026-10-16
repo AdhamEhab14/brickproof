@@ -1,0 +1,14 @@
+# The demo pausing its install once in Standby, as a device on a supercap does to let it
+# recharge (see STANDBY_PAUSE in bootloader/main.c). Standby loses RAM and ends in a reset;
+# the bootloader knows it has paused from PWR's SBF and finishes the install. Every cut must
+# recover, the Standby included.
+extends: adapter.yaml
+name: demo_ab_bootloader_standby
+firmware:
+  - file: prebuilt/bootloader_standby.elf
+  - file: prebuilt/app_v1.img
+    addr: 0x08002000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0801E000
+low_power:
+  wake_after: 0.2                    # the wake source: an RTC alarm 200 ms later

@@ -267,7 +267,7 @@ def test_sectors_must_add_up_and_fit_the_chip(tmp_path):
 
 def test_the_f411_demo_and_its_bug_builds_load():
     names = [n for n in os.listdir(DEMO) if n.startswith("f411") and n.endswith(".yaml")]
-    assert len(names) == 18
+    assert len(names) == 20
     for n in names:
         ad = adapters.load(os.path.join(DEMO, n))
         assert ad.platform == "stm32f411" and ad.flash.sectors

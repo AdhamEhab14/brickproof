@@ -68,6 +68,12 @@
  * whatever it was reading as invalid. BUG_NO_ECC_NMI leaves the NMI to the default
  * handler, which hangs.
  *
+ * STANDBY_PAUSE (STM32F1 and F4, not a bug) pauses an install once in Standby, as a device on
+ * a supercap does to let it recharge, and carries on after the wake. Standby loses RAM: the
+ * wake is a reset, so the bootloader asks PWR's SBF whether it has already paused.
+ * BUG_STANDBY_RAM keeps that in a RAM variable start-up leaves alone instead, which the chip
+ * does not keep through Standby: it pauses for ever.
+ *
  * HOLD_PG is not a bug: it is the other common way to write flash, with PG left set
  * over a whole run of cells. A power cut can fall between any two of them.
  *
@@ -287,6 +293,51 @@ static void meta_write(uint32_t floor)
 
 /* ---- install -------------------------------------------------------------- */
 
+#ifdef STANDBY_PAUSE
+#define PWR_CR         REG(0x40007000u)
+#define PWR_CSR        REG(0x40007004u)
+#define SCB_SCR        REG(0xE000ED10u)
+#define PWR_CR_PDDS    (1u << 1)
+#define PWR_CR_CWUF    (1u << 2)
+#define PWR_CR_CSBF    (1u << 3)
+#define PWR_CSR_SBF    (1u << 1)
+#define PAUSED         0x50415553u   /* "PAUS" */
+
+#ifdef BUG_STANDBY_RAM
+__attribute__((section(".noinit"))) static uint32_t paused;
+#endif
+
+/* Pause once in Standby. The wake is a reset: main() starts over and finds the install to do. */
+static void pause_in_standby(void)
+{
+#ifdef BUG_STANDBY_RAM
+    if (paused == PAUSED)
+        return;
+    paused = PAUSED;
+#else
+    if (PWR_CSR & PWR_CSR_SBF)
+        return;                           /* this boot is the wake: carry on */
+#endif
+    RCC_APB1ENR |= (1u << 28);            /* PWR */
+    PWR_CR |= PWR_CR_CWUF | PWR_CR_PDDS;
+    SCB_SCR |= (1u << 2);                 /* SLEEPDEEP */
+    __asm volatile("dsb\n wfi");
+    for (;;)
+        ;
+}
+
+/* The install is done: the next one may pause again. */
+static void standby_done(void)
+{
+#ifndef BUG_STANDBY_RAM
+    PWR_CR |= PWR_CR_CSBF;
+#endif
+}
+#else
+#define pause_in_standby() ((void)0)
+#define standby_done() ((void)0)
+#endif
+
 #ifdef BUG_NWRITE
 /* One bit per step, cleared in the staged image's unused header area. */
 static void progress(uint32_t step)
@@ -395,6 +446,7 @@ static void install(void)
 #endif
     flash_erase(SLOT_A, IMG_OFFSET + body);
 #endif
+    pause_in_standby();                   /* Slot A erased: the worst moment for it */
     progress(1);
 #ifdef BUG_TRUST_HEADER
     copy_cells(SLOT_A, SLOT_B, sizeof(img_hdr_t));
@@ -412,6 +464,7 @@ static void install(void)
 #ifdef BUG_NAIVE_FLOOR
     meta_write(version);
 #endif
+    standby_done();
     flash_lock();
 }
 

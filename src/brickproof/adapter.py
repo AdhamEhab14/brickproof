@@ -69,6 +69,7 @@ class Adapter:
     link_cuts: dict = None        # break the host's link mid-session (see runner.run_link)
     bit_errors: dict = None       # bits flipped in a stored image while off (see bit_errors.py)
     hse: int = 8000000            # the board's crystal or external clock, in Hz
+    wake_after: float = 0.5       # seconds a wake source takes to end Standby / System OFF
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
     driver_options: dict = field(default_factory=dict)
@@ -483,6 +484,15 @@ def _parse_bit_errors(scenario, oracle):
     return out
 
 
+def _wake_after(d):
+    """low_power.wake_after: how long after the chip goes into Standby (or an nRF52 into System
+    OFF) its wake source brings it back, in seconds: the RTC alarm or button the board uses."""
+    v = (d.get("low_power") or {}).get("wake_after", 0.5)
+    if not isinstance(v, (int, float)) or not 0 < v <= 3600:
+        raise AdapterError("low_power.wake_after: seconds, above 0")
+    return float(v)
+
+
 def _parse_oracle(d, target):
     """The `oracle:` section, with image paths made absolute. None if there is none."""
     o = d.get("oracle")
@@ -573,6 +583,22 @@ def load(path, target=None):
                                               int(read_protected),
                                               bool(fl.get("hardware_watchdog", False)),
                                               pcrop=fl.get("pcrop") or [])
+    reset_on = fl.get("reset_on") or []
+    if reset_on:
+        # nRST_STOP / nRST_STDBY cleared: entering that low-power mode resets the chip instead
+        if not isinstance(reset_on, list) or not set(reset_on) <= {"stop", "standby"}:
+            raise AdapterError("flash.reset_on: a list of stop and standby")
+        # where USER is in the option bytes, and its two bits, on the chips that have them
+        where = {"stm32f1_flash.py": (2, {"stop": 1, "standby": 2}),
+                 "stm32f4_flash.py": (0, {"stop": 6, "standby": 7})}.get(chip["model"])
+        if where is None:
+            raise AdapterError("flash.reset_on: nRST_STOP and nRST_STDBY are STM32F1 and F4 option bits")
+        ob = bytearray(flash.option_bytes)
+        at, bits = where
+        for mode in reset_on:
+            ob[at] &= ~(1 << bits[mode]) & 0xFF
+        ob[at + (1 if at == 2 else 2)] = ~ob[at] & 0xFF      # and its complement
+        flash.option_bytes = bytes(ob)
     uicr = fl.get("uicr")
     if uicr:
         # UICR words as the device ships (nRF52 only): {offset: value}, for example REGOUT0
@@ -679,6 +705,7 @@ def load(path, target=None):
         mips=cpu.get("mips", chip.get("mips", 72)),
         reset_cmds=_parse_pins(d) + list(d.get("reset", [])),
         hse=int((d.get("clock") or {}).get("hse", 8000000)),
+        wake_after=_wake_after(d),
         boot_settle=float(d.get("boot_settle", 1.5)),
         cut_limit=float(scenario.get("cut_limit", 30.0)),
         update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),

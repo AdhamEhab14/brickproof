@@ -131,3 +131,13 @@ def test_an_acl_region_without_read_permission_reports_reads(chip):
     assert chip.read_word(READS + 4) == 0x10010
     fresh(chip)                                     # a reset clears the ACL
     assert chip.read_word(ACL0 + 0x8) == 0
+
+
+def test_system_off_loses_ram_and_wakes_through_a_reset(chip):
+    fresh(chip)
+    chip.write_word(0x2003F000, 0x12345678)                    # something in RAM
+    store(chip, 0x40000500, 1)                                  # SYSTEMOFF
+    assert chip.read_word(0x2003F000) == 0                      # RAM lost power
+    assert "True" in chip.cmd("sysbus.cpu IsHalted")            # off
+    chip.run_for(chip.adapter.wake_after + 0.1)
+    assert "False" in chip.cmd("sysbus.cpu IsHalted")           # woken, through a reset

@@ -47,6 +47,10 @@ MEMORIES = {
 }
 
 
+# Where USER is in each chip's option bytes and which of its bits are nRST_STOP and nRST_STDBY
+PWR_USER = {"stm32f103": (2, 1, 2), "stm32f411": (0, 6, 7)}
+
+
 def holes(adapter):
     """[(name, first address, size)] of the ranges that do not exist on the chip.
     Each gets a mem_guard, so an access there is a recorded fault, not a silent 0."""
@@ -161,6 +165,21 @@ def prepare(workdir, adapter):
             text = _set_trace_file(text, "%s/%s" % (_slash(workdir), TRACE_NAME))
         elif name.endswith("_rcc.py"):
             text = _set_const(text, "HSE_HZ", adapter.hse)
+        elif name == "nrf52_power.py":
+            if adapter.platform != "nrf52840":
+                continue
+            for const, value in (("RAM_BASE", adapter.ram_base), ("RAM_SIZE", adapter.ram_size),
+                                 ("WAKE_AFTER_US", int(adapter.wake_after * 1e6))):
+                text = _set_const(text, const, value)
+        elif name == "stm32_pwr.py":
+            if adapter.platform not in PWR_USER:
+                continue                        # the F1 and F4's PWR only
+            at, stop, standby = PWR_USER[adapter.platform]
+            for const, value in (("RAM_BASE", adapter.ram_base), ("RAM_SIZE", adapter.ram_size),
+                                 ("OB_USER", adapter.flash.ob_base + at), ("NRST_STOP_BIT", stop),
+                                 ("NRST_STDBY_BIT", standby),
+                                 ("WAKE_AFTER_US", int(adapter.wake_after * 1e6))):
+                text = _set_const(text, const, value)
         with open(os.path.join(models, name), "w", newline="\n") as f:
             f.write(text)
 
@@ -197,6 +216,12 @@ def prepare(workdir, adapter):
                  '    traceFile: "%s/%s"\n    pageSize: %d\n    addressBytes: %d\n    timing: %d\n' % (
                      f.eeprom_bus, f.eeprom_i2c, f.eeprom_size, f.eeprom_base, STATE_BASE, _slash(workdir),
                      TRACE_NAME, f.eeprom_page, f.eeprom_address_bytes, f.timing))
+    # the PWR controller's low-power modes (models/stm32_pwr.py), in place of Renode's
+    if adapter.platform in PWR_USER:
+        if adapter.platform == "stm32f411":
+            repl += "\npwr: @ none\n"
+        repl += ('\nlowPower: Python.PythonPeripheral @ sysbus 0x40007000\n    size: 0x400\n'
+                 '    initable: true\n    filename: "%s/stm32_pwr.py"\n' % _slash(models))
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):
         text = _set_const(guard, "GUARD_BASE", base)

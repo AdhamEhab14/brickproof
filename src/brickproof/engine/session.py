@@ -47,6 +47,8 @@ REG_PCROP_READS = 0x150         # STM32F4: data reads of proprietary-code (PCROP
 REG_PCROP_AT = 0x154
 REG_ECC_BROKEN = 0x160          # STM32L4: double words whose ECC does not match (internal)
 ECC_MAP = 0x94000000            # STM32L4: the flash model's ECC map, a byte per double word
+STATE_PWR_FLAGS = 0x90000000 + 4 * 41     # the PWR model's SBF and WUF (models/stm32_pwr.py)
+STATE_PWR_ASLEEP = 0x90000000 + 4 * 45    # and the Standby a wake is due for
 EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to compare flash with
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
                "W": "protected", "Q": "partial_erase"}
@@ -310,6 +312,8 @@ class RenodeSession:
         if self.flash.eeprom_size:
             self.cmd("include @models/BpI2cEeprom.cs", timeout=120)
         self.cmd("machine LoadPlatformDescription @platform.repl")
+        if os.path.exists(os.path.join(self.workdir, "models", "nrf52_power.py")):
+            self.cmd("include @models/nrf52_power.py")        # System OFF (see the file)
         self._check_memory_sizes()
         # Renode's flash starts as 0x00; real erased flash reads 0xFF. The option bytes
         # go in with it, before anything reads them.
@@ -870,7 +874,11 @@ class RenodeSession:
         self.cmd_batch(["%s ZeroAll" % self.ram, "cpu IsHalted false",
                         self._set(REG_CUTPOINT, NEVER), self._set(REG_CUT_PAGE, NEVER),
                         self._set(REG_OPCOUNT, 0), self._set(REG_FAULT_ADDR, 0),
-                        self._set(REG_FAULT_PC, 0), self._set(REG_PENDING, 0)]
+                        self._set(REG_FAULT_PC, 0), self._set(REG_PENDING, 0),
+                        # the PWR model's wake flags and pending wake (models/stm32_pwr.py):
+                        # a power-on reset clears them
+                        "sysbus WriteDoubleWord 0x%X 0" % (STATE_PWR_FLAGS),
+                        "sysbus WriteDoubleWord 0x%X 0" % (STATE_PWR_ASLEEP)]
                        + (["%s PowerCycle" % self._ext] if self.flash.ext_size else [])
                        + self._reset_lines())
         self.rx.clear()

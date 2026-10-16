@@ -102,6 +102,11 @@ jobs:
             torn: true
           - adapter: bug-early_unpg    # every second cell stored after PG was cleared
             expect: 1
+          - adapter: standby           # an install paused once in Standby: RAM lost, back by a reset
+            expect: 0
+            torn: true
+          - adapter: bug-standby_ram   # "already paused" kept in RAM: pauses for ever
+            expect: 1
           # the same demo on an STM32F411: sector erase, word programming, other option bytes
           - adapter: f411
             expect: 0
@@ -133,6 +138,11 @@ jobs:
             expect: 0
             torn: true
           - adapter: f411-bug-early_unpg
+            expect: 1
+          - adapter: f411-standby
+            expect: 0
+            torn: true
+          - adapter: f411-bug-standby_ram
             expect: 1
           - adapter: f411-ext          # staged image and rollback floor in an external SPI NOR chip
             expect: 0

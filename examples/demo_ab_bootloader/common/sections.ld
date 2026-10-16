@@ -28,4 +28,7 @@ SECTIONS
         . = ALIGN(4);
         _ebss = .;
     } > RAM
+
+    /* not cleared at start-up: what firmware hopes is still there after a reset */
+    .noinit (NOLOAD) : { *(.noinit*) } > RAM
 }

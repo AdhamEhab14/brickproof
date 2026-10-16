@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Low-power modes.** On the STM32F1 and F4, Standby loses RAM and wakes through a reset with
+SBF set, Stop stops the SysTick until an interrupt, and `flash.reset_on` makes entering either
+reset instead (nRST_STDBY, nRST_STOP). The nRF52's System OFF loses RAM and wakes through a
+reset. `low_power.wake_after` says when the board's wake source comes. The demo pauses an
+install in Standby (`standby`, `f411-standby`); `bug-standby_ram` keeps "already paused" in
+RAM and never finishes.
+
 **A fourth chip family: the STM32L476.** Renode has no L4, so BrickProof writes its own
 platform, with a flash controller model for the flash the L4, G0, G4, WB and WL share:
 2 KB pages in two banks, 64-bit programs written once, the chip's error flags, and ECC. A

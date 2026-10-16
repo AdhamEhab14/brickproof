@@ -44,7 +44,9 @@ CHIPS = [
                                                          "bootloader_ext_bug_consume_first",
                                                          "bootloader_ee",
                                                          "bootloader_ee_bug_no_invalidate",
-                                                         "bootloader_bug_no_ecc_nmi")),
+                                                         "bootloader_bug_no_ecc_nmi",
+                                                         "bootloader_standby",
+                                                         "bootloader_bug_standby_ram")),
     # the L4: double words with ECC. A 2 KB page erase is far shorter than the watchdog's
     # timeout, the option-byte bug is F-series code, and the external memories are wired
     # up on the F411 only
@@ -54,13 +56,16 @@ CHIPS = [
                                                          "bootloader_ext",
                                                          "bootloader_ext_bug_consume_first",
                                                          "bootloader_ee",
-                                                         "bootloader_ee_bug_no_invalidate")),
+                                                         "bootloader_ee_bug_no_invalidate",
+                                                         "bootloader_standby",
+                                                         "bootloader_bug_standby_ram")),
     # the H563 (on m33mu): the option-byte and watchdog bugs are F-series code, and the
     # external memories are wired up on the F411 only
     ("h563_", ["-mcpu=cortex-m33", "-DSTM32H5"], "_h563",
      ("bootloader_bug_self_lock", "bootloader_bug_watchdog", "bootloader_bug_nwrite",
       "bootloader_ext", "bootloader_ext_bug_consume_first", "bootloader_ee",
-      "bootloader_ee_bug_no_invalidate", "bootloader_bug_no_ecc_nmi")),
+      "bootloader_ee_bug_no_invalidate", "bootloader_bug_no_ecc_nmi",
+     "bootloader_standby", "bootloader_bug_standby_ram")),
 ]
 LDFLAGS = ["-Wl,--gc-sections", "-Lcommon", "-lgcc"]
 COMMON = ["common/startup.c", "common/uart.c"]
@@ -88,6 +93,9 @@ BOOTLOADERS = {
     "bootloader_ee_bug_no_invalidate": ["-DEEPROM_FLOOR", "-DBUG_EE_NO_INVALIDATE"],
     # an ECC error's NMI left to the default handler (the L4 only)
     "bootloader_bug_no_ecc_nmi": ["-DBUG_NO_ECC_NMI"],
+    # not a bug: an install paused once in Standby (the F1 and the F4); and its bug
+    "bootloader_standby": ["-DSTANDBY_PAUSE"],
+    "bootloader_bug_standby_ram": ["-DSTANDBY_PAUSE", "-DBUG_STANDBY_RAM"],
 }
 APP_VERSIONS = (1, 2)
 META_MAGIC = 0x4D455441

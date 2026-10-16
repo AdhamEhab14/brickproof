@@ -37,6 +37,7 @@ flash:
     - {from: 0x08000000, size: 0x4000}
   read_protected: false        # true: RDP level 1 (nRF52: APPROTECT); 2: level 2 (STM32F4), for good
   # uicr: {0x304: 5}           # nRF52: UICR words as shipped, by offset (here REGOUT0 = 3.3 V)
+  # reset_on: [standby]        # STM32F1/F4: nRST_STDBY / nRST_STOP cleared: entering the mode resets
   # pcrop:                     # STM32F4: sectors of proprietary code (SPRMOD), instead of
   #   - {from: 0x08060000, size: 0x20000}   # write_protected: run only, no data reads
   hardware_watchdog: false     # WDG_SW cleared: the watchdog runs from reset, unstoppable
@@ -135,6 +136,14 @@ The run is only worth something if the emulated chip is the chip you ship.
   region it blocks fails the run as write protection, a read it blocks as a protected read.
   Partial erase (ERASEPAGEPARTIAL) erases a page once the steps add up to tERASEPAGE (85 ms);
   until then the page holds the old data with some bits already flipped to 1.
+- Low-power modes. On an STM32F1 or F4, WFI with SLEEPDEEP set enters Stop (RAM kept, the
+  SysTick stopped until an interrupt wakes the core) or, with PWR's PDDS, Standby: RAM is
+  lost and the chip comes back through a reset with SBF set. `flash.reset_on` clears
+  nRST_STOP / nRST_STDBY, so that entering the mode resets the chip instead. On an nRF52,
+  SYSTEMOFF powers the chip off the same way (RAM lost, back through a reset; RESETREAS is
+  not modelled). `low_power.wake_after` (seconds, 0.5 unless you say otherwise) is when the
+  board's wake source (an RTC alarm, a button) ends Standby or System OFF. Without this a
+  plain emulator would keep RAM through Standby, or never wake from it.
 - `flash.hardware_watchdog`: true if the option bytes make the independent watchdog a
   hardware one. It then runs from reset with its default timeout (about 0.4 s on an F1,
   0.5 s on an F4), and a chip that stands still through a long erase gets reset.
