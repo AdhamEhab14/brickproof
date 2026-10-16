@@ -73,7 +73,9 @@ operations each step spans, and after a cut checks that the store mounts, holds 
 a finished step left, returns nothing half-written, and takes and keeps a new write.
 `adapters/zephyr_storage` runs it on Zephyr's NVS, ZMS, settings on FCB and littlefs on the
 nRF52840 DK, from prebuilt firmware. NVS and littlefs recovered at every distinct flash
-state; ZMS loses the next write after a cut inside a value (zephyrproject-rtos/zephyr#121747).
+state; ZMS loses the next write after a cut inside a value (zephyrproject-rtos/zephyr#121747);
+settings on FCB can return a half-written value (reported as #122446) or erase its newest
+settings after a cut in a sector header (added to #121749).
 A driver can now be told which update operation each result was cut at (`judging()`).
 
 **MCUboot and the nRF52840 in CI.** `adapters/mcuboot/prebuilt` holds MCUboot and the test

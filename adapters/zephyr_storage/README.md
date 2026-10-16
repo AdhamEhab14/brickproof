@@ -72,7 +72,24 @@ word reads 9 AND 1 = 1. This is the open report
 [zephyrproject-rtos/zephyr#121747](https://github.com/zephyrproject-rtos/zephyr/issues/121747)
 (foggynoggun, 2026-10-09), here on word-written flash with no setup beyond the workload.
 
-**Settings on FCB:** results being written up.
+**Settings on FCB: two ways to lose settings.** 2,314 flash operations; of the 2,314
+distinct flash states, 2,305 recover.
+
+- 7 cuts inside a setting's data leave an entry that FCB takes as complete: FCB marks an entry
+  done with a CRC-8 written after the data, and when the CRC-8 of what reached flash happens
+  to be 0xFF, the still-erased marker slot matches it. Settings then hands the application a
+  value with its tail still erased (14 to 146 bytes of it), with no error. Each of the 7 was
+  checked byte by byte (computed CRC-8 0xFF, marker 0xFF). About one cut in 256 inside an
+  entry does this. Reported as
+  [zephyrproject-rtos/zephyr#122446](https://github.com/zephyrproject-rtos/zephyr/issues/122446).
+- 2 cuts inside a new sector's header, after its magic word: `fcb_sector_hdr_read()` checks
+  only the magic, so the sector counts as valid with the erased id 0xFFFF, which
+  `FCB_ID_GT()` reads as -1, the oldest. With no free sector after the active one,
+  `settings_fcb_src()` takes the state for a reset while a sector was emptied and erases the
+  active sector, which holds the newest settings: all of them gone (op 1006), or all back to
+  older values (op 2030), and settings comes up without an error. Added to the open report
+  [zephyrproject-rtos/zephyr#121749](https://github.com/zephyrproject-rtos/zephyr/issues/121749),
+  where the cut inside the magic gives a permanent `-ENOMSG` instead.
 
 The configs here leave each library at its defaults, apart from the sizes above and
 littlefs's cache (256 bytes, so the values stay inline in its metadata and 8 keys fit 8

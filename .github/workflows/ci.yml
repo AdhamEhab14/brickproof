@@ -275,8 +275,8 @@ jobs:
 
   # Zephyr's flash stores from their committed prebuilt workload, judged by the storage
   # driver. NVS and littlefs must recover from every cut; ZMS loses a write after a cut
-  # inside a value (zephyrproject-rtos/zephyr#121747), so it must be caught until that is
-  # fixed upstream.
+  # inside a value (zephyrproject-rtos/zephyr#121747) and settings on FCB loses settings
+  # (#122446, #121749), so those must be caught until they are fixed upstream.
   storage:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -287,6 +287,7 @@ jobs:
           - {store: nvs, expect: 0}
           - {store: littlefs, expect: 0}
           - {store: zms, expect: 1}
+          - {store: settings_fcb, expect: 1}   # zephyrproject-rtos/zephyr#122446 and #121749
     name: storage (${{ matrix.store }})
     env:
       RENODE_VERSION: "1.17.0"
