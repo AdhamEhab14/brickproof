@@ -6,6 +6,7 @@
 # action, docker, package - the three ways BrickProof is handed to someone else, each
 #         built and used for real.
 # mcuboot - MCUboot from its prebuilt files on the Black Pill and the nRF52840 DK.
+# storage - Zephyr's flash stores (NVS, littlefs, ZMS) under the storage workload.
 # e2e   - builds the Three-Tier bootloader (the first real target), then cuts power
 #         during its FBL self-update in Renode and checks it recovers each time.
 name: CI
@@ -270,6 +271,68 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mcuboot-${{ matrix.board }}-${{ strategy.job-index }}
+          path: brickproof-out/
+
+  # Zephyr's flash stores from their committed prebuilt workload, judged by the storage
+  # driver. NVS and littlefs must recover from every cut; ZMS loses a write after a cut
+  # inside a value (zephyrproject-rtos/zephyr#121747), so it must be caught until that is
+  # fixed upstream.
+  storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {store: nvs, expect: 0}
+          - {store: littlefs, expect: 0}
+          - {store: zms, expect: 1}
+    name: storage (${{ matrix.store }})
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Cut power during the storage workload
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          flags="-j 3"
+          if [ "${{ matrix.expect }}" = 1 ]; then flags="--fail-fast"; fi
+          set +e
+          brickproof run adapters/zephyr_storage/${{ matrix.store }}.yaml $flags \
+            --json brickproof-out/${{ matrix.store }}.json --junit brickproof-out/${{ matrix.store }}.xml \
+            --html brickproof-out/${{ matrix.store }}.html
+          code=$?
+          echo "exit code $code, expected ${{ matrix.expect }}"
+          [ "$code" = "${{ matrix.expect }}" ]
+
+      - name: Upload results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-${{ matrix.store }}
           path: brickproof-out/
 
   # the GitHub Action, used the way another repository would use it

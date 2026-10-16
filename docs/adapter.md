@@ -149,6 +149,23 @@ apply it on the next boot (MCUboot's overwrite mode, most OTA designs). Options:
 | `boot_timeout` | virtual seconds to wait for those (default 2). A recovery that erases a large sector needs more |
 | `rollback` | optional `{image, forbidden}`: after recovering, stage this older image and reboot. The device must not print `forbidden` |
 
+**`builtin: storage`** is for flash storage libraries (a key-value store, a file system).
+The firmware runs a fixed workload of writes and deletes and speaks a small line protocol
+over the UART (see the top of
+[drivers/storage.py](../src/brickproof/drivers/storage.py); the reference firmware is
+[adapters/zephyr_storage/app](../adapters/zephyr_storage/app)). Before the cuts, the driver
+runs the workload a step at a time and notes the flash operations each step spans. After a
+cut before operation N it knows which steps had finished, and checks that the store mounts
+without being formatted again, holds every finished step's value (or the one under way),
+returns nothing half-written, and takes a new write that is still there after one more
+power cycle. Options:
+
+| Option | Meaning |
+|---|---|
+| `keys` | how many keys the workload uses (default 8); the probe key is the next one |
+| `probe_gen` | the generation the probe writes (default 9999) |
+| `boot_timeout` | virtual seconds to wait for the firmware's `READY` (default 5) |
+
 **`file: driver.py`** is for updates started over a protocol. The file defines
 `make_driver(session, adapter)` returning an object with:
 
@@ -160,6 +177,7 @@ apply it on the next boot (MCUboot's overwrite mode, most OTA designs). Options:
 | `check_recovered()` | `(ok, message)` after a cut and a power cycle |
 | `oracle_images()` | optional: approved images known only at run time, as `{name: (bytes, address)}` |
 | `export_state()`, `import_state(state)` | optional: lets several emulators (`--jobs`) start from exactly the same bytes |
+| `judging(update_op)` | optional: told, before each verdict, which operation of the update the (first) cut fell before (`None` for the update left to finish) |
 
 Set `update_on_boot = True` on the driver if the reset itself starts the update, as
 `staged_slot` does. The `session` gives you the UART (`uart_write`, `uart_text`), time

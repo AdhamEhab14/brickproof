@@ -138,11 +138,16 @@ def _rewind_program(session, golden, res):
         res.rewound = True
 
 
-def _verdict(session, driver, adapter, res, oracle):
+def _verdict(session, driver, adapter, res, oracle, update_op=None):
     """Power up and judge. Three voices, and any one of them can fail the run: what
     the chip would not have allowed, the oracle (from outside the firmware), and the
     driver (the firmware's own signs of life). A power cycle clears the fault latch,
-    so it is read before each one."""
+    so it is read before each one.
+
+    `update_op` is the operation of the update the (first) cut fell before, None for
+    the update left to finish. A driver that judges by it has a judging() method."""
+    if hasattr(driver, "judging"):
+        driver.judging(update_op)
     session.power_cycle(settle=adapter.boot_settle)     # RAM gone, flash as it was left
     res.alive = bool(driver.alive())
     fault = _fault_message(session)
@@ -235,7 +240,7 @@ def run_cut(session, driver, adapter, cut, golden):
             res.message = "cut landed on %s 0x%08X, expected %s 0x%08X" % (
                 res.kind, addr, KIND_NAMES[cut.expect[0]], cut.expect[1])
             return res
-        _verdict(session, driver, adapter, res, golden.oracle)
+        _verdict(session, driver, adapter, res, golden.oracle, res.op_index)
         return res
     except MachineHung:
         # a locked-up CPU leaves Renode unusable; start a fresh one for the next cut
@@ -256,7 +261,7 @@ def run_torn(session, driver, adapter, state, golden):
     t0 = time.time()
     try:
         session.restore_flash(state.image)
-        _verdict(session, driver, adapter, res, golden.oracle)
+        _verdict(session, driver, adapter, res, golden.oracle, state.op_index)
         return res
     except MachineHung:
         res.message = "the device locked up (emulated CPU stopped making progress)"
@@ -277,7 +282,7 @@ def run_computed(session, driver, adapter, cut, golden):
     t0 = time.time()
     try:
         session.restore_flash(bytes(golden.replay.at(cut.at_op)))
-        _verdict(session, driver, adapter, res, golden.oracle)
+        _verdict(session, driver, adapter, res, golden.oracle, cut.at_op)
         return res
     except MachineHung:
         res.message = "the device locked up (emulated CPU stopped making progress)"
@@ -328,7 +333,8 @@ def run_deep(session, driver, adapter, parent, m, name, level, state, real):
             parent.verify(session, m, "recovery cut %s" % name)
         else:
             session.restore_flash(state)
-        _verdict(session, driver, adapter, res, parent.oracle)
+        # the update operation the first cut fell before: "op-N > op-M ..."
+        _verdict(session, driver, adapter, res, parent.oracle, int(name.split(" ")[0][3:]))
         return res
     except MachineHung:
         res.message = "the device locked up (emulated CPU stopped making progress)"

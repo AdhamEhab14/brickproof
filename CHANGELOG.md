@@ -28,6 +28,15 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**Flash storage libraries.** A built-in `storage` driver for key-value stores and file
+systems: the firmware runs a fixed workload over the UART, the driver learns which flash
+operations each step spans, and after a cut checks that the store mounts, holds every value
+a finished step left, returns nothing half-written, and takes and keeps a new write.
+`adapters/zephyr_storage` runs it on Zephyr's NVS, ZMS, settings on FCB and littlefs on the
+nRF52840 DK, from prebuilt firmware. NVS and littlefs recovered at every distinct flash
+state; ZMS loses the next write after a cut inside a value (zephyrproject-rtos/zephyr#121747).
+A driver can now be told which update operation each result was cut at (`judging()`).
+
 **MCUboot and the nRF52840 in CI.** `adapters/mcuboot/prebuilt` holds MCUboot and the test
 app built for both boards, so the adapters run with no Zephyr workspace. CI runs both
 (`mcuboot (f411)`, `mcuboot (nrf52840)`) and the nRF52840 demo builds.
