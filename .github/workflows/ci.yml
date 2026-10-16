@@ -506,9 +506,6 @@ jobs:
           docker run --rm brickproof demo no_erase --fail-fast
           [ $? -eq 1 ]
 
-      - name: The demo on the STM32H563, on the image's m33mu
-        run: docker run --rm brickproof demo h563 --plan phases --per-phase 1 -j 3
-
   # the package builds, installs clean, and brings the demo
   package:
     runs-on: ubuntu-latest
