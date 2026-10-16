@@ -72,7 +72,10 @@ part of the block after the checksum first, then the part up to and including it
 checksum is last and nothing is written twice.
 
 Reported to Feaser on 2026-10-13 (the GitHub repository is a read-only mirror and takes no
-issues).
+issues). Their answer, 2026-10-16: the remaining window is accepted as it is, since a power
+cut while the boot block is being written is very unlikely, and Feaser's improved checksum
+add-on closes it for users who want that. So with the standard checksum, this adapter's run
+on `62786e72` is expected to fail those 4 cuts.
 
 ## A broken link
 
