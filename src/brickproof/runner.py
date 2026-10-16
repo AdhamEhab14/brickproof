@@ -2,6 +2,7 @@
 image, pull the plug, power back up and ask whether the device recovered."""
 import hashlib
 import os
+import random
 import shutil
 import tempfile
 import threading
@@ -382,6 +383,37 @@ def bit_errors(pool, adapter, golden, out, on_result=None, fail_fast=False):
     out.results += results
 
 
+def soak(pool, adapter, golden, out, on_result=None):
+    """Random tests until a deadline or the first failure: a clean cut before a random
+    operation (powered up from the computed state), or that operation left half done in a
+    random torn shape. Seeded, so the same seed draws the same tests."""
+    seconds, seed = adapter.soak
+    rng = random.Random("soak/%s" % seed)
+    kinds = list(getattr(adapter, "torn", None) or torns.KINDS)
+    deadline = time.time() + seconds
+    n_ops = len(golden.ops)
+
+    def one(session, driver, task):
+        n, kind = task
+        if kind is None:
+            return run_computed(session, driver, adapter, Cut(name="soak op-%d" % n, at_op=n), golden)
+        before = bytes(golden.replay.at(n))
+        states = torns.states(golden.ops[n], before, adapter.flash, (kind,), adapter.torn_seed)
+        if not states:              # that shape does not apply here: a clean cut instead
+            return run_computed(session, driver, adapter, Cut(name="soak op-%d" % n, at_op=n), golden)
+        res = run_torn(session, driver, adapter, states[0], golden)
+        res.cut = "soak " + res.cut
+        return res
+
+    while time.time() < deadline and n_ops:
+        tasks = [(rng.randrange(n_ops), rng.choice(kinds) if rng.random() < 0.4 else None)
+                 for _ in range(len(pool))]
+        results = pool.run(one, tasks, on_result, _failed)
+        out.results += results
+        if any(_failed(r) for r in results):
+            return
+
+
 def link_points(total, n):
     """n byte counts spread over a session of `total` bytes, the first and last byte
     included: where to break the link."""
@@ -665,6 +697,9 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     if on_plan:
         on_plan(out.plan)
     if baseline_only:
+        return out
+    if getattr(adapter, "soak", None):
+        soak(pool, adapter, golden, out, on_result)
         return out
     stop = _failed if fail_fast else None
 

@@ -118,6 +118,9 @@ def cmd_run(args):
         ad.plan = dict(ad.plan, real_every=args.real_every)
     if args.per_phase is not None and not args.cut:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
+    if args.soak:
+        ad.soak = (args.soak * 60.0, args.seed)
+        ad.plan = ad.plan or {"mode": "phases"}
     if args.shard:
         try:
             k, n = (int(x) for x in args.shard.split("/"))
@@ -198,7 +201,11 @@ def cmd_run(args):
                   sum(r.passed for r in deep), len(deep),
                   min(out.depth["levels"], out.depth.get("deepest", 1)),
                   out.depth["skipped_known"], note))
-    if ad.plan and out.plan:
+    if getattr(ad, "soak", None):
+        print("soak: %d random tests in %.1f of the %.0f minutes allowed, seed %d%s" % (
+            len(out.results) - 1, out.timings.get("total_s", 0) / 60, ad.soak[0] / 60, ad.soak[1],
+            ", stopped at the first failure" if not out.passed else ""))
+    elif ad.plan and out.plan:
         print("coverage: %s" % out.plan.summary())
     if out.shard:
         print("shard %d of %d: this run made %d of the campaign's %d cuts; the coverage above is "
@@ -374,6 +381,10 @@ def run_options(r):
                         "new flash state turns up")
     r.add_argument("--per-phase", type=int, metavar="N",
                    help="samples inside a long phase when planning by phases (default 8)")
+    r.add_argument("--soak", type=float, metavar="MINUTES",
+                   help="instead of the plan, random cuts and torn states until this many "
+                        "minutes have passed or one fails")
+    r.add_argument("--seed", type=int, default=0, help="the random seed for --soak (default 0)")
     r.add_argument("--shard", metavar="K/N",
                    help="run only every Nth cut, starting with the Kth: splits a long campaign "
                         "over N machines, each given a different K")

@@ -64,6 +64,7 @@ class Adapter:
     torn_seed: int = 0
     depth: dict = None            # explore cuts during recovery (see runner.explore)
     shard: tuple = None           # (k, n): run only every nth cut, starting with the kth
+    soak: tuple = None            # (seconds, seed): random tests until then, instead of the plan
     content_faults: dict = None   # damaged images the bootloader must refuse (see content.py)
     link_cuts: dict = None        # break the host's link mid-session (see runner.run_link)
     bit_errors: dict = None       # bits flipped in a stored image while off (see bit_errors.py)

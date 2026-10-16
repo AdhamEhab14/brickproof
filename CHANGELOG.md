@@ -28,6 +28,11 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**Soak runs.** `--soak MINUTES --seed N`: after the baseline, random clean cuts and torn
+states (powered up from the computed state) until the time is up or one fails, each with its
+reproduce and export commands. A soak on the demo's `resume_copy` bug finds it within 10
+tests; 3 minutes on the correct build, 1,038 tests, find nothing.
+
 **SARIF output.** `--sarif FILE` writes each failure as a SARIF 2.1.0 result (its kind as the
 rule, the adapter file as the location, the reproduce and export commands in the message).
 The GitHub Action takes `sarif: "true"` and uploads it to code scanning.

@@ -195,6 +195,7 @@ plan (every): 167 cut(s) over 167 distinct flash states (168 operations): every 
 | `--depth 2` | also cut during the recovery from each first cut |
 | `-j N` / `-j auto` | run N emulators side by side; the results do not depend on N |
 | `--real-every N` | on a long update, make every Nth cut in the emulator and compute the rest |
+| `--soak MINUTES --seed N` | instead of the plan, random cuts and torn states until the time is up or one fails |
 | `--shard K/N` | run every Nth cut, starting with the Kth: splits a long campaign over N machines |
 | `--cut N` | run one operation alone, to reproduce a result |
 | `--fail-fast` | stop at the first failure |
