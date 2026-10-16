@@ -270,7 +270,7 @@ and an STM32 board's crystal from `zephyr/zephyr.dts` and `zephyr/.config`.
 ## In CI
 
 ```yaml
-- uses: AdhamEhab14/brickproof@v0.2.0
+- uses: AdhamEhab14/brickproof@v0.3.0
   with:
     adapter: test/brickproof.yaml
     args: --torn --depth 2 -j 3

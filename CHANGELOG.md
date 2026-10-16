@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Two more chip families and a second emulator, the memories beside the chip, flash storage
+libraries, and the ways a device can fail other than a clean power cut. Everything here was
+run on the bundled demo on every chip, and most of it on outside projects (MCUboot, wolfBoot,
+OpenBLT, Zephyr's storage). What is still missing is in docs/future-work.md.
 
 **Low-power modes.** On the STM32F1 and F4, Standby loses RAM and wakes through a reset with
 SBF set, Stop stops the SysTick until an interrupt, and `flash.reset_on` makes entering either
