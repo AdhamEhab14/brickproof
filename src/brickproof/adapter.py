@@ -519,14 +519,19 @@ def load(path, target=None):
         flash.ext_endurance = int(ext.get("endurance", 100000))
         # the status registers as the device ships: block protection set at the factory
         status = ext.get("status", 0)
-        if not isinstance(status, int) or not 0 <= status <= 0xFFFF:
-            raise AdapterError("external_flash.status: status register 1, or both as 0xSSRR "
-                               "(register 2 in the high byte)")
+        if not isinstance(status, int) or not 0 <= status <= 0xFFFFFF:
+            raise AdapterError("external_flash.status: status register 1, or 0xTTSSRR with "
+                               "register 2 (SS) and register 3 (TT) above it")
         flash.ext_status = status
-        pin = flash.ext_cs
-        if not (len(pin) >= 3 and pin[0] == "P" and "A" <= pin[1] <= "K" and pin[2:].isdigit()
-                and int(pin[2:]) < 16):
-            raise AdapterError("external_flash.cs: '%s' is not a pin name like PA4" % pin)
+        flash.ext_wp = str(ext.get("wp", "")).upper()
+        for key, pin in (("cs", flash.ext_cs), ("wp", flash.ext_wp)):
+            if key == "wp" and not pin:
+                continue
+            if not (len(pin) >= 3 and pin[0] == "P" and "A" <= pin[1] <= "K" and pin[2:].isdigit()
+                    and int(pin[2:]) < 16):
+                raise AdapterError("external_flash.%s: '%s' is not a pin name like PA4" % (key, pin))
+        if flash.ext_wp and flash.ext_wp == flash.ext_cs:
+            raise AdapterError("external_flash.wp: the same pin as cs")
         if not isinstance(flash.ext_size, int) or flash.ext_size <= 0 or flash.ext_size % 0x1000 \
                 or flash.ext_size > 0x1000000:
             raise AdapterError("external_flash.size: a multiple of 4 KB, up to 16 MB (three address bytes)")

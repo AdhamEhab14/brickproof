@@ -315,8 +315,8 @@ def test_an_external_flash_chip_becomes_part_of_the_image(tmp_path):
     f = adapters.load(str(p)).flash
     assert (f.ext_bus, f.ext_cs, f.ext_size, f.ext_base) == ("spi1", "PA4", 0x100000, 0xA0000000)
     assert f.external(0xA0000000) and f.external(0xA00FFFFF) and not f.external(0xA0100000)
-    # then its two status registers, which survive a power cut like the flash does
-    assert f.image_size == f.size + f.ob_size + 0x100000 + 2
+    # then its three status registers, which survive a power cut like the flash does
+    assert f.image_size == f.size + f.ob_size + 0x100000 + 3
     assert f.ext_status == 0
     p.write_text(MINIMAL)
     assert not adapters.load(str(p)).flash.external(0xA0000000)
@@ -327,8 +327,13 @@ def test_an_external_chip_can_ship_with_its_block_protection_set(tmp_path):
     p = tmp_path / "adapter.yaml"
     p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, status: 0x24}\n")
     assert adapters.load(str(p)).flash.ext_status == 0x24
-    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, status: 0x10000}\n")
+    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, status: 0x1000000}\n")
     with pytest.raises(adapters.AdapterError, match="status register 1"):
+        adapters.load(str(p))
+    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, wp: PA3}\n")
+    assert adapters.load(str(p)).flash.ext_wp == "PA3"
+    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, wp: PA4}\n")
+    with pytest.raises(adapters.AdapterError, match="same pin"):
         adapters.load(str(p))
 
 

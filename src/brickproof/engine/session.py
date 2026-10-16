@@ -49,7 +49,7 @@ EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to com
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
                "W": "protected"}
 NEVER = 0xFFFFFFFF
-EXT_STATUS_BYTES = 2
+EXT_STATUS_BYTES = 3            # an external chip's status registers 1, 2 and 3, as stored
 
 CUT_ERASE = 1
 CUT_PROGRAM = 2
@@ -91,7 +91,8 @@ class FlashGeometry:
     ext_cs: str = ""            # its chip select pin, for example PA4
     ext_sector: int = 0x1000    # its smallest erase
     ext_endurance: int = 100000
-    ext_status: int = 0         # its status registers as shipped: register 1 | register 2 << 8
+    ext_status: int = 0         # its status registers as shipped: 1 | 2 << 8 | 3 << 16
+    ext_wp: str = ""            # the pin wired to its /WP, if any (otherwise /WP reads high)
     endurance: int = 0          # erase cycles the datasheet promises per unit (0: unknown)
     # Option bytes, where the chip has them: their address, and what they hold when a
     # test starts. A flash image is then the flash followed by these bytes, so a change
@@ -489,7 +490,7 @@ class RenodeSession:
             return f.read()
 
     def ext_status(self):
-        """The external chip's status registers: register 1 | register 2 << 8."""
+        """The external chip's status registers as stored: 1 | 2 << 8 | 3 << 16."""
         reply = self.cmd("%s GetStatus" % self._ext)
         return int(re.findall(r"^\s*(0x[0-9A-Fa-f]+|\d+)\s*$", reply, re.M)[-1], 0)
 
@@ -767,7 +768,9 @@ class RenodeSession:
         self.cmd_batch(["%s ZeroAll" % self.ram, "cpu IsHalted false",
                         self._set(REG_CUTPOINT, NEVER), self._set(REG_CUT_PAGE, NEVER),
                         self._set(REG_OPCOUNT, 0), self._set(REG_FAULT_ADDR, 0),
-                        self._set(REG_FAULT_PC, 0), self._set(REG_PENDING, 0)] + self._reset_lines())
+                        self._set(REG_FAULT_PC, 0), self._set(REG_PENDING, 0)]
+                       + (["%s PowerCycle" % self._ext] if self.flash.ext_size else [])
+                       + self._reset_lines())
         self.rx.clear()
         if settle:
             self.run_for(settle)

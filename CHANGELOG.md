@@ -28,6 +28,12 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**The external flash chip's own protection.** As on a W25Q16JV: the /WP pin
+(`external_flash.wp`) with SRP refuses status writes, SRL locks the status registers until the
+next power cycle (or for good with SRP), 50h makes a status write volatile, and with WPS
+(status register 3, now part of the chip's saved state) protection goes by individual block
+locks (36h/39h/3Dh, 7Eh/98h), all set at power-up. A device power cycle power-cycles the chip.
+
 **STM32F4: PGAERR, PCROP and read protection level 2.** A program whose data does not fit in
 one 16-byte flash row is refused with PGAERR. `flash.pcrop` makes sectors proprietary code
 (SPRMOD): they run, but cannot be erased, programmed or read as data, and such a read fails

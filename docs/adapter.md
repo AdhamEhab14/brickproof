@@ -46,7 +46,8 @@ external_flash:                # optional: an SPI NOR flash chip (25-series comm
   cs: PA4                      # its chip select pin
   size: 0x100000               # up to 16 MB
   # address: 0xA0000000        # how its bytes are named in traces, images and `slot:`
-  # status: 0x00               # its status register as shipped (block protection), see below
+  # status: 0x00               # its status registers as shipped: 1, or 0xTTSSRR for 1-3
+  # wp: PA3                    # the pin wired to its /WP (otherwise /WP reads high)
 
 ram:
   size: 0x5000                 # the real RAM size. Required: extra RAM hides stack faults

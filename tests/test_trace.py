@@ -225,7 +225,7 @@ EXT_AT = 0x20000 + 16           # where the chip starts in an image
 
 
 def test_the_external_chip_comes_last_in_an_image():
-    assert EXT.image_size == 0x20000 + 16 + 0x10000 + 2      # and its status registers
+    assert EXT.image_size == 0x20000 + 16 + 0x10000 + 3      # and its three status registers
     assert traces.locate(0xA0000000, EXT) == (EXT_AT, 0x1000)
     assert traces.locate(0xA0001234, EXT) == (EXT_AT + 0x1234, 0x1000)
     assert traces.erase_start(0xA0001234, EXT) == 0xA0001000
