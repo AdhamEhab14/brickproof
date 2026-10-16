@@ -32,31 +32,42 @@ emulated chip, which is what BrickProof does; the gaps below are about going fur
    (data EEPROM, half-page programming), Microchip SAMD21/SAMD51 (NVMCTRL, RWW EEPROM),
    NXP i.MX RT1064 (execute-in-place from external NOR through FlexSPI, a big OTA platform).
    ESP32 and RP2040 are not in Renode; m33mu covers Armv8-M parts Renode lacks.
-7. **m33mu parity:** option bytes in the flash image; nRF52 RESETREAS; timers frozen in
+7. **Multi-image and multi-core updates:** an update that touches two images or two cores
+   (the nRF5340's network core, the dual-core STM32H7) and must leave them consistent.
+8. **m33mu parity:** option bytes in the flash image; nRF52 RESETREAS; timers frozen in
    Stop mode.
 
 ## Smarter campaigns
 
-8. **Recovery code coverage.** Trace which bootloader branches the cuts reached and
+9. **Recovery code coverage.** Trace which bootloader branches the cuts reached and
    report the recovery paths no cut exercised; then choose extra cuts to reach them.
-9. **Combined faults:** a cut while a damaged image is being checked, a cut during the
+10. **Combined faults:** a cut while a damaged image is being checked, a cut during the
    recovery from a bit error, a cut while the link is down.
-10. **Snapshots instead of replays.** Renode's save/load crashes with Python peripherals;
+11. **Snapshots instead of replays.** Renode's save/load crashes with Python peripherals;
     with the flash models in C# a cut could restore a snapshot, making campaigns much
     faster. Sparse images would make big external chips cheap.
-11. **Wear over many updates:** run update after update with endurance that degrades, and
+12. **Wear over many updates:** run update after update with endurance that degrades, and
     report when the first failure appears.
 
 ## Use and evidence
 
-12. **Hardware-in-the-loop:** run the same plan on a real board through the power-cut rig,
+13. **Hardware-in-the-loop:** run the same plan on a real board through the power-cut rig,
     using `brickproof export` for the states.
-13. **Evidence pack** for secure-update requirements (EU Cyber Resilience Act, EN 18031):
+14. **Evidence pack** for secure-update requirements (EU Cyber Resilience Act, EN 18031):
     a signed report with firmware hashes and every state tested. The wording of what a
     notified body expects should be checked against the standards themselves first.
-14. **Pull-request summaries:** a short comment with what changed between two runs (new
+15. **Pull-request summaries:** a short comment with what changed between two runs (new
     failures, new states), on top of the SARIF upload.
-15. **More adapter generators** next to `adapter-from-zephyr`: NuttX, Mbed, the vendor SDKs'
+16. **More adapter generators** next to `adapter-from-zephyr`: NuttX, Mbed, the vendor SDKs'
     OTA examples.
+
+17. **Update links other than a UART:** the staged-slot driver writes the image straight
+    into flash, and link cuts work on a UART. Updates that arrive over CAN (ISO-TP), USB DFU
+    or BLE would need the host side of those links in the driver.
+18. **PyPI publishing:** the release job is ready but switched off until the trusted
+    publisher is set up on the `brickproof-fw` project.
+
+Hardware needed: items 1 and 13, and the measurements that would calibrate items 2 and 4.
+Everything else is software.
 
 Declined: glitch / fault-injection simulation (plan item 13), out of scope for now.
