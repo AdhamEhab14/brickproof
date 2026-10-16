@@ -199,6 +199,7 @@ plan (every): 167 cut(s) over 167 distinct flash states (168 operations): every 
 | `--cut N` | run one operation alone, to reproduce a result |
 | `--fail-fast` | stop at the first failure |
 | `--json`, `--junit`, `--html FILE` | reports |
+| `--sarif FILE` | the failures as SARIF 2.1.0, for GitHub code scanning |
 
 The HTML report is one self-contained page: the verdict, what was covered and what was
 sampled, each failure with a command that reproduces it and one that exports its flash
@@ -246,7 +247,9 @@ brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
 ```
 
 The job fails if any cut does not recover, and the JSON, JUnit and HTML reports are uploaded
-as an artifact.
+as an artifact. With `sarif: "true"` (and `permissions: security-events: write` in the
+workflow) each failure also shows up in the repository's code scanning alerts, with its
+reproduce and export commands.
 
 ## Docker
 

@@ -28,6 +28,10 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**SARIF output.** `--sarif FILE` writes each failure as a SARIF 2.1.0 result (its kind as the
+rule, the adapter file as the location, the reproduce and export commands in the message).
+The GitHub Action takes `sarif: "true"` and uploads it to code scanning.
+
 **Power cuts many times in a row.** `--depth N` for any N, and `--depth exhaustive` (or
 `scenario.depth: exhaustive`): cut during each recovery until a level brings no new flash
 state, or `max_states` is reached. The report says how deep it went.

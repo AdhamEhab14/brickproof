@@ -236,3 +236,32 @@ def test_cuts_in_a_row_have_no_single_state_to_export():
     deep = [c for c in report["cuts"] if c["depth"] > 1 and not c["passed"]]
     assert deep
     assert all(reports.export_command(report, c) is None for c in deep)
+
+
+# ---- SARIF ---------------------------------------------------------------------
+
+def test_sarif_has_one_result_per_failure_with_its_kind_as_the_rule():
+    report = make_report(FakeDevice(no_recovery=True))
+    doc = reports.sarif(report)
+    assert doc["version"] == "2.1.0"
+    run = doc["runs"][0]
+    failed = [c for c in report["cuts"] if not c["passed"] and not c["skipped"]]
+    assert len(run["results"]) == len(failed) > 0
+    assert {r["ruleId"] for r in run["results"]} == {"cut"}
+    assert [r["id"] for r in run["tool"]["driver"]["rules"]] == ["cut"]
+    first = run["results"][0]
+    where = first["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert where == "adapters/fake/adapter.yaml"
+    assert "Reproduce: brickproof run" in first["message"]["text"]
+    fingerprints = [r["partialFingerprints"]["brickproofResult/v1"] for r in run["results"]]
+    assert len(set(fingerprints)) == len(fingerprints)
+
+
+def test_sarif_for_a_clean_run_has_no_results():
+    doc = reports.sarif(good())
+    assert doc["runs"][0]["results"] == [] and doc["runs"][0]["tool"]["driver"]["rules"] == []
+
+
+def test_cuts_in_a_row_get_their_own_rule():
+    doc = reports.sarif(bad())
+    assert "depth" in {r["ruleId"] for r in doc["runs"][0]["results"]}

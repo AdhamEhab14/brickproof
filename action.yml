@@ -31,6 +31,12 @@ inputs:
     description: Name of the uploaded artifact.
     required: false
     default: brickproof-report
+  sarif:
+    description: >
+      Also write the failures as SARIF and upload them to GitHub code scanning ("true" or
+      "false"). The calling workflow needs `permissions: security-events: write`.
+    required: false
+    default: "false"
   renode-version:
     description: Renode release to run on.
     required: false
@@ -82,10 +88,12 @@ runs:
         BP_TARGET: ${{ inputs.target }}
         BP_ARGS: ${{ inputs.args }}
         BP_REPORT: ${{ inputs.report-dir }}
+        BP_SARIF: ${{ inputs.sarif }}
       run: |
         export RENODE_PATH="$HOME/renode/renode"
         set -- run "$BP_ADAPTER" --json "$BP_REPORT/report.json" --junit "$BP_REPORT/report.xml" --html "$BP_REPORT/report.html"
         if [ -n "$BP_TARGET" ]; then set -- "$@" --target "$BP_TARGET"; fi
+        if [ "$BP_SARIF" = "true" ]; then set -- "$@" --sarif "$BP_REPORT/report.sarif"; fi
         # shellcheck disable=SC2086  # BP_ARGS is a list of options, split on purpose
         set +e
         brickproof "$@" $BP_ARGS
@@ -100,3 +108,11 @@ runs:
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.report-dir }}
+
+    - name: Upload the failures to code scanning
+      if: always() && inputs.sarif == 'true'
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.report-dir }}/report.sarif
+        category: brickproof

@@ -76,6 +76,60 @@ def export_command(report, cut):
     return "%s -o op-%d.bin" % (base, cut["op_index"])
 
 
+# ---- SARIF ---------------------------------------------------------------------
+
+SARIF_RULES = {
+    "baseline": "The update fails with no power cut",
+    "cut": "The device does not recover from a power cut between two flash operations",
+    "torn": "The device does not recover from a power cut inside an erase or a program",
+    "content": "A damaged update image is not refused",
+    "link": "The device does not recover from a broken link",
+    "bits": "A stored image damaged at rest is run",
+}
+
+
+def sarif_rule(cut):
+    g = group(cut)
+    return "depth" if g.startswith("depth-") else g
+
+
+def sarif(report):
+    """SARIF 2.1.0 for GitHub code scanning: one result per failure, its kind as the rule,
+    located at the adapter file (the firmware itself is usually not in the repository)."""
+    rules = dict(SARIF_RULES, depth="The device does not recover from power cuts in a row")
+    results = []
+    for c in report["cuts"]:
+        if c["passed"] or c["skipped"]:
+            continue
+        text = "%s: %s" % (c["cut"], c["message"] or "failed")
+        text += "\nReproduce: %s" % reproduce(report, c)
+        if export_command(report, c):
+            text += "\nOn a board: %s" % export_command(report, c)
+        results.append({
+            "ruleId": sarif_rule(c),
+            "level": "error",
+            "message": {"text": text},
+            "locations": [{"physicalLocation": {
+                "artifactLocation": {"uri": report["adapter_file"].replace("\\", "/")},
+                "region": {"startLine": 1}}}],
+            "partialFingerprints": {"brickproofResult/v1": "%s/%s" % (report["adapter"], c["cut"])},
+        })
+    used = sorted({r["ruleId"] for r in results})
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "BrickProof",
+                "version": report["brickproof"],
+                "informationUri": "https://github.com/AdhamEhab14/brickproof",
+                "rules": [{"id": r, "shortDescription": {"text": rules[r]}} for r in used],
+            }},
+            "results": results,
+        }],
+    }
+
+
 # ---- JUnit ---------------------------------------------------------------------
 
 def junit(report):

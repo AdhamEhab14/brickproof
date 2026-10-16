@@ -131,7 +131,7 @@ def cmd_run(args):
         print("nothing to cut: the adapter has no scenario.cuts and no scenario.plan "
               "(or pass --plan phases)", file=sys.stderr)
         return 2
-    _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html)
+    _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html, args.sarif)
     print("BrickProof: %s, target %s" % (ad.name, ad.target), flush=True)
     if not ad.oracle:
         print("note: this adapter has no 'oracle' section, so each verdict rests on the "
@@ -146,6 +146,9 @@ def cmd_run(args):
     if args.junit:
         with open(args.junit, "w", encoding="utf-8") as f:
             f.write(reports.junit(report))
+    if args.sarif:
+        with open(args.sarif, "w", encoding="utf-8") as f:
+            json.dump(reports.sarif(report), f, indent=2)
     if args.html:
         with open(args.html, "w", encoding="utf-8") as f:
             f.write(reports.html_page(report))
@@ -351,6 +354,7 @@ def _depth_arg(text):
 def run_options(r):
     r.add_argument("--json", help="write the results as JSON to this file")
     r.add_argument("--junit", help="write the results as JUnit XML to this file")
+    r.add_argument("--sarif", help="write the failures as SARIF to this file (GitHub code scanning)")
     r.add_argument("--html", help="write a self-contained HTML report to this file")
     r.add_argument("--cut", type=int, action="append", metavar="N",
                    help="cut only at operation N (repeatable): reproduces one result")
