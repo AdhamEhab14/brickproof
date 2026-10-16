@@ -172,6 +172,8 @@ class M33muSession:
         self.log = log
         self.virtual_time = 0.0
         self.rx = bytearray()
+        self.uart_sent = 0              # bytes the host has sent to the device, ever
+        self.link_budget = None         # bytes the link still carries before it breaks; None: no limit
         self._slowest = SLOWEST_START
         self._dump = None               # the flash as last saved, until something can change it
         self._start()
@@ -323,9 +325,14 @@ class M33muSession:
                 return
 
     def uart_write(self, data, baud=115200, port=None):
-        """Queue bytes for the firmware, then let the time they take on the wire pass."""
+        """Queue bytes for the firmware, then let the time they take on the wire pass.
+        With a link budget set (a broken link, see runner.run_link), only that many more
+        bytes reach the device, as with RenodeSession."""
         base = self.uart_base if port is None else port
         data = bytes(data)
+        self.uart_sent += len(data)
+        if self.link_budget is not None:
+            data, self.link_budget = data[:self.link_budget], max(0, self.link_budget - len(data))
         for i in range(0, len(data), 128):
             self.gdb.monitor("uart write 0x%X %s" % (base, data[i:i + 128].hex()))
         if data:

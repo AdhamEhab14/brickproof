@@ -56,3 +56,15 @@ scenario:
   cut_limit: 2
   update_time: 1
   plan: every
+  # damaged images in place of v2: the bootloader must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]
+      body: [0x200, 0x350]
+  # bits flipped in the installed v2 while the device is off: it must not run it
+  bit_errors:
+    runs: 4
+    regions:
+      header: [0x0C010000, 0x0C010010]
+      body: [0x0C010200, 0x0C010350]

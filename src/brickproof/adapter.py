@@ -705,6 +705,9 @@ RENODE_ONLY = {
     ("reset",): "Renode monitor commands",
     ("pins",): "pin levels set through Renode",
     ("external_flash",): "the Renode SPI NOR model",
+    ("external_eeprom",): "the Renode I2C EEPROM model",
+    ("flash", "worn"): "worn pages in the Renode flash models",
+    ("flash", "uicr"): "the nRF52's UICR",
     ("clock",): "the board clock fed to Renode's clock model",
     ("cpu", "mips"): "Renode's emulated CPU speed",
 }
@@ -796,6 +799,7 @@ def _load_m33mu(d, path, folder, name, target, base):
         uart = chip["uarts"][uart.lower()]
 
     cpu = d.get("cpu", {})
+    oracle = _parse_oracle(d, target)
     drv = _need(d, "driver", path)
     scenario = d.get("scenario") or {}
     cuts = [cut for i, c in enumerate(scenario.get("cuts") or []) for cut in _parse_cuts(i, c)]
@@ -814,7 +818,10 @@ def _load_m33mu(d, path, folder, name, target, base):
         cut_limit=float(scenario.get("cut_limit", 30.0)),
         update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),
         check_states=bool(scenario.get("check_states", True)),
-        oracle=_parse_oracle(d, target),
+        oracle=oracle,
+        content_faults=_parse_content(scenario, target, oracle),
+        link_cuts=_parse_link(scenario),
+        bit_errors=_parse_bit_errors(scenario, oracle),
         plan=_parse_plan(scenario),
         torn=_parse_torn(scenario),
         torn_seed=int(scenario.get("torn_seed", 0)),
