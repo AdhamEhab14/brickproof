@@ -9,6 +9,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from brickproof import __version__
+from brickproof import content as contents
 from brickproof import oracle as oracles
 from brickproof import plan as plans
 from brickproof import regulations
@@ -40,6 +41,7 @@ class CutResult:
     torn: str = None            # set for a torn state: which shape (see torn.py)
     depth: int = 1              # 2 = a second cut, during the recovery from a first one
     computed: bool = False      # powered up from the computed flash state, not cut in the emulator
+    content: str = None         # a content fault: which damaged image was staged (see content.py)
     message: str = ""
     seconds: float = 0.0
 
@@ -292,6 +294,67 @@ def run_computed(session, driver, adapter, cut, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+def run_content(session, driver, adapter, name, image, judge):
+    """One damaged image, staged in place of the update, and the update left to run. Not a
+    power cut: the device must refuse the image and keep the one `judge` accepts, which the
+    oracle checks from outside. The driver's own recovery check is not used: it expects the
+    update to have happened."""
+    res = CutResult(cut="content " + name, fired=True, kind="content", content=name)
+    t0 = time.time()
+    try:
+        session.restore_flash(image)
+        on_boot = getattr(driver, "update_on_boot", False)
+        session.power_cycle(settle=0 if on_boot else adapter.boot_settle)
+        driver.start_update()
+        session.run_for(adapter.update_time)
+        res.message = _fault_message(session) or ""
+        if res.message:
+            return res
+        session.power_cycle(settle=adapter.boot_settle)
+        res.alive = bool(driver.alive())
+        res.message = _fault_message(session) or ("" if res.alive else "the device did not come back")
+        if res.message:
+            return res
+        v = judge.judge(session)
+        res.image = v.image
+        res.message = "" if v.ok else "the bootloader did not refuse it: " + v.message
+        res.recovered = res.passed = v.ok
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        res.seconds = round(time.time() - t0, 1)
+
+
+def content_faults(pool, adapter, driver, golden, out, on_result=None, fail_fast=False):
+    """Every damaged image the adapter asks for, each run as its own test."""
+    cfg = adapter.content_faults
+    if not hasattr(driver, "staged"):
+        raise ValueError("scenario.content_faults: the driver does not say what it stages "
+                         "(it needs a staged() method, as staged_slot has)")
+    addr, staged = driver.staged()
+    files = {}
+    for name, path in cfg["images"].items():
+        with open(path, "rb") as f:
+            files[name] = f.read()
+    off, _ = traces.locate(addr, adapter.flash)
+    tasks = []
+    for name, data in contents.mutations(staged, cfg, files):
+        image = bytearray(golden.pre)
+        # an oversized image stops at the end of the flash it was staged in
+        unit_end = adapter.flash.size if off < adapter.flash.size else len(image)
+        data = data[:max(0, unit_end - off)]
+        image[off:off + len(data)] = data
+        tasks.append((name, bytes(image)))
+    o = golden.oracle
+    judge = oracles.Oracle(o.images, [cfg["keep"]], o.run_in, o.samples, o.interval)
+    results = pool.run(lambda s, d, t: run_content(s, d, adapter, t[0], t[1], judge), tasks,
+                       on_result, _failed if fail_fast else None)
+    out.results += results
+
+
 def _digest(image):
     return hashlib.sha1(bytes(image)).digest()
 
@@ -541,6 +604,13 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
 
     if getattr(adapter, "depth", None):
         explore(pool, adapter, golden, out, on_result, fail_fast)
+        if fail_fast and any(_failed(r) for r in out.results):
+            return out
+
+    # content faults are not cuts: in a sharded campaign the first shard makes them
+    shard = getattr(adapter, "shard", None)
+    if getattr(adapter, "content_faults", None) and golden.oracle and (not shard or shard[0] == 1):
+        content_faults(pool, adapter, driver, golden, out, on_result, fail_fast)
     return out
 
 

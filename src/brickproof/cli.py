@@ -26,6 +26,8 @@ def _print_result(r):
     if r.baseline:
         where = ""
         op = "%s ops" % r.op_index if r.op_index is not None else ""
+    if r.content:
+        where, op = "damaged image", ""
     status = "SKIP" if r.skipped else "PASS" if r.passed else "FAIL"
     note = r.message
     if r.passed and r.image:
@@ -147,7 +149,8 @@ def cmd_run(args):
     if not out.results[0].passed:
         print("the update fails even with no power cut, so no cuts were run")
         _hint_time(out.trace, ad)
-    ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn) and r.depth == 1]
+    ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn or r.content)
+           and r.depth == 1]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs%s)" % (
         passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0),
@@ -162,6 +165,10 @@ def cmd_run(args):
         print("%d/%d torn states survived (shapes of a half-done erase or program: erase-early "
               "and erase-late measured on an STM32F103 stopped by a reset, the others "
               "modelled)" % (sum(r.passed for r in torn), len(torn)))
+    bad = [r for r in out.results if r.content]
+    if bad:
+        print("%d/%d damaged images refused, with %s still installed and running" % (
+            sum(r.passed for r in bad), len(bad), ad.content_faults["keep"]))
     deep = [r for r in out.results if r.depth > 1]
     if out.depth:
         note = "; stopped at the limit of %d states" % ad.depth["max_states"] if out.depth["capped"] else ""

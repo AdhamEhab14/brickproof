@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
+from brickproof import content
 from brickproof.engine.session import FlashGeometry
 from brickproof.torn import KINDS as TORN_KINDS
 
@@ -62,6 +63,7 @@ class Adapter:
     torn_seed: int = 0
     depth: dict = None            # explore cuts during recovery (see runner.explore)
     shard: tuple = None           # (k, n): run only every nth cut, starting with the kth
+    content_faults: dict = None   # damaged images the bootloader must refuse (see content.py)
     hse: int = 8000000            # the board's crystal or external clock, in Hz
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
@@ -310,6 +312,41 @@ def _parse_torn(scenario):
     return list(t)
 
 
+def _parse_content(scenario, target, oracle):
+    """scenario.content_faults (see content.py), with image paths made absolute. None if off."""
+    c = scenario.get("content_faults")
+    if not c:
+        return None
+    if not isinstance(c, dict):
+        raise AdapterError("scenario.content_faults: a mapping")
+    unknown = set(c) - content.KEYS
+    if unknown:
+        raise AdapterError("scenario.content_faults: unknown key(s) %s" % ", ".join(sorted(unknown)))
+    if not oracle:
+        raise AdapterError("scenario.content_faults: needs an oracle, which judges the result")
+    keep = _need(c, "keep", "scenario.content_faults")
+    if keep not in oracle["images"]:
+        raise AdapterError("scenario.content_faults.keep: %r is not one of the oracle's images "
+                           "(%s)" % (keep, ", ".join(sorted(oracle["images"]))))
+    out = {"keep": str(keep), "image_size": c.get("image_size"),
+           "mutations": list(c.get("mutations") or content.MUTATIONS), "regions": {}, "images": {}}
+    bad = [m for m in out["mutations"] if m not in content.MUTATIONS]
+    if bad:
+        raise AdapterError("scenario.content_faults.mutations: use %s, not %s" % (
+            ", ".join(content.MUTATIONS), ", ".join(bad)))
+    size = out["image_size"]
+    if size is not None and (not isinstance(size, int) or size <= 0):
+        raise AdapterError("scenario.content_faults.image_size: a number of bytes")
+    for name, r in (c.get("regions") or {}).items():
+        if not (isinstance(r, list) and len(r) == 2 and all(isinstance(x, int) for x in r)
+                and 0 <= r[0] < r[1]):
+            raise AdapterError("scenario.content_faults.regions.%s: [start, end] offsets" % name)
+        out["regions"][str(name)] = (r[0], r[1])
+    for name, f in (c.get("images") or {}).items():
+        out["images"][str(name)] = os.path.normpath(os.path.join(target, f))
+    return out
+
+
 def _parse_oracle(d, target):
     """The `oracle:` section, with image paths made absolute. None if there is none."""
     o = d.get("oracle")
@@ -425,6 +462,7 @@ def load(path, target=None):
 
     cpu = d.get("cpu", {})
     drv = _need(d, "driver", path)
+    oracle = _parse_oracle(d, target)
     scenario = d.get("scenario") or {}
     cuts = [cut for i, c in enumerate(scenario.get("cuts") or []) for cut in _parse_cuts(i, c)]
     if bool(drv.get("file")) == bool(drv.get("builtin")):
@@ -443,7 +481,8 @@ def load(path, target=None):
         cut_limit=float(scenario.get("cut_limit", 30.0)),
         update_time=float(scenario.get("update_time", scenario.get("cut_limit", 30.0))),
         check_states=bool(scenario.get("check_states", True)),
-        oracle=_parse_oracle(d, target),
+        oracle=oracle,
+        content_faults=_parse_content(scenario, target, oracle),
         plan=_parse_plan(scenario),
         torn=_parse_torn(scenario),
         torn_seed=int(scenario.get("torn_seed", 0)),

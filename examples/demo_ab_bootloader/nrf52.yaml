@@ -58,3 +58,9 @@ scenario:
   cut_limit: 3                       # virtual seconds; a page erase takes 85 ms
   update_time: 2
   plan: every                        # cut at every distinct flash state the update goes through
+  # damaged images in place of v2: the bootloader must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]                # magic, version, size, CRC
+      body: [0x200, 0x364]

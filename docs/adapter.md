@@ -184,6 +184,20 @@ Set `update_on_boot = True` on the driver if the reset itself starts the update,
 (`run_for`), flash (`load_binary`, `read_bytes`) and resets (`reboot`, `power_cycle`).
 [adapters/three_tier_f103/driver.py](../adapters/three_tier_f103/driver.py) is about 90 lines.
 
+## Bad update content
+
+`scenario.content_faults` runs, after the cuts, the update with damaged images in place of
+the staged one. Nothing is cut: the bootloader has to refuse the image. The driver must say
+what it stages (`staged()`, which `staged_slot` has), and the adapter needs an oracle.
+
+| Key | Meaning |
+|---|---|
+| `keep` | the oracle image that must still be installed and running afterwards (required) |
+| `image_size` | bytes of the staged file that are the image. The rest, such as MCUboot's padded trailer that asks for the upgrade, is kept, so the bootloader does try the damaged image. Default: the whole file |
+| `mutations` | which built-in ones to run: `truncate` (at a quarter, a half, three quarters and four bytes short), `flip` (one bit in the middle of each region), `erased`. Default all |
+| `regions` | `{name: [start, end]}` offsets in the image to flip a bit in, for example header, body and the signature area. Default: the whole image as one region |
+| `images` | `{name: file}`: bad images made elsewhere (signed with another key, older, built for another slot), staged as they are |
+
 ## The oracle
 
 Without an `oracle` section the verdict rests on what the firmware says about itself, and

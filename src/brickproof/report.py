@@ -13,6 +13,8 @@ def group(cut):
     """Which part of a run a result belongs to."""
     if cut["baseline"]:
         return "baseline"
+    if cut.get("content"):
+        return "content"
     if cut["torn"]:
         return "torn"
     if cut["depth"] > 1:
@@ -24,6 +26,7 @@ GROUP_TITLES = {
     "baseline": "The update, uninterrupted",
     "cut": "Clean cuts: power lost between two flash operations",
     "torn": "Torn states: power lost inside an erase or a program",
+    "content": "Bad update content: a damaged image the bootloader must refuse",
 }
 
 

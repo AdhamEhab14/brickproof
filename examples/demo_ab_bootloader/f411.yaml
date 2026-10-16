@@ -60,3 +60,9 @@ scenario:
   cut_limit: 4                       # virtual seconds; the two sector erases take 1.25 s
   update_time: 3
   plan: every                        # cut at every distinct flash state the update goes through
+  # damaged images in place of v2: the bootloader must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]                # magic, version, size, CRC
+      body: [0x200, 0x348]

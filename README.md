@@ -115,6 +115,17 @@ with real hardware, so they are counted on their own line.
 **Cuts during recovery** (`--depth 2`). Recovery writes flash too. BrickProof traces it and
 cuts again. A flash state already tested is skipped.
 
+**Bad update content** (`scenario.content_faults`). Not a power cut: the image itself is
+wrong. BrickProof stages damaged versions of the update (truncated at several lengths, one
+bit flipped in each region the adapter names, such as header, body and signature, erased, or
+images made elsewhere: another key, an older version) and the bootloader must refuse each
+one and keep the old image running, as the oracle sees it from outside.
+
+**Flash storage libraries.** The built-in `storage` driver tests a key-value store or a file
+system instead of a bootloader: every value a finished write left must be there after a cut,
+nothing half-written may come back, and the store must still take and keep a new write
+([adapters/zephyr_storage](adapters/zephyr_storage)).
+
 **The chip's rules.** A plain emulator is more forgiving than silicon. BrickProof gives the
 emulated chip its real RAM and flash sizes, faults on memory that is not there, refuses to
 program a cell that is not erased or a store of the wrong width, ignores a store made while

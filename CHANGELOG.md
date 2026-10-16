@@ -28,6 +28,12 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**Bad update content.** `scenario.content_faults` stages damaged versions of the update
+(truncated, a bit flipped in each named region, erased, or images made elsewhere) and the
+bootloader must refuse each one and keep the image named by `keep` running, judged by the
+oracle. The demo (all three chips, and the external-flash build) and MCUboot on both
+boards refuse every one; the demo's `trust_header` bug accepts 6 of 7.
+
 **Flash storage libraries.** A built-in `storage` driver for key-value stores and file
 systems: the firmware runs a fixed workload over the UART, the driver learns which flash
 operations each step spans, and after a cut checks that the store mounts, holds every value

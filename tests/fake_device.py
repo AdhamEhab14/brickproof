@@ -33,15 +33,18 @@ class FakeDevice:
     hang_on_boot    the CPU locks up on the boot after a cut
     nondeterministic  the second and later runs write a different halfword
     retry_limit     gives up on the update after two attempts that did not finish
+    verify          refuse a staged image that is not exactly the new one (and keep the old);
+                    without it any staged bytes start the update
     """
 
     def __init__(self, lands_after=True, no_recovery=False, fault_at=None, hang_on_boot=False,
-                 nondeterministic=False, refuse=False, stray=False, retry_limit=False):
+                 nondeterministic=False, refuse=False, stray=False, retry_limit=False,
+                 verify=False):
         self.flash = FlashGeometry(base=BASE, size=4 * PAGE, page=PAGE)
         self.mem = bytearray(staged_flash())
         self.opt = dict(lands_after=lands_after, no_recovery=no_recovery, fault_at=fault_at,
                         hang_on_boot=hang_on_boot, nondeterministic=nondeterministic,
-                        refuse=refuse, stray=stray, retry_limit=retry_limit)
+                        refuse=refuse, stray=stray, retry_limit=retry_limit, verify=verify)
         self.opcount = 0
         self.cutpoint = NEVER
         self.cut_page = NEVER
@@ -92,6 +95,8 @@ class FakeDevice:
         pending = self._half(MARKER) not in (0x0000, 0xFFFF)
         if not pending or (self.opt["no_recovery"] and self.was_cut):
             return
+        if self.opt["verify"] and self.read_bytes(STAGED, 16) != NEW_IMAGE:
+            return                      # not the image it should be: keep the old one
         self.runs += 1
         for op in self._update_ops():
             kind, addr = op[0], op[1]

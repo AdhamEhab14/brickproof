@@ -49,3 +49,12 @@ scenario:
   update_time: 30
   cut_limit: 40
   plan: {mode: phases, per_phase: 4}
+  # damaged images in place of v2 (the trailer that asks for the upgrade is kept): MCUboot
+  # must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    image_size: 0x4B60                   # header, body and TLVs of app_v2_staged.img
+    regions:
+      header: [0x0, 0x20]
+      body: [0x200, 0x4AC8]
+      tlv: [0x4AC8, 0x4B60]              # hash and signature
