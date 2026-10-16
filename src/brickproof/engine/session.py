@@ -97,6 +97,7 @@ class FlashGeometry:
     ob_base: int = None
     option_bytes: bytes = b""
     wrp_unit: int = 0x1000      # how much flash one write-protection bit covers
+    worn: tuple = None          # (from, to): pages whose programs no longer take (flash.worn)
 
     def unit_at(self, addr):
         """(first address, size) of the erase unit that holds `addr`."""

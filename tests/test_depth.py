@@ -158,3 +158,16 @@ def test_depth_as_a_mapping_overrides_them(tmp_path):
 def test_a_bad_depth_is_rejected(tmp_path, bad):
     with pytest.raises(adapters.AdapterError, match="depth"):
         load(tmp_path, bad)
+
+
+def test_exhaustive_depth_stops_by_itself_when_nothing_new_turns_up():
+    out = run(FakeDevice(), depth=dict(DEPTH, levels=adapters.EXHAUSTIVE))
+    assert out.depth["deepest"] == 2 and not out.depth["capped"]     # level 2 found nothing new
+    out = run(FakeDevice(retry_limit=True), depth=dict(DEPTH, levels=adapters.EXHAUSTIVE))
+    assert 2 < out.depth["deepest"] < 10 and not out.depth["capped"]
+    assert max(r.depth for r in out.results) >= 2
+
+
+def test_exhaustive_is_a_depth_setting():
+    assert adapters._parse_depth({"depth": "exhaustive"})["levels"] == adapters.EXHAUSTIVE
+    assert adapters._parse_depth({"depth": {"levels": "exhaustive", "max_states": 50}})["max_states"] == 50

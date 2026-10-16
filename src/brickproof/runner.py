@@ -530,7 +530,8 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
     flash = adapter.flash
     plan_cfg = {k: cfg[k] for k in ("mode", "per_phase", "small")}
     torn_kinds = getattr(adapter, "torn", None) if cfg.get("torn") else None
-    stats = {"levels": cfg["levels"], "states": 0, "skipped_known": 0, "capped": False}
+    stats = {"levels": cfg["levels"], "states": 0, "skipped_known": 0, "capped": False,
+             "deepest": 1}
     out.depth = stats
     clean = {r.op_index: r for r in out.results[1:] if r.fired and not r.torn and r.depth == 1}
     seen = {_digest(golden.pre)}
@@ -547,6 +548,9 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
             parents.append(("op-%d" % n, bytes(golden.replay.at(n))))
 
     for level in range(2, cfg["levels"] + 1):
+        if not parents:
+            break                               # nothing new left to cut during
+        stats["deepest"] = level
         traces_ = pool.run(lambda s, d, p: [_recovery_trace(s, d, adapter, p[1])], parents)
         tasks = []
         for (label, image), ops in zip(parents, traces_, strict=True):

@@ -28,6 +28,15 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**Power cuts many times in a row.** `--depth N` for any N, and `--depth exhaustive` (or
+`scenario.depth: exhaustive`): cut during each recovery until a level brings no new flash
+state, or `max_states` is reached. The report says how deep it went.
+
+**Worn pages.** `flash.worn: {from, size}` marks a range whose programs report success but
+leave bit 0 of each cell as it was, on all three chip models. The demo with its Slot A worn
+fails even with no cut (it does not read back what it copied, and the old image is gone),
+and the output says why.
+
 **Bit errors at rest.** `scenario.bit_errors` flips seeded random bits in the flash the update
 left (each image the oracle accepts, or named regions) and powers up: the CPU must not run
 inside the damaged region, nor sit in a fault handler. The demo on all three chips and

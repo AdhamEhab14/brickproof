@@ -198,6 +198,14 @@ what it stages (`staged()`, which `staged_slot` has), and the adapter needs an o
 | `regions` | `{name: [start, end]}` offsets in the image to flip a bit in, for example header, body and the signature area. Default: the whole image as one region |
 | `images` | `{name: file}`: bad images made elsewhere (signed with another key, older, built for another slot), staged as they are |
 
+## Worn pages
+
+`flash.worn: {from: 0x08002000, size: 0x400}` marks part of the flash as worn out. A program
+there is accepted (no error flag, nothing refused) but bit 0 of each cell keeps the value it
+had, as when a cell no longer takes charge: the data read back differs from what was written.
+Erases still work. Use it on the pages an update writes, to see whether the bootloader reads
+back what it wrote and what it does when that fails.
+
 ## Bit errors at rest
 
 `scenario.bit_errors` takes the flash the uninterrupted update left, flips `flips` bits (default

@@ -113,13 +113,20 @@ some bits written. The shapes follow what flash cells do, but they are a model u
 with real hardware, so they are counted on their own line.
 
 **Cuts during recovery** (`--depth 2`). Recovery writes flash too. BrickProof traces it and
-cuts again. A flash state already tested is skipped.
+cuts again. A flash state already tested is skipped. `--depth 3` and beyond go on cutting
+during the recovery from those, and `--depth exhaustive` until a level finds no flash state
+not already tested (or the state limit, 2,000 by default, is reached).
 
 **Bad update content** (`scenario.content_faults`). Not a power cut: the image itself is
 wrong. BrickProof stages damaged versions of the update (truncated at several lengths, one
 bit flipped in each region the adapter names, such as header, body and signature, erased, or
 images made elsewhere: another key, an older version) and the bootloader must refuse each
 one and keep the old image running, as the oracle sees it from outside.
+
+**Worn pages** (`flash.worn`). A page past its endurance programs badly: the chip reports
+success and the data read back is not what was written. BrickProof models one worn range:
+programs there leave bit 0 of each cell as it was. A bootloader that writes an image there
+and does not read it back cannot tell.
 
 **Bit errors at rest** (`scenario.bit_errors`). A stored image loses a bit while the device
 is off. BrickProof flips seeded random bits in the installed image and powers up: the CPU must

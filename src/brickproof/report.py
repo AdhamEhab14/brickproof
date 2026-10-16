@@ -269,7 +269,7 @@ def html_page(report):
         d = report["depth"]
         out.append("<p>Cuts during recovery: up to %d in a row, %d new flash states tested, %d more "
                    "led to a state already tested%s.</p>" % (
-                       d["levels"], d["states"], d["skipped_known"],
+                       min(d["levels"], d.get("deepest", d["levels"])), d["states"], d["skipped_known"],
                        ", stopped at the state limit" if d["capped"] else ""))
 
     out.append("<h2>How to read this</h2>")

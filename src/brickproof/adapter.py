@@ -272,17 +272,20 @@ def _parse_plan(scenario):
 
 
 DEPTH_DEFAULTS = {"mode": "phases", "per_phase": 2, "small": 6, "max_states": 2000, "torn": False}
+EXHAUSTIVE = 1000000      # "levels: exhaustive": go on until a level finds no new flash state
 
 
 def _parse_depth(scenario):
     """scenario.depth: how many power cuts in a row to explore. A number, or a mapping
     {levels, mode, per_phase, small, max_states, torn}. With torn, the half-done
     versions of each recovery operation are tried as well (it needs scenario.torn or
-    --torn for the shapes). None when it is 1 or absent."""
+    --torn for the shapes). `levels: exhaustive` (or `depth: exhaustive`) goes on until a
+    level finds no flash state not already tested, or max_states is reached. None when it
+    is 1 or absent."""
     d = scenario.get("depth")
     if d is None:
         return None
-    if isinstance(d, int) and not isinstance(d, bool):
+    if isinstance(d, (int, str)) and not isinstance(d, bool):
         d = {"levels": d}
     if not isinstance(d, dict):
         raise AdapterError("scenario.depth: a number of cuts in a row, or a mapping")
@@ -291,6 +294,8 @@ def _parse_depth(scenario):
         raise AdapterError("scenario.depth: unknown key(s) %s" % ", ".join(sorted(unknown)))
     out = dict(DEPTH_DEFAULTS, **d)
     out.setdefault("levels", 2)
+    if out["levels"] == "exhaustive":
+        out["levels"] = EXHAUSTIVE
     if out["mode"] not in ("phases", "every"):
         raise AdapterError("scenario.depth.mode: use phases or every, not %r" % out["mode"])
     for key in ("levels", "per_phase", "small", "max_states"):
@@ -463,6 +468,13 @@ def load(path, target=None):
         raise AdapterError("flash: an %s erases by page, not by sector" % base)
     if chip["model"] == "stm32f4_flash.py" and flash.sectors is None:
         raise AdapterError("flash: an %s erases by sector; list them in flash.sectors" % base)
+    worn = fl.get("worn")
+    if worn:
+        where = "flash.worn"
+        start, size = _need(worn, "from", where), _need(worn, "size", where)
+        if not (flash.base <= start and start + size <= flash.base + flash.size and size > 0):
+            raise AdapterError("flash.worn: inside the flash, with a size above 0")
+        flash.worn = (start, start + size)
     flash.option_bytes = chip["option_bytes"](flash, fl.get("write_protected") or [],
                                               bool(fl.get("read_protected", False)),
                                               bool(fl.get("hardware_watchdog", False)))

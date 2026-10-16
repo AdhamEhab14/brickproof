@@ -142,6 +142,9 @@ def prepare(workdir, adapter):
             if adapter.flash.wrp_unit:
                 text = _set_const(text, "WRP_UNIT", adapter.flash.wrp_unit)
             text = _set_const(text, "TIMING", adapter.flash.timing)
+            if adapter.flash.worn:
+                text = _set_const(text, "WORN_FROM", adapter.flash.worn[0])
+                text = _set_const(text, "WORN_TO", adapter.flash.worn[1])
             text = _set_trace_file(text, "%s/%s" % (_slash(workdir), TRACE_NAME))
         elif name.endswith("_rcc.py"):
             text = _set_const(text, "HSE_HZ", adapter.hse)

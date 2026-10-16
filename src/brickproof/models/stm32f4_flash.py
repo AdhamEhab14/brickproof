@@ -62,6 +62,8 @@ CHUNK = 0x400               # flash is compared with its shadow in pieces of thi
 # 64 needs an external supply and is given the 32-bit figures). Programming a cell takes
 # 16 us, at most 100.
 TIMING = 0
+WORN_FROM = 0x0           # worn pages (flash.worn): [WORN_FROM, WORN_TO), none by default
+WORN_TO = 0x0
 T_PROGRAM_US = (0, 16, 100)
 T_ERASE_US = {
     0x4000: ((0, 0, 0, 0), (400000, 300000, 250000, 250000), (800000, 600000, 500000, 500000)),
@@ -288,9 +290,17 @@ def program(a, width, value):
         refuse_protected(a)
     else:
         stored = old & value                    # a program clears bits, it cannot set them
+        if worn(a):
+            stored = (stored & ~1) | (old & 1)
         put(a, width, stored)
         put(shadow_of(a), width, stored)
         log("P 0x%08X 0x%0*X @%d" % (a, 2 * width, stored, T_PROGRAM_US[TIMING]))
+
+
+def worn(a):
+    # a worn page (flash.worn in the adapter): programs there report success, but bit 0 of
+    # each cell no longer changes, so the data read back differs from what was written
+    return WORN_FROM <= a < WORN_TO
 
 
 def begin(erasing, addr):

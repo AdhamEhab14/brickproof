@@ -79,6 +79,8 @@ OB_SIZE = 16
 # allows. DS5319 table 28: programming 16 bits takes 40 to 70 us (52.5 typical), a page or
 # mass erase 20 to 40 ms. No typical erase time is given, so the middle is used.
 TIMING = 0
+WORN_FROM = 0x0           # worn pages (flash.worn): [WORN_FROM, WORN_TO), none by default
+WORN_TO = 0x0
 T_PROGRAM_US = (0, 53, 70)
 T_ERASE_US = (0, 30000, 40000)
 IWDG_KR = 0x40003000        # writing 0xCCCC here starts the independent watchdog
@@ -268,6 +270,12 @@ def power_off(kind, addr):
         c.IsHalted = True
 
 
+def worn(a):
+    # a worn page (flash.worn in the adapter): programs there report success, but bit 0 of
+    # each cell no longer changes, so the data read back differs from what was written
+    return WORN_FROM <= a < WORN_TO
+
+
 def refuse(addr, new, old):
     # the programming rule: the cell keeps what it had and PGERR is set
     global sr_err
@@ -331,8 +339,10 @@ def program(a, width, value):
         put(a, 2, old)                          # not erased, and not being cleared to zero
         refuse(a, value, old)
     else:
-        put(shadow_of(a), 2, value)
-        log("P 0x%08X 0x%04X @%d" % (a, value, T_PROGRAM_US[TIMING]))
+        stored = (value & ~1) | (old & 1) if worn(a) else value
+        put(a, 2, stored)
+        put(shadow_of(a), 2, stored)
+        log("P 0x%08X 0x%04X @%d" % (a, stored, T_PROGRAM_US[TIMING]))
 
 
 if request.IsInit:

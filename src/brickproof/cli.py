@@ -111,8 +111,9 @@ def cmd_run(args):
     if args.torn:
         ad.torn = list(torns.KINDS)
     if args.depth is not None:
-        deeper = dict(adapters.DEPTH_DEFAULTS, **(ad.depth or {}), levels=args.depth)
-        ad.depth = deeper if args.depth > 1 else None
+        levels = adapters.EXHAUSTIVE if args.depth == "exhaustive" else int(args.depth)
+        deeper = dict(adapters.DEPTH_DEFAULTS, **(ad.depth or {}), levels=levels)
+        ad.depth = deeper if levels > 1 else None
     if args.real_every and ad.plan:
         ad.plan = dict(ad.plan, real_every=args.real_every)
     if args.per_phase is not None and not args.cut:
@@ -153,6 +154,10 @@ def cmd_run(args):
     if not out.results[0].passed:
         print("the update fails even with no power cut, so no cuts were run")
         _hint_time(out.trace, ad)
+        if ad.flash.worn:
+            print("note: flash.worn is set: programs at 0x%08X..0x%08X report success but leave "
+                  "bit 0 of each cell as it was, so a bootloader that does not read back what "
+                  "it wrote cannot tell" % (ad.flash.worn[0], ad.flash.worn[1] - 1))
     ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn or r.content)
            and r.link is None and not r.bit_error and r.depth == 1]
     passed = sum(r.passed for r in ran)
@@ -183,9 +188,12 @@ def cmd_run(args):
     deep = [r for r in out.results if r.depth > 1]
     if out.depth:
         note = "; stopped at the limit of %d states" % ad.depth["max_states"] if out.depth["capped"] else ""
+        if out.depth["levels"] >= adapters.EXHAUSTIVE and not out.depth["capped"]:
+            note += "; no new state after %d cuts in a row" % out.depth.get("deepest", 1)
         print("%d/%d states after a further cut during recovery recovered (up to %d cuts in a "
               "row; %d more led to a state already tested%s)" % (
-                  sum(r.passed for r in deep), len(deep), out.depth["levels"],
+                  sum(r.passed for r in deep), len(deep),
+                  min(out.depth["levels"], out.depth.get("deepest", 1)),
                   out.depth["skipped_known"], note))
     if ad.plan and out.plan:
         print("coverage: %s" % out.plan.summary())
@@ -331,6 +339,15 @@ def main(argv=None):
     return args.func(args)
 
 
+def _depth_arg(text):
+    if text == "exhaustive":
+        return text
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("a number of cuts in a row, or exhaustive") from None
+
+
 def run_options(r):
     r.add_argument("--json", help="write the results as JSON to this file")
     r.add_argument("--junit", help="write the results as JUnit XML to this file")
@@ -347,9 +364,10 @@ def run_options(r):
                         "up from the computed flash state (much faster on a long update)")
     r.add_argument("--torn", action="store_true",
                    help="also boot from torn states: each cut's operation left half done")
-    r.add_argument("--depth", type=int, metavar="N",
+    r.add_argument("--depth", type=_depth_arg, metavar="N",
                    help="power cuts in a row to explore: 2 also cuts during the recovery "
-                        "from each first cut (default 1)")
+                        "from each first cut (default 1); 'exhaustive' goes on until no "
+                        "new flash state turns up")
     r.add_argument("--per-phase", type=int, metavar="N",
                    help="samples inside a long phase when planning by phases (default 8)")
     r.add_argument("--shard", metavar="K/N",

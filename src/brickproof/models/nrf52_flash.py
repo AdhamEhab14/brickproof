@@ -46,6 +46,8 @@ COUNTS = 0x93000000         # one byte per flash word: writes since its page was
 TRACE_FILE = ""
 CHUNK = 0x400               # flash is compared with its shadow in pieces of this size
 TIMING = 0
+WORN_FROM = 0x0           # worn pages (flash.worn): [WORN_FROM, WORN_TO), none by default
+WORN_TO = 0x0
 T_WRITE_US = (0, 41, 41)
 T_ERASE_US = (0, 85000, 85000)
 T_ERASEALL_US = (0, 169000, 169000)
@@ -213,10 +215,18 @@ def program(a, width, value):
         refuse(a, width, value, old)            # nWRITE: no more without an erase
         return
     stored = old & value                        # a program clears bits, it cannot set them
+    if worn(a):
+        stored = (stored & ~1) | (old & 1)
     put(a, 4, stored)
     put(shadow_of(a), 4, stored)
     bus.WriteByte(count_of(a), writes + 1)
     log("P 0x%08X 0x%08X @%d" % (a, stored, T_WRITE_US[TIMING]))
+
+
+def worn(a):
+    # a worn page (flash.worn in the adapter): programs there report success, but bit 0 of
+    # each cell no longer changes, so the data read back differs from what was written
+    return WORN_FROM <= a < WORN_TO
 
 
 def begin(erasing, addr):
