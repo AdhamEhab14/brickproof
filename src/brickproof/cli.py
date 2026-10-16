@@ -1,8 +1,10 @@
 """brickproof run adapter.yaml      cut power during the update and judge each cut
 brickproof trace adapter.yaml    show what the update does to flash, uninterrupted
+brickproof export adapter.yaml   write the flash a cut leaves, to put on a real board
+brickproof adapter-from-zephyr   write an MCUboot adapter from a Zephyr build
 
 Exit codes: 0 every cut recovered, 1 at least one cut failed,
-2 the adapter is wrong, 3 BrickProof itself failed (Renode missing, crashed...).
+2 the adapter is wrong, 3 BrickProof itself failed (emulator missing, crashed...).
 """
 import argparse
 import json
@@ -10,6 +12,7 @@ import os
 import sys
 
 from brickproof import adapter as adapters
+from brickproof import export as exports
 from brickproof import report as reports
 from brickproof import runner
 from brickproof import torn as torns
@@ -24,6 +27,12 @@ def _print_result(r):
     if r.baseline:
         where = ""
         op = "%s ops" % r.op_index if r.op_index is not None else ""
+    if r.content:
+        where, op = "damaged image", ""
+    if r.link is not None:
+        where, op = "link broken", "%d B" % r.link
+    if r.bit_error:
+        where, op = "bits flipped", ""
     status = "SKIP" if r.skipped else "PASS" if r.passed else "FAIL"
     note = r.message
     if r.passed and r.image:
@@ -103,12 +112,16 @@ def cmd_run(args):
     if args.torn:
         ad.torn = list(torns.KINDS)
     if args.depth is not None:
-        deeper = dict(adapters.DEPTH_DEFAULTS, **(ad.depth or {}), levels=args.depth)
-        ad.depth = deeper if args.depth > 1 else None
+        levels = adapters.EXHAUSTIVE if args.depth == "exhaustive" else int(args.depth)
+        deeper = dict(adapters.DEPTH_DEFAULTS, **(ad.depth or {}), levels=levels)
+        ad.depth = deeper if levels > 1 else None
     if args.real_every and ad.plan:
         ad.plan = dict(ad.plan, real_every=args.real_every)
     if args.per_phase is not None and not args.cut:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
+    if args.soak:
+        ad.soak = (args.soak * 60.0, args.seed)
+        ad.plan = ad.plan or {"mode": "phases"}
     if args.shard:
         try:
             k, n = (int(x) for x in args.shard.split("/"))
@@ -122,7 +135,7 @@ def cmd_run(args):
         print("nothing to cut: the adapter has no scenario.cuts and no scenario.plan "
               "(or pass --plan phases)", file=sys.stderr)
         return 2
-    _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html)
+    _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html, args.sarif)
     print("BrickProof: %s, target %s" % (ad.name, ad.target), flush=True)
     if not ad.oracle:
         print("note: this adapter has no 'oracle' section, so each verdict rests on the "
@@ -137,6 +150,9 @@ def cmd_run(args):
     if args.junit:
         with open(args.junit, "w", encoding="utf-8") as f:
             f.write(reports.junit(report))
+    if args.sarif:
+        with open(args.sarif, "w", encoding="utf-8") as f:
+            json.dump(reports.sarif(report), f, indent=2)
     if args.html:
         with open(args.html, "w", encoding="utf-8") as f:
             f.write(reports.html_page(report))
@@ -145,7 +161,12 @@ def cmd_run(args):
     if not out.results[0].passed:
         print("the update fails even with no power cut, so no cuts were run")
         _hint_time(out.trace, ad)
-    ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn) and r.depth == 1]
+        if ad.flash.worn:
+            print("note: flash.worn is set: programs at 0x%08X..0x%08X report success but leave "
+                  "bit 0 of each cell as it was, so a bootloader that does not read back what "
+                  "it wrote cannot tell" % (ad.flash.worn[0], ad.flash.worn[1] - 1))
+    ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn or r.content)
+           and r.link is None and not r.bit_error and r.depth == 1]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs%s)" % (
         passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0),
@@ -157,16 +178,35 @@ def cmd_run(args):
                   len(ran) - computed, computed))
     torn = [r for r in out.results if r.torn]
     if torn:
-        print("%d/%d torn states survived (modelled shapes of a half-done erase or program, "
-              "not yet calibrated against silicon)" % (sum(r.passed for r in torn), len(torn)))
+        print("%d/%d torn states survived (shapes of a half-done erase or program: erase-early "
+              "and erase-late measured on an STM32F103 stopped by a reset, the others "
+              "modelled)" % (sum(r.passed for r in torn), len(torn)))
+    bad = [r for r in out.results if r.content]
+    if bad:
+        print("%d/%d damaged images refused, with %s still installed and running" % (
+            sum(r.passed for r in bad), len(bad), ad.content_faults["keep"]))
+    flipped = [r for r in out.results if r.bit_error]
+    if flipped:
+        print("%d/%d images damaged at rest were not run" % (sum(r.passed for r in flipped), len(flipped)))
+    links = [r for r in out.results if r.link is not None]
+    if links:
+        print("%d/%d broken links recovered (the host's session cut off, then run again)" % (
+            sum(r.passed for r in links), len(links)))
     deep = [r for r in out.results if r.depth > 1]
     if out.depth:
         note = "; stopped at the limit of %d states" % ad.depth["max_states"] if out.depth["capped"] else ""
+        if out.depth["levels"] >= adapters.EXHAUSTIVE and not out.depth["capped"]:
+            note += "; no new state after %d cuts in a row" % out.depth.get("deepest", 1)
         print("%d/%d states after a further cut during recovery recovered (up to %d cuts in a "
               "row; %d more led to a state already tested%s)" % (
-                  sum(r.passed for r in deep), len(deep), out.depth["levels"],
+                  sum(r.passed for r in deep), len(deep),
+                  min(out.depth["levels"], out.depth.get("deepest", 1)),
                   out.depth["skipped_known"], note))
-    if ad.plan and out.plan:
+    if getattr(ad, "soak", None):
+        print("soak: %d random tests in %.1f of the %.0f minutes allowed, seed %d%s" % (
+            len(out.results) - 1, out.timings.get("total_s", 0) / 60, ad.soak[0] / 60, ad.soak[1],
+            ", stopped at the first failure" if not out.passed else ""))
+    elif ad.plan and out.plan:
         print("coverage: %s" % out.plan.summary())
     if out.shard:
         print("shard %d of %d: this run made %d of the campaign's %d cuts; the coverage above is "
@@ -231,6 +271,50 @@ def cmd_trace(args):
     return 0 if results[0].passed else 1
 
 
+def cmd_export(args):
+    ad = _load(args)
+    if ad is None:
+        return 2
+    _make_dirs(args.out, args.renode_log)
+    print("BrickProof: running the update of %s once, to export the state at operation %d"
+          % (ad.name, args.cut), flush=True)
+    out = _run(ad, args, baseline_only=True)
+    if out is None:
+        return 3
+    if not out.results[0].passed:
+        print("the update fails even with no power cut: nothing to export", file=sys.stderr)
+        return 1
+    try:
+        files = exports.write(ad, out.pre, out.trace, args.out, args.cut, args.torn)
+    except ValueError as e:
+        print("export: %s" % e, file=sys.stderr)
+        return 2
+    for part, path in files.items():
+        print("%-26s %s" % (part, path))
+    return 0
+
+
+def cmd_adapter_from_zephyr(args):
+    from brickproof import zephyr_adapter
+    try:
+        d = zephyr_adapter.describe(args.build)
+    except (OSError, KeyError, ValueError) as e:
+        print("adapter-from-zephyr: %s" % e, file=sys.stderr)
+        return 2
+    out_dir = os.path.dirname(os.path.abspath(args.out))
+    try:
+        images = os.path.relpath(os.path.abspath(args.images), out_dir)
+    except ValueError:                  # another drive (Windows): no relative path there
+        images = os.path.abspath(args.images)
+    text = zephyr_adapter.adapter_yaml(d, images, args.alive, args.expect)
+    _make_dirs(args.out)
+    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    print("%s: %s, %s, slot 0 at 0x%X, slot 1 at 0x%X" % (args.out, d["soc"], d["mode"],
+                                                          d["slot0"][0], d["slot1"][0]))
+    return 0
+
+
 def main(argv=None):
     # a Windows console in a legacy code page cannot print every character a device
     # may send; show a placeholder rather than die with an encoding error
@@ -244,8 +328,9 @@ def main(argv=None):
         if adapter:
             c.add_argument("adapter", help="adapter YAML file")
         c.add_argument("--target", help="firmware project folder (overrides the adapter's 'target')")
-        c.add_argument("--keep", action="store_true", help="keep the Renode work folder")
-        c.add_argument("--renode-log", help="write Renode's own output to this file")
+        c.add_argument("--keep", action="store_true", help="keep the emulator's work folder")
+        c.add_argument("--renode-log", "--emulator-log", dest="renode_log",
+                       help="write the emulator's own output (Renode or m33mu) to this file")
         c.add_argument("-j", "--jobs", metavar="N",
                        help="emulators to run side by side: a number, or 'auto' for one per "
                             "core but one. The results do not depend on it (default 1)")
@@ -270,13 +355,48 @@ def main(argv=None):
     t.add_argument("-o", "--out", help="write every operation as JSONL to this file")
     t.set_defaults(func=cmd_trace)
 
+    e = sub.add_parser("export", help="write the flash a cut leaves, to put on a real board",
+                       description="Runs the update once, uninterrupted, and writes the flash "
+                                   "as a cut just before operation N leaves it (the same bytes a "
+                                   "run's cut there starts from), with a note on how to program "
+                                   "it.")
+    common(e)
+    e.add_argument("--cut", type=int, required=True, metavar="N", help="the operation, as a run reports it")
+    e.add_argument("--torn", choices=torns.KINDS, metavar="KIND",
+                   help="leave operation N half done, in this shape: %s" % ", ".join(torns.KINDS))
+    e.add_argument("-o", "--out", default="state.bin", help="the flash image (default state.bin); "
+                   "the other files go next to it")
+    e.set_defaults(func=cmd_export)
+
+    z = sub.add_parser("adapter-from-zephyr", help="write an MCUboot adapter from a Zephyr build",
+                       description="Reads an MCUboot build folder (zephyr/zephyr.dts and "
+                                   "zephyr/.config) and writes an adapter for MCUboot and an app "
+                                   "whose signed images are in --images.")
+    z.add_argument("build", help="the MCUboot build folder `west build` made")
+    z.add_argument("--images", required=True,
+                   help="folder with mcuboot.elf, app_v1.img, app_v2_staged.img and app_v2.img")
+    z.add_argument("-o", "--out", default="adapter.yaml", help="the adapter to write")
+    z.add_argument("--alive", default="APP v[0-9]", help="regex: an app is running")
+    z.add_argument("--expect", default="APP v2", help="regex: the new app is running")
+    z.set_defaults(func=cmd_adapter_from_zephyr)
+
     args = p.parse_args(argv)
     return args.func(args)
+
+
+def _depth_arg(text):
+    if text == "exhaustive":
+        return text
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("a number of cuts in a row, or exhaustive") from None
 
 
 def run_options(r):
     r.add_argument("--json", help="write the results as JSON to this file")
     r.add_argument("--junit", help="write the results as JUnit XML to this file")
+    r.add_argument("--sarif", help="write the failures as SARIF to this file (GitHub code scanning)")
     r.add_argument("--html", help="write a self-contained HTML report to this file")
     r.add_argument("--cut", type=int, action="append", metavar="N",
                    help="cut only at operation N (repeatable): reproduces one result")
@@ -290,11 +410,16 @@ def run_options(r):
                         "up from the computed flash state (much faster on a long update)")
     r.add_argument("--torn", action="store_true",
                    help="also boot from torn states: each cut's operation left half done")
-    r.add_argument("--depth", type=int, metavar="N",
+    r.add_argument("--depth", type=_depth_arg, metavar="N",
                    help="power cuts in a row to explore: 2 also cuts during the recovery "
-                        "from each first cut (default 1)")
+                        "from each first cut (default 1); 'exhaustive' goes on until no "
+                        "new flash state turns up")
     r.add_argument("--per-phase", type=int, metavar="N",
                    help="samples inside a long phase when planning by phases (default 8)")
+    r.add_argument("--soak", type=float, metavar="MINUTES",
+                   help="instead of the plan, random cuts and torn states until this many "
+                        "minutes have passed or one fails")
+    r.add_argument("--seed", type=int, default=0, help="the random seed for --soak (default 0)")
     r.add_argument("--shard", metavar="K/N",
                    help="run only every Nth cut, starting with the Kth: splits a long campaign "
                         "over N machines, each given a different K")

@@ -19,11 +19,28 @@
 //   operations take the time the datasheet gives them. The CPU is not stalled by an
 //     external chip, but firmware waits for the busy bit, so the time is skipped the
 //     same way and the busy bit never reads as set.
+//   the status registers themselves are protected as on the chip (W25Q16JV): with SRP set
+//     and the /WP pin low they cannot be written; SRL with SRP clear locks them until the
+//     next power cycle, SRL with SRP set for good. 50h makes the next status write a
+//     volatile one: it holds until the next power cycle and does not change what is
+//     stored. With WPS (status register 3) set, protection goes by individual block lock
+//     bits instead of BP/TB/SEC/CMP: one per 64 KB block, one per 4 KB sector in the top
+//     and bottom blocks, all set at power-up, changed with 36h/39h (one) and 7Eh/98h (all).
+//   a chip over 16 MB (the W25Q256JV kind) has 4-byte addresses: B7h and E9h enter and
+//     leave 4-byte mode, which ADP in status register 3 sets at power-up and ADS reports;
+//     13h, 0Ch, 12h, 21h, 5Ch and DCh always take four address bytes; in 3-byte mode the
+//     extended address register (C5h, C8h) gives the top byte. Its block protection is
+//     that chip's: BP3-BP0 and TB, no SEC. A chip of 16 MB or less ignores all of these;
+//   suspend and resume (75h, 7Ah) are taken, but an erase here never takes time the
+//     firmware can see, so there is nothing to suspend: the chip ignores 75h when it is
+//     not busy, and so does the model.
 //
 // The chip's contents are kept in here, not on the system bus. The engine loads, saves
-// and compares them through the methods at the end, with files.
+// and compares them through the methods at the end, with files. PowerCycle() is the chip
+// losing power: what is volatile goes back to what is stored.
 //
-// Chip select comes in as GPIO 0, active low: the command runs when it goes high.
+// Chip select comes in as GPIO 0, active low: the command runs when it goes high. /WP
+// comes in as GPIO 1, active low, and reads high when nothing drives it.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -36,7 +53,7 @@ namespace Antmicro.Renode.Peripherals.SPI
     {
         public BpSpiNor(IMachine machine, int size, ulong address, ulong state, string traceFile,
             int timing = 1, uint jedecId = 0xEF4015, int status1 = 0, int status2 = 0,
-            int protectUnit = 0x10000)
+            int protectUnit = 0x10000, int status3 = 0)
         {
             this.machine = machine;
             this.address = address;
@@ -45,8 +62,9 @@ namespace Antmicro.Renode.Peripherals.SPI
             this.timing = timing;
             this.jedecId = jedecId;
             this.protectUnit = protectUnit;
-            SetStatus(status1 | (status2 << 8));
             memory = new byte[size];
+            blockLocks = new bool[size / 0x10000 + 30];
+            SetStatus(status1 | (status2 << 8) | (status3 << 16));
             for(var i = 0; i < size; i++)
             {
                 memory[i] = 0xFF;
@@ -64,6 +82,11 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         public void OnGPIO(int number, bool value)
         {
+            if(number == 1)
+            {
+                wpHigh = value;                 // /WP: low asserts it
+                return;
+            }
             if(number != 0)
             {
                 return;
@@ -94,18 +117,31 @@ namespace Antmicro.Renode.Peripherals.SPI
             }
             bytes.Add(data);
             var n = bytes.Count;
+            var ab = AddressBytes();
+            if(!Supported(bytes[0]))
+            {
+                return 0;
+            }
             switch(bytes[0])
             {
                 case ReadStatus:
                     return (byte)((sr1 & 0xFC) | (writeEnabled ? 0x02 : 0x00));  // never busy, see the top
                 case ReadStatus2:
                     return sr2;
+                case ReadStatus3:
+                    return (byte)(sr3 | (fourByte ? 1 : 0));        // ADS: the mode in force
+                case ReadBlockLock:
+                    return n > 1 + ab ? (byte)(Locked(Address()) ? 1 : 0) : (byte)0;
                 case ReadJedecId:
                     return n >= 2 && n <= 4 ? (byte)(jedecId >> (8 * (4 - n))) : (byte)0;
                 case Read:
-                    return n > 4 ? At(Address() + (uint)(n - 5)) : (byte)0;
+                case Read4:
+                    return n > 1 + ab ? At(Address() + (uint)(n - 2 - ab)) : (byte)0;
                 case FastRead:
-                    return n > 5 ? At(Address() + (uint)(n - 6)) : (byte)0;
+                case FastRead4:
+                    return n > 2 + ab ? At(Address() + (uint)(n - 3 - ab)) : (byte)0;
+                case ReadExtendedAddress:
+                    return extendedAddress;
                 default:
                     return 0;
             }
@@ -119,47 +155,118 @@ namespace Antmicro.Renode.Peripherals.SPI
             {
                 return;
             }
+            var volatileWrite = volatileNext;
+            volatileNext = false;
+            var ab = AddressBytes();
+            if(!Supported(bytes[0]))
+            {
+                return;                         // a command this chip does not have
+            }
             switch(bytes[0])
             {
+                case Enter4ByteMode:
+                case Exit4ByteMode:
+                    fourByte = bytes[0] == Enter4ByteMode;
+                    break;
+                case WriteExtendedAddress:
+                    if(writeEnabled && bytes.Count >= 2)
+                    {
+                        extendedAddress = bytes[1];
+                    }
+                    writeEnabled = false;
+                    break;
                 case WriteEnable:
                     writeEnabled = true;
                     break;
                 case WriteDisable:
                     writeEnabled = false;
                     break;
+                case VolatileWriteEnable:
+                    volatileNext = true;        // only for the status write that follows
+                    break;
                 case WriteStatus:
                     // one byte writes status register 1, a second byte status register 2
-                    if(writeEnabled && bytes.Count >= 2)
+                    if((writeEnabled || volatileWrite) && bytes.Count >= 2 && StatusWritable())
                     {
                         sr1 = (byte)(bytes[1] & 0xFC);
                         if(bytes.Count >= 3)
                         {
                             WriteStatus2Byte(bytes[2]);
                         }
+                        Store(volatileWrite);
                     }
-                    writeEnabled = false;
+                    if(!volatileWrite)
+                    {
+                        writeEnabled = false;
+                    }
                     break;
                 case WriteStatus2:
-                    if(writeEnabled && bytes.Count >= 2)
+                    if((writeEnabled || volatileWrite) && bytes.Count >= 2 && StatusWritable())
                     {
                         WriteStatus2Byte(bytes[1]);
+                        Store(volatileWrite);
+                    }
+                    if(!volatileWrite)
+                    {
+                        writeEnabled = false;
+                    }
+                    break;
+                case WriteStatus3:
+                    if((writeEnabled || volatileWrite) && bytes.Count >= 2 && StatusWritable())
+                    {
+                        // WPS and the drive strength, and ADP on a chip with 4-byte addresses
+                        sr3 = (byte)(bytes[1] & (Large ? 0x66 : 0x64));
+                        Store(volatileWrite);
+                    }
+                    if(!volatileWrite)
+                    {
+                        writeEnabled = false;
+                    }
+                    break;
+                case LockBlock:
+                case UnlockBlock:
+                    if(writeEnabled && bytes.Count >= 1 + ab)
+                    {
+                        var unit = LockUnit(Address());
+                        if(unit >= 0)
+                        {
+                            blockLocks[unit] = bytes[0] == LockBlock;
+                        }
                     }
                     writeEnabled = false;
                     break;
-                case PageProgram:
-                    if(writeEnabled && bytes.Count > 4)
+                case GlobalLock:
+                case GlobalUnlock:
+                    if(writeEnabled)
                     {
-                        Program(Address(), bytes.GetRange(4, bytes.Count - 4));
+                        for(var i = 0; i < blockLocks.Length; i++)
+                        {
+                            blockLocks[i] = bytes[0] == GlobalLock;
+                        }
+                    }
+                    writeEnabled = false;
+                    break;
+                case Suspend:
+                case Resume:
+                    break;                      // never busy here, see the top
+                case PageProgram:
+                case PageProgram4:
+                    if(writeEnabled && bytes.Count > 1 + ab)
+                    {
+                        Program(Address(), bytes.GetRange(1 + ab, bytes.Count - 1 - ab));
                     }
                     writeEnabled = false;
                     break;
                 case SectorErase:
+                case SectorErase4:
                     Erase(4 * 1024, sectorEraseUs);
                     break;
                 case BlockErase32:
+                case BlockErase32_4:
                     Erase(32 * 1024, block32EraseUs);
                     break;
                 case BlockErase64:
+                case BlockErase64_4:
                     Erase(64 * 1024, block64EraseUs);
                     break;
                 case ChipErase:
@@ -184,7 +291,7 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         private void Erase(int length, int[] us)
         {
-            if(writeEnabled && bytes.Count >= 4)
+            if(writeEnabled && bytes.Count >= 1 + AddressBytes())
             {
                 var start = Address() / (uint)length * (uint)length;
                 if(start < memory.Length && Begin(true, address + start))
@@ -245,6 +352,18 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         private bool Protects(uint start, uint length)
         {
+            if(((sr3 >> 2) & 1) == 1)
+            {
+                // WPS: individual block locks, in 4 KB steps so the split blocks are seen
+                for(var a = start / 0x1000 * 0x1000; a < start + length && a < memory.Length; a += 0x1000)
+                {
+                    if(Locked(a))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
             // Does the status register protect any byte of [start, start + length)?
             // The W25Q16JV table (WPS = 0): BP = 0 protects nothing, BP = 11x everything.
             // With SEC = 0, BP = 001 protects protectUnit (64 KB on a W25Q16JV) at the top,
@@ -254,7 +373,20 @@ namespace Antmicro.Renode.Peripherals.SPI
             var bp = (sr1 >> 2) & 7;
             var top = ((sr1 >> 5) & 1) == 0;
             uint lo = 0, hi = 0;
-            if(bp >= 6)
+            if(Large)
+            {
+                // the W25Q256JV table: BP3-BP0 and TB (bit 6), no SEC. BP = n protects
+                // protectUnit << (n - 1) at the top (or the bottom with TB), up to all of it
+                bp = (sr1 >> 2) & 15;
+                top = ((sr1 >> 6) & 1) == 0;
+                if(bp != 0)
+                {
+                    var span = (uint)Math.Min((long)protectUnit << Math.Min(bp - 1, 20), size);
+                    lo = top ? size - span : 0;
+                    hi = top ? size : span;
+                }
+            }
+            else if(bp >= 6)
             {
                 hi = size;
             }
@@ -287,9 +419,59 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         private void WriteStatus2Byte(byte value)
         {
-            // QE and CMP are written; SRL and the security register locks are one-time
+            // QE, CMP and SRL are written; the security register locks are one-time
             // programmable (they only go from 0 to 1); SUS is read-only
-            sr2 = (byte)((sr2 & 0x39) | (value & 0x42) | (value & 0x39));
+            sr2 = (byte)((sr2 & 0x38) | (value & 0x43) | (value & 0x38));
+        }
+
+        private bool StatusWritable()
+        {
+            // the status register protection of the W25Q16JV: SRL locks it (until the next
+            // power cycle with SRP clear, for good with SRP set); otherwise SRP with /WP low
+            if((sr2 & 1) == 1)
+            {
+                return false;
+            }
+            return ((sr1 >> 7) & 1) == 0 || wpHigh;
+        }
+
+        private void Store(bool volatileWrite)
+        {
+            // a non-volatile write changes what is stored as well; a volatile one only what
+            // is in force until the next power cycle
+            if(!volatileWrite)
+            {
+                nv1 = sr1;
+                nv2 = sr2;
+                nv3 = sr3;
+            }
+        }
+
+        private int LockUnit(uint at)
+        {
+            // which lock bit covers `at`: 4 KB sectors in the bottom and top 64 KB blocks,
+            // whole 64 KB blocks in between
+            if(at >= memory.Length)
+            {
+                return -1;
+            }
+            var blocks = memory.Length / 0x10000;
+            var block = (int)(at / 0x10000);
+            if(block == 0)
+            {
+                return (int)(at / 0x1000);              // 0..15
+            }
+            if(block == blocks - 1)
+            {
+                return 16 + (int)((at % 0x10000) / 0x1000);   // 16..31
+            }
+            return 32 + block - 1;
+        }
+
+        private bool Locked(uint at)
+        {
+            var unit = LockUnit(at);
+            return unit >= 0 && unit < blockLocks.Length && blockLocks[unit];
         }
 
         // ---- the operation count and the cut, shared with the internal flash model ---
@@ -354,9 +536,67 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         // ---- small things ------------------------------------------------------------
 
+        private bool Large => memory.Length > 0x1000000;
+
+        private bool Supported(byte command)
+        {
+            // the 4-byte address commands exist only on chips that need them
+            switch(command)
+            {
+                case Read4:
+                case FastRead4:
+                case PageProgram4:
+                case SectorErase4:
+                case BlockErase32_4:
+                case BlockErase64_4:
+                case Enter4ByteMode:
+                case Exit4ByteMode:
+                case WriteExtendedAddress:
+                case ReadExtendedAddress:
+                    return Large;
+                default:
+                    return true;
+            }
+        }
+
+        private int AddressBytes()
+        {
+            // four for the 4-byte commands, and for all of them in 4-byte mode
+            if(!Large || bytes.Count == 0)
+            {
+                return 3;
+            }
+            switch(bytes[0])
+            {
+                case Read4:
+                case FastRead4:
+                case PageProgram4:
+                case SectorErase4:
+                case BlockErase32_4:
+                case BlockErase64_4:
+                    return 4;
+                default:
+                    return fourByte ? 4 : 3;
+            }
+        }
+
         private uint Address()
         {
-            return bytes.Count >= 4 ? (uint)((bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) : 0;
+            var n = AddressBytes();
+            if(bytes.Count < 1 + n)
+            {
+                return 0;
+            }
+            uint at = 0;
+            for(var i = 1; i <= n; i++)
+            {
+                at = (at << 8) | bytes[i];
+            }
+            if(n == 3 && Large)
+            {
+                at |= (uint)extendedAddress << 24;   // the top byte, in 3-byte mode
+            }
+            return at;
         }
 
         private byte At(uint where)
@@ -395,14 +635,42 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         public int GetStatus()
         {
-            // both status registers, for the engine's flash image: register 1 in the low byte
-            return (sr1 & 0xFC) | (sr2 << 8);
+            // the status registers as stored, for the engine's flash image: register 1 in
+            // the low byte, then 2, then 3. A volatile write is not part of it.
+            return (nv1 & 0xFC) | (nv2 << 8) | (nv3 << 16);
         }
 
         public void SetStatus(int value)
         {
-            sr1 = (byte)(value & 0xFC);
-            sr2 = (byte)((value >> 8) & 0x7F);
+            // what is stored, and so what is in force after power-up
+            nv1 = (byte)(value & 0xFC);
+            nv2 = (byte)((value >> 8) & 0x7F);
+            nv3 = (byte)((value >> 16) & 0x64);
+            PowerCycle();
+        }
+
+        public void PowerCycle()
+        {
+            // the chip loses power: volatile status goes back to what is stored, SRL with
+            // SRP clear is released, and every individual block lock is set again
+            selected = false;
+            writeEnabled = false;
+            volatileNext = false;
+            bytes.Clear();
+            sr1 = nv1;
+            sr2 = nv2;
+            sr3 = nv3;
+            fourByte = Large && ((sr3 >> 1) & 1) == 1;      // ADP: the mode it powers up in
+            extendedAddress = 0;
+            if(((sr1 >> 7) & 1) == 0)
+            {
+                sr2 = (byte)(sr2 & ~1);
+                nv2 = sr2;
+            }
+            for(var i = 0; i < blockLocks.Length; i++)
+            {
+                blockLocks[i] = true;
+            }
         }
 
         public void SaveTo(string path)
@@ -426,7 +694,13 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         private bool selected;
         private bool writeEnabled;
-        private byte sr1, sr2;                  // non-volatile: a reset does not touch them
+        private byte sr1, sr2, sr3;             // in force now: a reset does not touch them
+        private byte nv1, nv2, nv3;             // as stored: what a power cycle comes back to
+        private bool volatileNext;              // 50h was the last command
+        private bool wpHigh = true;             // the /WP pin
+        private bool fourByte;                  // 4-byte address mode (ADS)
+        private byte extendedAddress;           // the top address byte in 3-byte mode
+        private readonly bool[] blockLocks;     // individual block locks, used with WPS
         private readonly int protectUnit;
         private readonly List<byte> bytes = new List<byte>();
         private readonly byte[] memory;
@@ -443,6 +717,13 @@ namespace Antmicro.Renode.Peripherals.SPI
         private const byte Read = 0x03, FastRead = 0x0B, PageProgram = 0x02;
         private const byte SectorErase = 0x20, BlockErase32 = 0x52, BlockErase64 = 0xD8;
         private const byte ChipErase = 0xC7, ChipEraseAlt = 0x60;
+        private const byte ReadStatus3 = 0x15, WriteStatus3 = 0x11, VolatileWriteEnable = 0x50;
+        private const byte LockBlock = 0x36, UnlockBlock = 0x39, ReadBlockLock = 0x3D;
+        private const byte GlobalLock = 0x7E, GlobalUnlock = 0x98, Suspend = 0x75, Resume = 0x7A;
+        private const byte Enter4ByteMode = 0xB7, Exit4ByteMode = 0xE9;
+        private const byte WriteExtendedAddress = 0xC5, ReadExtendedAddress = 0xC8;
+        private const byte Read4 = 0x13, FastRead4 = 0x0C, PageProgram4 = 0x12, SectorErase4 = 0x21;
+        private const byte BlockErase32_4 = 0x5C, BlockErase64_4 = 0xDC;
         // the indices of the shared state words, as in the STM32 flash models
         private const int OpCount = 1, CutPoint = 2, CutHit = 3, CutKind = 4, CutAddr = 5, CutPage = 6, Trace = 9;
         private const int Protected = 19, ProtectedAt = 20;

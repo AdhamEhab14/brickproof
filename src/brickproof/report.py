@@ -13,6 +13,12 @@ def group(cut):
     """Which part of a run a result belongs to."""
     if cut["baseline"]:
         return "baseline"
+    if cut.get("content"):
+        return "content"
+    if cut.get("link") is not None:
+        return "link"
+    if cut.get("bit_error"):
+        return "bits"
     if cut["torn"]:
         return "torn"
     if cut["depth"] > 1:
@@ -23,7 +29,10 @@ def group(cut):
 GROUP_TITLES = {
     "baseline": "The update, uninterrupted",
     "cut": "Clean cuts: power lost between two flash operations",
-    "torn": "Torn states: power lost inside an erase or a program (modelled shapes)",
+    "torn": "Torn states: power lost inside an erase or a program",
+    "content": "Bad update content: a damaged image the bootloader must refuse",
+    "link": "A broken link: the host's session cut off, then tried again",
+    "bits": "Bit errors at rest: a stored image damaged while the device was off",
 }
 
 
@@ -54,6 +63,71 @@ def reproduce(report, cut):
     if cut["op_index"] is not None:
         return "%s --cut %d" % (base, cut["op_index"])
     return base
+
+
+def export_command(report, cut):
+    """A command that writes the flash this result started from, for a real board.
+    None where there is no single such state (the baseline, cuts in a row)."""
+    if cut["baseline"] or cut["depth"] > 1 or cut["op_index"] is None or not cut["fired"]:
+        return None
+    base = "brickproof export %s --cut %d" % (report["adapter_file"], cut["op_index"])
+    if cut["torn"]:
+        return "%s --torn %s -o op-%d-%s.bin" % (base, cut["torn"], cut["op_index"], cut["torn"])
+    return "%s -o op-%d.bin" % (base, cut["op_index"])
+
+
+# ---- SARIF ---------------------------------------------------------------------
+
+SARIF_RULES = {
+    "baseline": "The update fails with no power cut",
+    "cut": "The device does not recover from a power cut between two flash operations",
+    "torn": "The device does not recover from a power cut inside an erase or a program",
+    "content": "A damaged update image is not refused",
+    "link": "The device does not recover from a broken link",
+    "bits": "A stored image damaged at rest is run",
+}
+
+
+def sarif_rule(cut):
+    g = group(cut)
+    return "depth" if g.startswith("depth-") else g
+
+
+def sarif(report):
+    """SARIF 2.1.0 for GitHub code scanning: one result per failure, its kind as the rule,
+    located at the adapter file (the firmware itself is usually not in the repository)."""
+    rules = dict(SARIF_RULES, depth="The device does not recover from power cuts in a row")
+    results = []
+    for c in report["cuts"]:
+        if c["passed"] or c["skipped"]:
+            continue
+        text = "%s: %s" % (c["cut"], c["message"] or "failed")
+        text += "\nReproduce: %s" % reproduce(report, c)
+        if export_command(report, c):
+            text += "\nOn a board: %s" % export_command(report, c)
+        results.append({
+            "ruleId": sarif_rule(c),
+            "level": "error",
+            "message": {"text": text},
+            "locations": [{"physicalLocation": {
+                "artifactLocation": {"uri": report["adapter_file"].replace("\\", "/")},
+                "region": {"startLine": 1}}}],
+            "partialFingerprints": {"brickproofResult/v1": "%s/%s" % (report["adapter"], c["cut"])},
+        })
+    used = sorted({r["ruleId"] for r in results})
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "BrickProof",
+                "version": report["brickproof"],
+                "informationUri": "https://github.com/AdhamEhab14/brickproof",
+                "rules": [{"id": r, "shortDescription": {"text": rules[r]}} for r in used],
+            }},
+            "results": results,
+        }],
+    }
 
 
 # ---- JUnit ---------------------------------------------------------------------
@@ -88,6 +162,8 @@ def junit(report):
             out.append(head + ">\n    <skipped message=%s/>\n  </testcase>" % quoteattr(c["message"]))
         else:
             detail = "%s\n%s\nreproduce: %s" % (c["message"], where(c), reproduce(report, c))
+            if export_command(report, c):
+                detail += "\non a board: %s" % export_command(report, c)
             out.append(head + ">\n    <failure message=%s>%s</failure>\n  </testcase>" % (
                 quoteattr(c["message"] or "failed"), escape(detail)))
     out.append("</testsuite>")
@@ -156,6 +232,8 @@ def _rows(report, cuts, with_repro):
         row = "<tr>" + "".join("<td>%s</td>" % x for x in cells) + "<td class='msg'>%s" % _e(note)
         if with_repro:
             row += "<br><code>%s</code>" % _e(reproduce(report, c))
+            if export_command(report, c):
+                row += "<br><code>%s</code>" % _e(export_command(report, c))
         rows.append(row + "</td></tr>")
     return ("<div class='wrap'><table><tr><th>Result</th><th>Run</th><th>Op</th><th>Where</th>"
             "<th>Time</th><th>Finding</th></tr>%s</table></div>" % "".join(rows))
@@ -245,7 +323,7 @@ def html_page(report):
         d = report["depth"]
         out.append("<p>Cuts during recovery: up to %d in a row, %d new flash states tested, %d more "
                    "led to a state already tested%s.</p>" % (
-                       d["levels"], d["states"], d["skipped_known"],
+                       min(d["levels"], d.get("deepest", d["levels"])), d["states"], d["skipped_known"],
                        ", stopped at the state limit" if d["capped"] else ""))
 
     out.append("<h2>How to read this</h2>")
@@ -264,8 +342,10 @@ def html_page(report):
         notes.append("This adapter has no oracle section, so each verdict rests on what the "
                      "firmware reports about itself.")
     if "torn" in groups:
-        notes.append("Torn states are modelled shapes of a half-done erase or program. They follow "
-                     "what flash cells do but have not been calibrated against real hardware.")
+        notes.append("Torn states are shapes of a half-done erase or program. erase-early and "
+                     "erase-late are measured on an STM32F103 whose erase was stopped by a reset; "
+                     "the others follow what flash cells do but are not measured, and a real power "
+                     "loss has not been measured yet.")
     notes.append("Not modelled: write protection, read protection, option bytes, flash timing, wear.")
     out.append("".join("<p class='note'>%s</p>" % _e(n) for n in notes))
 

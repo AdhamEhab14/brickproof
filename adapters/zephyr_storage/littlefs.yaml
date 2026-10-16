@@ -1,0 +1,44 @@
+# littlefs (Zephyr) on an nRF52840 DK: the storage workload (app/) writes and deletes 8 files
+# in 80 steps on the 32 KB storage partition (8 blocks), so littlefs compacts and moves blocks.
+# After every cut the store must mount, hold every value a finished step left (or the one
+# under way), and take and keep a new write. Runs from prebuilt/ (see its README):
+#
+#   brickproof run adapters/zephyr_storage/littlefs.yaml -j 3
+
+name: zephyr_littlefs_nrf52840
+target: prebuilt/nrf52840
+
+platform:
+  base: nrf52840
+
+flash:
+  base: 0x0
+  size: 0x100000
+  page: 0x1000
+
+ram:
+  size: 0x40000
+
+firmware:
+  - file: littlefs.elf
+
+uart: uart0
+boot_settle: 0.5
+
+driver:
+  builtin: storage
+  options:
+    keys: 8
+    boot_timeout: 5
+
+# the program itself must stay as it is and keep running
+oracle:
+  images:
+    app: {file: littlefs.bin, at: 0x0}
+  accept: [app]
+
+scenario:
+  name: littlefs-workload
+  update_time: 5
+  cut_limit: 10
+  plan: {mode: phases, per_phase: 4}

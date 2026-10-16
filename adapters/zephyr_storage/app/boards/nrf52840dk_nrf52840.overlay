@@ -1,0 +1,9 @@
+/* The DK's external QSPI flash is not used here, and Renode has no model of the QSPI
+ * controller: its driver would wait for it at start-up for ever. */
+&qspi {
+	status = "disabled";
+};
+
+&mx25r64 {
+	status = "disabled";
+};

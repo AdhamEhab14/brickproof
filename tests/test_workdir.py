@@ -134,3 +134,35 @@ def test_without_an_external_flash_chip_nothing_of_it_is_there(tmp_path):
     wd.prepare(str(tmp_path), ad)
     assert "extflash" not in (tmp_path / "platform.repl").read_text()
     assert not (tmp_path / "models" / "BpSpiNor.cs").exists()
+
+
+def _nrf_adapter(tmp_path):
+    p = tmp_path / "nrf.yaml"
+    p.write_text("name: nrf\ntarget: .\nplatform: {base: nrf52840}\n"
+                 "flash: {base: 0x0, size: 0x100000, page: 0x1000}\nram: {size: 0x40000}\n"
+                 "firmware:\n  - file: app.elf\ndriver: {file: driver.py}\nuart: uart0\n")
+    return adapters.load(str(p))
+
+
+def test_an_nrf52840_is_guarded_where_it_has_no_memory(tmp_path):
+    ad = _nrf_adapter(tmp_path)
+    # flash at 0 has no alias; RAM is also seen at 0x00800000; FICR and UICR are left open
+    assert wd.holes(ad) == [("flashGuard", 0x100000, 0x800000 - 0x100000),
+                            ("codeRamGuard", 0x840000, 0x10000000 - 0x840000),
+                            ("infoGuard", 0x10002000, 0x20000000 - 0x10002000),
+                            ("ramGuard", 0x20040000, 0x40000000 - 0x20040000)]
+    assert wd.memory_sizes(ad) == {"ram": 0x40000, "flash": 0x100000}
+
+
+def test_an_nrf52840_gets_its_own_flash_controller_and_no_svd_download(tmp_path):
+    ad = _nrf_adapter(tmp_path)
+    (tmp_path / "app.elf").write_bytes(b"\x7fELF")
+    work = tmp_path / "work"
+    wd.prepare(str(work), ad)
+    repl = (work / "platform.repl").read_text()
+    assert "flashctl: Python.PythonPeripheral @ sysbus 0x4001E000" in repl
+    assert "ApplySVD" not in repl and "using " not in repl     # nothing fetched at start-up
+    model = (work / "models" / "nrf52_flash.py").read_text()
+    assert "\nPAGE = 0x1000\n" in model and "\nFLASH_SIZE = 0x100000\n" in model
+    assert not (work / "models" / "stm32f4_flash.py").exists()
+    assert "bpOptionBytes: Memory.MappedMemory @ sysbus 0x10001000" in repl       # the UICR

@@ -79,6 +79,8 @@ OB_SIZE = 16
 # allows. DS5319 table 28: programming 16 bits takes 40 to 70 us (52.5 typical), a page or
 # mass erase 20 to 40 ms. No typical erase time is given, so the middle is used.
 TIMING = 0
+WORN_FROM = 0x0           # worn pages (flash.worn): [WORN_FROM, WORN_TO), none by default
+WORN_TO = 0x0
 T_PROGRAM_US = (0, 53, 70)
 T_ERASE_US = (0, 30000, 40000)
 IWDG_KR = 0x40003000        # writing 0xCCCC here starts the independent watchdog
@@ -165,11 +167,21 @@ def fill_ff(addr, size):
 def load_option_bytes():
     # what the chip does at reset: WRPR and OBR are loaded from the option bytes.
     # Returns (wrpr, read protected, obr). A set bit in WRPR means "not protected".
-    # OBR shows RDPRT in bit 1, then the USER byte, Data0 and Data1.
+    # OBR shows OPTERR in bit 0, RDPRT in bit 1, then the USER byte, Data0 and Data1.
+    # Each option byte is stored with its complement. Where the two do not match, the
+    # chip sets OPTERR and loads that byte as 0xFF (RM0008, FLASH_OBR): an RDP byte
+    # read that way means "protected", a WRP byte that way means "not protected".
     ob = bus.ReadBytes(OB_BASE, OB_SIZE)
-    wrpr = int(ob[8]) | (int(ob[10]) << 8) | (int(ob[12]) << 16) | (int(ob[14]) << 24)
-    protected = int(ob[0]) != 0xA5
-    obr = (int(ob[6]) << 18) | (int(ob[4]) << 10) | (int(ob[2]) << 2) | (2 if protected else 0)
+    byte = []
+    opterr = 0
+    for i in range(OB_SIZE // 2):
+        b, c = int(ob[2 * i]), int(ob[2 * i + 1])
+        if b ^ c != 0xFF:
+            b, opterr = 0xFF, 1
+        byte.append(b)
+    wrpr = byte[4] | (byte[5] << 8) | (byte[6] << 16) | (byte[7] << 24)
+    protected = byte[0] != 0xA5
+    obr = (byte[3] << 18) | (byte[2] << 10) | (byte[1] << 2) | (2 if protected else 0) | opterr
     return wrpr, protected, obr
 
 
@@ -268,6 +280,12 @@ def power_off(kind, addr):
         c.IsHalted = True
 
 
+def worn(a):
+    # a worn page (flash.worn in the adapter): programs there report success, but bit 0 of
+    # each cell no longer changes, so the data read back differs from what was written
+    return WORN_FROM <= a < WORN_TO
+
+
 def refuse(addr, new, old):
     # the programming rule: the cell keeps what it had and PGERR is set
     global sr_err
@@ -331,8 +349,10 @@ def program(a, width, value):
         put(a, 2, old)                          # not erased, and not being cleared to zero
         refuse(a, value, old)
     else:
-        put(shadow_of(a), 2, value)
-        log("P 0x%08X 0x%04X @%d" % (a, value, T_PROGRAM_US[TIMING]))
+        stored = (value & ~1) | (old & 1) if worn(a) else value
+        put(a, 2, stored)
+        put(shadow_of(a), 2, stored)
+        log("P 0x%08X 0x%04X @%d" % (a, stored, T_PROGRAM_US[TIMING]))
 
 
 if request.IsInit:
@@ -352,7 +372,7 @@ elif request.IsWrite or request.IsRead:
 
     if request.IsRead:
         if o == 0x0C: request.Value = 0x20 | sr_err   # EOP set, BSY clear, plus any error
-        elif o == 0x1C: request.Value = obr           # no option byte error is ever raised
+        elif o == 0x1C: request.Value = obr           # OPTERR, RDPRT, USER, Data0, Data1
         elif o == 0x20: request.Value = wrpr
         elif 0x100 <= o <= 0x14C: request.Value = st((o - 0x100) // 4 + 1)
         else: request.Value = regs.get(o, 0)

@@ -1,0 +1,70 @@
+# The same demo on an STM32H563, emulated by m33mu: 8 KB sectors, 128-bit programs
+# that are never written twice, v1 -> v2. Runs from the committed prebuilt/ files:
+#
+#   brickproof demo h563
+#
+# Needs m33mu (https://github.com/danielinux/m33mu) on PATH or in M33MU_PATH.
+# The h563-bug-*.yaml files next to this one swap in a bootloader with a known bug.
+
+name: demo_ab_bootloader_h563
+target: .
+
+platform:
+  base: stm32h563                    # emulated by m33mu, not Renode
+
+flash:
+  base: 0x0C000000                   # the secure alias: the demo runs secure
+  size: 0x200000                     # 2 MB
+  write_protected:                   # as shipped: the bootloader's group of sectors is locked
+    - {from: 0x0C000000, size: 0x8000}
+
+ram:
+  base: 0x30000000
+  size: 0xA0000                      # 640 KB
+
+# the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
+firmware:
+  - file: prebuilt/h563_bootloader.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000
+
+uart: usart3                         # PD8, the Nucleo-H563ZI's virtual COM port
+boot_settle: 0.3
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x0C020000
+    image: prebuilt/h563_app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    boot_timeout: 2
+    rollback:
+      image: prebuilt/h563_app_v1.img
+      forbidden: "APP v1"
+
+oracle:
+  images:
+    v1: {file: prebuilt/h563_app_v1.img, at: 0x0C010000}
+    v2: {file: prebuilt/h563_app_v2.img, at: 0x0C010000}
+  accept: [v2]
+
+scenario:
+  name: update-v1-to-v2
+  cut_limit: 2
+  update_time: 1
+  plan: every
+  # damaged images in place of v2: the bootloader must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]
+      body: [0x200, 0x350]
+  # bits flipped in the installed v2 while the device is off: it must not run it
+  bit_errors:
+    runs: 4
+    regions:
+      header: [0x0C010000, 0x0C010010]
+      body: [0x0C010200, 0x0C010350]

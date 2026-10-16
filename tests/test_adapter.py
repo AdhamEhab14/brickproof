@@ -57,7 +57,39 @@ def test_a_cut_needs_exactly_one_position(tmp_path, cut):
 
 def test_unknown_platform_is_rejected(tmp_path):
     with pytest.raises(adapters.AdapterError, match="unknown"):
-        adapters.load(write(tmp_path, **{"stm32f103": "nrf52840"}))
+        adapters.load(write(tmp_path, **{"stm32f103": "esp32"}))
+
+
+NRF = {"stm32f103": "nrf52840",
+       "base: 0x08000000, size: 0x10000, page: 0x400": "base: 0x0, size: 0x100000, page: 0x1000",
+       "size: 0x5000": "size: 0x40000"}
+
+
+def test_an_nrf52840_has_4kb_pages_words_and_its_uicr_for_option_bytes(tmp_path):
+    f = adapters.load(write(tmp_path, **NRF)).flash
+    assert (f.model, f.controller, f.page, f.write_unit) == ("nrf52_flash.py", 0x4001E000, 0x1000, 4)
+    # the UICR comes after the code area in an image, erased as shipped, and ERASEALL wipes it
+    assert f.ob_base == 0x10001000 and f.option_bytes == bytes([0xFF]) * 0x400
+    assert f.image_size == 0x100000 + 0x400 and f.mass_erase_ob
+
+
+def test_nrf52840_uicr_words_and_approtect(tmp_path):
+    uicr = {"page: 0x1000}": "page: 0x1000, read_protected: true, uicr: {0x304: 5}}"}
+    f = adapters.load(write(tmp_path, **dict(NRF, **uicr))).flash
+    assert f.option_bytes[0x208:0x20C] == bytes([0x00, 0xFF, 0xFF, 0xFF])     # APPROTECT enabled
+    assert f.option_bytes[0x304:0x308] == bytes([5, 0, 0, 0])                 # REGOUT0 3.3 V
+    bad = {"page: 0x1000}": "page: 0x1000, uicr: {0x302: 5}}"}
+    with pytest.raises(adapters.AdapterError, match="word offset"):
+        adapters.load(write(tmp_path, **dict(NRF, **bad)))
+    with pytest.raises(adapters.AdapterError, match="nRF52"):
+        adapters.load(write(tmp_path, **{"page: 0x400}": "page: 0x400, uicr: {0x304: 5}}"}))
+
+
+def test_an_nrf52840_has_no_stm32_option_bytes_to_protect_with(tmp_path):
+    protect = {"page: 0x1000}": "page: 0x1000, write_protected: [{from: 0x0, size: 0x1000}]}"}
+    p = write(tmp_path, **dict(NRF, **protect))
+    with pytest.raises(adapters.AdapterError, match="STM32 option bytes"):
+        adapters.load(p)
 
 
 def test_raw_binary_needs_an_address(tmp_path):
@@ -235,7 +267,7 @@ def test_sectors_must_add_up_and_fit_the_chip(tmp_path):
 
 def test_the_f411_demo_and_its_bug_builds_load():
     names = [n for n in os.listdir(DEMO) if n.startswith("f411") and n.endswith(".yaml")]
-    assert len(names) == 16
+    assert len(names) == 20
     for n in names:
         ad = adapters.load(os.path.join(DEMO, n))
         assert ad.platform == "stm32f411" and ad.flash.sectors
@@ -297,8 +329,8 @@ def test_an_external_flash_chip_becomes_part_of_the_image(tmp_path):
     f = adapters.load(str(p)).flash
     assert (f.ext_bus, f.ext_cs, f.ext_size, f.ext_base) == ("spi1", "PA4", 0x100000, 0xA0000000)
     assert f.external(0xA0000000) and f.external(0xA00FFFFF) and not f.external(0xA0100000)
-    # then its two status registers, which survive a power cut like the flash does
-    assert f.image_size == f.size + f.ob_size + 0x100000 + 2
+    # then its three status registers, which survive a power cut like the flash does
+    assert f.image_size == f.size + f.ob_size + 0x100000 + 3
     assert f.ext_status == 0
     p.write_text(MINIMAL)
     assert not adapters.load(str(p)).flash.external(0xA0000000)
@@ -309,15 +341,20 @@ def test_an_external_chip_can_ship_with_its_block_protection_set(tmp_path):
     p = tmp_path / "adapter.yaml"
     p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, status: 0x24}\n")
     assert adapters.load(str(p)).flash.ext_status == 0x24
-    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, status: 0x10000}\n")
+    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, status: 0x1000000}\n")
     with pytest.raises(adapters.AdapterError, match="status register 1"):
+        adapters.load(str(p))
+    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, wp: PA3}\n")
+    assert adapters.load(str(p)).flash.ext_wp == "PA3"
+    p.write_text(MINIMAL + "external_flash: {bus: spi1, cs: PA4, size: 0x100000, wp: PA4}\n")
+    with pytest.raises(adapters.AdapterError, match="same pin"):
         adapters.load(str(p))
 
 
 @pytest.mark.parametrize("ext, message", [
     ("{bus: spi1, cs: A4, size: 0x100000}", "pin name"),
     ("{bus: spi1, cs: PA4, size: 0x100001}", "multiple of 4 KB"),
-    ("{bus: spi1, cs: PA4, size: 0x2000000}", "up to 16 MB"),
+    ("{bus: spi1, cs: PA4, size: 0x8000000}", "up to 64 MB"),
     ("{bus: spi1, cs: PA4, size: 0x1000, address: 0x08000000}", "overlaps"),
     ("{cs: PA4, size: 0x1000}", "missing 'bus'"),
 ])

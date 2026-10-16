@@ -66,6 +66,11 @@ class StagedSlot:
     def prepare(self):
         self.s.load_binary(self.image, self.slot)
 
+    def staged(self):
+        """(address, bytes) of what prepare() puts in the staging slot."""
+        with open(os.path.join(self.s.workdir, self.image), "rb") as f:
+            return self.slot, f.read()
+
     def start_update(self):
         pass                            # the reset before this already started it
 

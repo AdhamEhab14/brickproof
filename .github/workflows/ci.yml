@@ -3,8 +3,12 @@
 #         new user runs it: the correct one must survive a cut at every flash
 #         state and every torn state, and each bug build must be caught (exit code 1,
 #         not 0 or 3).
+# demo-m33mu - the same on the STM32H563, emulated by m33mu, through the action.
 # action, docker, package - the three ways BrickProof is handed to someone else, each
 #         built and used for real.
+# model-rules - the flash models' chip rules, checked one by one in Renode.
+# mcuboot - MCUboot from its prebuilt files on the Black Pill and the nRF52840 DK.
+# storage - Zephyr's flash stores (NVS, littlefs, ZMS) under the storage workload.
 # e2e   - builds the Three-Tier bootloader (the first real target), then cuts power
 #         during its FBL self-update in Renode and checks it recovers each time.
 name: CI
@@ -98,6 +102,11 @@ jobs:
             torn: true
           - adapter: bug-early_unpg    # every second cell stored after PG was cleared
             expect: 1
+          - adapter: standby           # an install paused once in Standby: RAM lost, back by a reset
+            expect: 0
+            torn: true
+          - adapter: bug-standby_ram   # "already paused" kept in RAM: pauses for ever
+            expect: 1
           # the same demo on an STM32F411: sector erase, word programming, other option bytes
           - adapter: f411
             expect: 0
@@ -130,12 +139,79 @@ jobs:
             torn: true
           - adapter: f411-bug-early_unpg
             expect: 1
+          - adapter: f411-standby
+            expect: 0
+            torn: true
+          - adapter: f411-bug-standby_ram
+            expect: 1
           - adapter: f411-ext          # staged image and rollback floor in an external SPI NOR chip
             expect: 0
             torn: true
             depth: 2
           - adapter: f411-ext-bug-consume_first
             expect: 1
+          - adapter: f411-ee           # rollback floor in an I2C EEPROM
+            expect: 0
+            torn: true
+            depth: 2
+          - adapter: f411-ee-bug-no_invalidate   # passes every clean cut; only torn writes catch it
+            expect: 1
+            torn: true
+          # and on an STM32L476: 2 KB pages, 64-bit programs, ECC on every double word
+          - adapter: l476
+            expect: 0
+            torn: true
+            depth: 2
+          - adapter: l476-bug-no_ecc_nmi   # passes every clean cut; only torn states catch it
+            expect: 1
+            torn: true
+          - adapter: l476-bug-consume_first
+            expect: 1
+          - adapter: l476-bug-trust_header
+            expect: 1
+          - adapter: l476-bug-naive_floor
+            expect: 1
+          - adapter: l476-bug-pop_after_switch
+            expect: 1
+          - adapter: l476-bug-no_erase     # a double word programmed twice: refused (PROGERR)
+            expect: 1
+          - adapter: l476-bug-no_unlock
+            expect: 1
+          - adapter: l476-bug-early_unpg
+            expect: 1
+          - adapter: l476-bug-protected_slot
+            expect: 1
+          - adapter: l476-bug-resume_copy
+            expect: 1
+          - adapter: l476-bug-retry_limit
+            expect: 1
+          - adapter: l476-hold_pg
+            expect: 0
+            torn: true
+          # and on an nRF52840: 4 KB pages, no flash keys, two writes to a word between erases
+          - adapter: nrf52
+            expect: 0
+            torn: true
+            depth: 2
+          - adapter: nrf52-bug-consume_first
+            expect: 1
+          - adapter: nrf52-bug-trust_header
+            expect: 1
+          - adapter: nrf52-bug-naive_floor
+            expect: 1
+          - adapter: nrf52-bug-pop_after_switch
+            expect: 1
+          - adapter: nrf52-bug-no_erase
+            expect: 1
+          - adapter: nrf52-bug-retry_limit
+            expect: 1
+          - adapter: nrf52-bug-early_unpg   # stores made with CONFIG back to read-only
+            expect: 1
+          - adapter: nrf52-bug-nwrite       # a third write to a word without an erase
+            expect: 1
+          - adapter: nrf52-hold_pg
+            expect: 0
+            torn: true
     name: demo (${{ matrix.adapter }})
     env:
       RENODE_VERSION: "1.17.0"
@@ -186,6 +262,223 @@ jobs:
         with:
           name: demo-${{ matrix.adapter }}
           path: brickproof-out/
+
+  # the flash models' chip rules, one register or one store at a time, in Renode
+  model-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: The chip rules
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          python -m pytest -v tests/renode
+
+  # MCUboot from its committed prebuilt files, on both boards. A full campaign takes over an
+  # hour per board on a runner (392,000 byte programs on the F411), so CI cuts every edge
+  # between phases, one sample inside each long phase, and powers three in four of those
+  # cuts up from the computed state; the real ones check that state byte for byte. Every
+  # F411 cut redoes the rest of a 128 KB byte-by-byte swap, so its 42 cuts are split over
+  # four runners; the four shards together are the whole plan.
+  mcuboot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {board: f411, shard: 1/4}
+          - {board: f411, shard: 2/4}
+          - {board: f411, shard: 3/4}
+          - {board: f411, shard: 4/4}
+          - {board: nrf52840, shard: 1/1}
+    name: mcuboot (${{ matrix.board }} ${{ matrix.shard }})
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Cut power during MCUboot's swap
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          out=brickproof-out/mcuboot-${{ matrix.board }}-$(echo "${{ matrix.shard }}" | tr / -)
+          brickproof run adapters/mcuboot/${{ matrix.board }}.yaml --per-phase 1 --real-every 4 -j 3 \
+            --shard "${{ matrix.shard }}" --json "$out.json" --junit "$out.xml" --html "$out.html"
+
+      - name: Upload results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcuboot-${{ matrix.board }}-${{ strategy.job-index }}
+          path: brickproof-out/
+
+  # Zephyr's flash stores from their committed prebuilt workload, judged by the storage
+  # driver. NVS and littlefs must recover from every cut; ZMS loses a write after a cut
+  # inside a value (zephyrproject-rtos/zephyr#121747) and settings on FCB loses settings
+  # (#122446, #121749), so those must be caught until they are fixed upstream.
+  storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {store: nvs, expect: 0}
+          - {store: littlefs, expect: 0}
+          - {store: zms, expect: 1}
+          - {store: settings_fcb, expect: 1}   # zephyrproject-rtos/zephyr#122446 and #121749
+    name: storage (${{ matrix.store }})
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Cut power during the storage workload
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          flags="-j 3"
+          if [ "${{ matrix.expect }}" = 1 ]; then flags="--fail-fast"; fi
+          set +e
+          brickproof run adapters/zephyr_storage/${{ matrix.store }}.yaml $flags \
+            --json brickproof-out/${{ matrix.store }}.json --junit brickproof-out/${{ matrix.store }}.xml \
+            --html brickproof-out/${{ matrix.store }}.html
+          code=$?
+          echo "exit code $code, expected ${{ matrix.expect }}"
+          [ "$code" = "${{ matrix.expect }}" ]
+
+      - name: Upload results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-${{ matrix.store }}
+          path: brickproof-out/
+
+  # the demo on the STM32H563. m33mu emulates it; the action builds m33mu at the
+  # commit it pins (once, then from its cache) and runs the adapter
+  demo-m33mu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - adapter: h563             # the correct build: every clean cut, every torn state,
+            expect: 0                 # and a second cut during recovery
+            args: -j 3 --torn --depth 2
+          - adapter: h563-hold_pg
+            expect: 0
+            args: -j 3 --torn
+          - adapter: h563-bug-consume_first
+            expect: 1
+          - adapter: h563-bug-trust_header
+            expect: 1
+          - adapter: h563-bug-naive_floor
+            expect: 1
+          - adapter: h563-bug-pop_after_switch   # the core locks up on every boot
+            expect: 1
+          - adapter: h563-bug-no_erase           # a 128-bit word programmed twice: refused
+            expect: 1
+          - adapter: h563-bug-no_unlock
+            expect: 1
+          - adapter: h563-bug-early_unpg
+            expect: 1
+          - adapter: h563-bug-protected_slot     # WRPSG protects the app slot by mistake
+            expect: 1
+          - adapter: h563-bug-resume_copy        # only torn states catch it (torn: true in it)
+            expect: 1
+          - adapter: h563-bug-retry_limit        # only two cuts in a row catch it (depth 2 in it)
+            expect: 1
+    name: demo-m33mu (${{ matrix.adapter }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cut power during the demo update
+        id: bp
+        uses: ./
+        continue-on-error: true
+        with:
+          adapter: examples/demo_ab_bootloader/${{ matrix.adapter }}.yaml
+          args: ${{ matrix.expect == 1 && '--fail-fast' || matrix.args }}
+          artifact-name: demo-m33mu-${{ matrix.adapter }}
+
+      - name: Check the exit code
+        run: |
+          echo "exit code ${{ steps.bp.outputs.exit-code }}, expected ${{ matrix.expect }}"
+          [ "${{ steps.bp.outputs.exit-code }}" = "${{ matrix.expect }}" ]
+
+      - name: The m33mu backend's tests, against this m33mu
+        if: matrix.adapter == 'h563'
+        run: |
+          pip install pytest
+          M33MU_PATH="$HOME/m33mu-bin/m33mu" python -m pytest -v tests/test_m33mu.py
 
   # the GitHub Action, used the way another repository would use it
   action:

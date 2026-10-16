@@ -1,0 +1,11 @@
+# The H563 demo with the bug a real board found and an emulator first missed
+# (see BUG_POP_AFTER_SWITCH in bootloader/main.c): a pop from the new stack,
+# past the end of RAM. BrickProof should fail the baseline: the core faults.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_bug_pop_after_switch
+firmware:
+  - file: prebuilt/h563_bootloader_bug_pop_after_switch.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000

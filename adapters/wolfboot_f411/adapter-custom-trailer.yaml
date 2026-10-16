@@ -1,0 +1,19 @@
+# wolfBoot with the fix proposed for #937 (wolfSSL/wolfBoot PR #940): the Black Pill
+# config keeps its one-sector partitions, and the partition trailers move to the 16 KB
+# sectors 1 (BOOT) and 2 (UPDATE), with CUSTOM_PARTITION_TRAILER=1. Built the same way
+# as adapter.yaml, from the PR's branch:
+#   cp config/examples/stm32f411-blackpill.config .config
+#   make UART_FLASH=0
+#   tools/keytools/sign --ed25519 --sha256 test-app/image.bin wolfboot_signing_private_key.der 2
+# then:  brickproof run adapters/wolfboot_f411/adapter-custom-trailer.yaml --target <wolfBoot folder>
+extends: adapter.yaml
+name: wolfboot_f411_custom_trailer
+
+driver:
+  file: driver.py
+  options:
+    image: test-app/image_v2_signed.bin
+    update_partition: 0x08040000
+    partition_size: 0x20000
+    trailer: 0x0800C000          # the UPDATE trailer ends with sector 2
+    boot_timeout: 30

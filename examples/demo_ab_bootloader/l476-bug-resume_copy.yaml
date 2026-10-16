@@ -1,0 +1,13 @@
+# The L476 demo with a "resume instead of restart" optimisation (see BUG_RESUME_COPY in
+# bootloader/main.c). It survives a clean cut at every flash state. Only a torn
+# operation shows the bug, so this one needs torn states to be caught.
+extends: l476.yaml
+name: demo_ab_bootloader_l476_bug_resume_copy
+firmware:
+  - file: prebuilt/l476_bootloader_bug_resume_copy.elf
+  - file: prebuilt/l476_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000
+scenario:
+  torn: true

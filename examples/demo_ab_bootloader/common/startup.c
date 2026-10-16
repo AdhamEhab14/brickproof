@@ -24,11 +24,14 @@ void Default_Handler(void)
         ;
 }
 
+/* The bootloader may handle the NMI itself (on the L4 it reports ECC errors). */
+void NMI_Handler(void) __attribute__((weak, alias("Default_Handler")));
+
 __attribute__((section(".isr_vector"), used))
 void (*const vectors[16])(void) = {
     (void (*)(void))&_estack,
     Reset_Handler,
-    Default_Handler,     /* NMI */
+    NMI_Handler,
     Default_Handler,     /* HardFault */
     Default_Handler,     /* MemManage */
     Default_Handler,     /* BusFault */

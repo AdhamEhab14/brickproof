@@ -50,3 +50,6 @@ scenario:
   update_time: 12
   cut_limit: 15
   plan: {mode: phases, per_phase: 4}
+  # the UART link broken at 10 points of the programming session; after 2 s the host starts
+  # a whole new session
+  link_cuts: {points: 8, wait: 2}

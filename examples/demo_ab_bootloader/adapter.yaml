@@ -57,3 +57,16 @@ scenario:
   cut_limit: 1                       # virtual seconds; the whole install takes far less
   update_time: 0.5
   plan: every                        # cut at every distinct flash state the update goes through
+  # damaged images in place of v2: the bootloader must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]                # magic, version, size, CRC
+      body: [0x200, 0x338]
+  # bits flipped in the installed v2 while the device is off: it must not run it. Only the
+  # bytes the image uses (header and body); the padding between them is never read
+  bit_errors:
+    runs: 4
+    regions:
+      header: [0x08002000, 0x08002010]
+      body: [0x08002200, 0x08002338]

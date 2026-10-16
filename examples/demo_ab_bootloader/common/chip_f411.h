@@ -6,7 +6,7 @@
 
 /* ---- flash map ----------------------------------------------------------- */
 #define BL_BASE        0x08000000u   /* sector 0, 16 KB: bootloader              */
-#ifndef EXT_FLASH
+#if !defined(EXT_FLASH) && !defined(EEPROM_FLOOR)
 #define META_0         0x08004000u   /* sector 1, 16 KB: rollback floor, in two  */
 #define META_1         0x08008000u   /* sector 2, 16 KB: sectors, so one is always intact */
 #endif
@@ -210,6 +210,127 @@ static inline void ext_erase_sector(uint32_t addr)
     ext_select(0x20, addr);
     ext_release();
     ext_wait();
+}
+#endif
+
+#ifdef EEPROM_FLOOR
+/* ---- an I2C EEPROM (a 24C256: 32 KB, 64-byte pages) on I2C1, PB8 and PB9 -------
+ * With EEPROM_FLOOR the rollback floor is kept in it, a record per page. Offsets: */
+#define META_0         0x0000u
+#define META_1         0x0040u
+#define EE_I2C         0x50u         /* its bus address, with A0 to A2 tied low   */
+
+#define RCC_APB1ENR_I2C1 (1u << 21)
+#define GPIOB_MODER    REG(0x40020400u)
+#define GPIOB_OTYPER   REG(0x40020404u)
+#define GPIOB_AFRH     REG(0x40020424u)
+#define I2C1_CR1       REG(0x40005400u)
+#define I2C1_CR2       REG(0x40005404u)
+#define I2C1_DR        REG(0x40005410u)
+#define I2C1_SR1       REG(0x40005414u)
+#define I2C1_SR2       REG(0x40005418u)
+#define I2C1_CCR       REG(0x4000541Cu)
+#define I2C1_TRISE     REG(0x40005420u)
+#define CR1_PE         (1u << 0)
+#define CR1_START      (1u << 8)
+#define CR1_STOP       (1u << 9)
+#define CR1_ACK        (1u << 10)
+#define SR1_SB         (1u << 0)
+#define SR1_ADDR       (1u << 1)
+#define SR1_BTF        (1u << 2)
+#define SR1_RXNE       (1u << 6)
+#define SR1_TXE        (1u << 7)
+#define SR1_AF         (1u << 10)
+
+static inline void ee_init(void)
+{
+    RCC_AHB1ENR |= (1u << 1);                         /* GPIOB */
+    RCC_APB1ENR |= RCC_APB1ENR_I2C1;
+    /* PB8 and PB9: alternate function 4, open drain */
+    GPIOB_MODER = (GPIOB_MODER & ~(0xFu << 16)) | (0xAu << 16);
+    GPIOB_OTYPER |= (3u << 8);
+    GPIOB_AFRH = (GPIOB_AFRH & ~0xFFu) | 0x44u;
+    I2C1_CR2 = 16;                                    /* APB1 at 16 MHz */
+    I2C1_CCR = 80;                                    /* 100 kHz */
+    I2C1_TRISE = 17;
+    I2C1_CR1 = CR1_PE;
+}
+
+static inline void ee_until(uint32_t flags)
+{
+    while (!(I2C1_SR1 & flags))
+        ;
+}
+
+/* A start condition and the EEPROM's address. 0 if it did not answer, which it does
+ * not while a write cycle is still going on. ADDR is left for the caller to clear. */
+static inline int ee_start(uint32_t read)
+{
+    I2C1_CR1 |= CR1_START;
+    ee_until(SR1_SB);
+    I2C1_DR = (EE_I2C << 1) | read;
+    ee_until(SR1_ADDR | SR1_AF);
+    if (I2C1_SR1 & SR1_AF) {
+        I2C1_SR1 &= ~SR1_AF;
+        I2C1_CR1 |= CR1_STOP;
+        return 0;
+    }
+    return 1;
+}
+
+static inline void ee_send(uint8_t b)
+{
+    ee_until(SR1_TXE);
+    I2C1_DR = b;
+}
+
+static inline void ee_address(uint32_t off)
+{
+    while (!ee_start(0))
+        wdg_feed();                                   /* busy: try again */
+    (void)I2C1_SR2;
+    ee_send((uint8_t)(off >> 8));
+    ee_send((uint8_t)off);
+}
+
+static inline void ee_read(uint32_t off, void *to, uint32_t n)
+{
+    uint8_t *p = to;
+    ee_address(off);
+    ee_until(SR1_BTF);
+    /* a repeated start, now reading. Every byte is acknowledged except the last, which
+     * tells the EEPROM to stop sending. */
+    if (n > 1)
+        I2C1_CR1 |= CR1_ACK;
+    else
+        I2C1_CR1 &= ~CR1_ACK;
+    ee_start(1);
+    (void)I2C1_SR2;
+    if (n == 1)
+        I2C1_CR1 |= CR1_STOP;
+    for (uint32_t i = 0; i < n; i++) {
+        ee_until(SR1_RXNE);
+        p[i] = (uint8_t)I2C1_DR;
+        if (i + 2 == n) {
+            I2C1_CR1 &= ~CR1_ACK;
+            I2C1_CR1 |= CR1_STOP;
+        }
+    }
+}
+
+/* At most one 64-byte page, and not across a page boundary: the chip would wrap. */
+static inline void ee_write(uint32_t off, const void *from, uint32_t n)
+{
+    const uint8_t *p = from;
+    ee_address(off);
+    while (n--)
+        ee_send(*p++);
+    ee_until(SR1_BTF);
+    I2C1_CR1 |= CR1_STOP;
+    /* the write cycle: the chip answers its address again once it is done */
+    while (!ee_start(0))
+        wdg_feed();
+    I2C1_CR1 |= CR1_STOP;
 }
 #endif
 

@@ -51,16 +51,38 @@
  *                         its reset timeout of half a second. On a device with a
  *                         hardware watchdog, a sector erase that takes a second gets
  *                         the chip reset in the middle of it, on every attempt.
+ *   BUG_NWRITE            (nRF52840 only) record the install's progress by clearing one
+ *                         more bit of the same word after each step. Fine on an STM32F4,
+ *                         which lets a word be programmed again and again. The nRF52
+ *                         allows two writes to a word between erases, and the third
+ *                         one is outside what the chip guarantees.
  *
  * EXT_FLASH (STM32F411 only) is not a bug either: the new image waits in an external SPI
  * NOR flash chip, and the rollback floor is kept there too.
  *
+ * EEPROM_FLOOR (STM32F411 only, not a bug) keeps the rollback floor in an I2C EEPROM.
+ * BUG_EE_NO_INVALIDATE with it rewrites a record without clearing its old magic first.
+ *
+ * On the STM32L4 (-DSTM32L4) every double word has ECC, and a program or erase cut short
+ * can leave it wrong: reading it raises an NMI. The bootloader catches that, and treats
+ * whatever it was reading as invalid. BUG_NO_ECC_NMI leaves the NMI to the default
+ * handler, which hangs.
+ *
+ * STANDBY_PAUSE (STM32F1 and F4, not a bug) pauses an install once in Standby, as a device on
+ * a supercap does to let it recharge, and carries on after the wake. Standby loses RAM: the
+ * wake is a reset, so the bootloader asks PWR's SBF whether it has already paused.
+ * BUG_STANDBY_RAM keeps that in a RAM variable start-up leaves alone instead, which the chip
+ * does not keep through Standby: it pauses for ever.
+ *
  * HOLD_PG is not a bug: it is the other common way to write flash, with PG left set
  * over a whole run of cells. A power cut can fall between any two of them.
  *
- * The same source builds for an STM32F103 and, with -DSTM32F4, for an STM32F411. What
- * differs between them (the flash map, how to erase and program, the option bytes)
- * is in common/chip_*.h.
+ * The same source builds for an STM32F103, with -DSTM32F4 for an STM32F411, -DSTM32L4 for
+ * an STM32L476, -DSTM32H5 for an STM32H563 and -DNRF52 for an nRF52840. What differs
+ * between them (the flash map, how to erase and program, the option bytes) is in
+ * common/chip_*.h. On the H563 a cell is a 128-bit word that is never programmed twice
+ * (CELL_IS_BLOCK): Slot B is marked consumed with a cell of its own, and the floor record
+ * is one cell.
  */
 #include "demo.h"
 
@@ -71,6 +93,26 @@ typedef struct {
     uint32_t floor;
     uint32_t magic;               /* written last: a torn record has no magic */
 } meta_t;
+
+#if defined(EEPROM_FLOOR) || defined(STM32L4)
+static meta_t meta_copy[2];
+#endif
+
+#ifdef STM32L4
+volatile int ecc_error;
+
+#ifndef BUG_NO_ECC_NMI
+/* A read hit a double word whose ECC is wrong: the data that came back is not to be
+ * trusted. Note it for the code that did the reading, and carry on. */
+void NMI_Handler(void)
+{
+    if (FLASH_ECCR & ECCR_ECCD) {
+        FLASH_ECCR = ECCR_ECCD;
+        ecc_error = 1;
+    }
+}
+#endif
+#endif
 
 #ifdef EXT_FLASH
 /* With an external flash chip the staged image is read into RAM once at start-up, and
@@ -100,11 +142,15 @@ static const img_hdr_t *hdr(uint32_t slot)
     return (const img_hdr_t *)slot;
 }
 
-static int image_valid(uint32_t slot)
+static int image_check(uint32_t slot)
 {
     const img_hdr_t *h = hdr(slot);
     if (h->magic != IMG_MAGIC || h->size == 0 || h->size > SLOT_SIZE - IMG_OFFSET)
         return 0;
+#ifdef CELL_IS_BLOCK
+    if (slot == SLOT_B && !cell_erased((const volatile cell_t *)CONSUMED))
+        return 0;                         /* consumed: see consume_staging */
+#endif
 #ifdef EXT_FLASH
     if (slot == SLOT_B && h->size > STAGED_MAX - IMG_OFFSET)
         return 0;                         /* more than was read from the chip */
@@ -116,18 +162,31 @@ static int image_valid(uint32_t slot)
 #endif
 }
 
+/* Valid, and nothing read on the way hit an ECC error. */
+static int image_valid(uint32_t slot)
+{
+    ecc_clear();
+    int ok = image_check(slot);
+    return ok && !ecc_seen();
+}
+
 static int same_image(uint32_t a, uint32_t b)
 {
     return hdr(a)->version == hdr(b)->version && hdr(a)->crc == hdr(b)->crc;
 }
 
-/* Clear Slot B's magic. Programming zeros over written flash is allowed on both
- * chips, so this is cheap and needs no erase. */
+/* Clear Slot B's magic. Programming zeros over written flash is allowed on the F1
+ * and the F4, so this is cheap and needs no erase. The H563 does not program a cell
+ * twice, so there Slot B gets a consumed marker in a cell of its own. */
 static void consume_staging(void)
 {
-#ifdef EXT_FLASH
+#if defined(EXT_FLASH)
     staged[0] = 0;
     ext_program(EXT_STAGING, &staged[0], 4);
+#elif defined(STM32L4)
+    flash_cell(SLOT_B, 0);                /* all zeros: the one value a written cell takes */
+#elif defined(CELL_IS_BLOCK)
+    flash_cell(CONSUMED, CELL_ZERO);
 #else
     flash_word(SLOT_B, 0);
 #endif
@@ -137,9 +196,18 @@ static void consume_staging(void)
 
 static const meta_t *meta(uint32_t page)
 {
-#ifdef EXT_FLASH
+#if defined(EXT_FLASH)
     meta_t *m = &meta_copy[page == META_1];
     ext_read(page, m, sizeof *m);
+#elif defined(EEPROM_FLOOR)
+    meta_t *m = &meta_copy[page == META_1];
+    ee_read(page, m, sizeof *m);
+#elif defined(STM32L4)
+    meta_t *m = &meta_copy[page == META_1];
+    ecc_clear();
+    *m = *(const meta_t *)page;
+    if (ecc_seen())
+        return 0;                         /* a page whose erase or program was cut short */
 #else
     const meta_t *m = (const meta_t *)page;
 #endif
@@ -155,6 +223,26 @@ static void meta_store(uint32_t target, uint32_t seq, uint32_t floor)
     ext_erase_sector(target);
     ext_program(target, record, sizeof record);
     ext_program(target + 8, &magic, sizeof magic);
+#elif defined(EEPROM_FLOOR)
+    uint32_t record[3] = { seq, floor, META_MAGIC };
+    /* An EEPROM needs no erase, so the page may still hold an older record with a valid
+     * magic. Clear that first: a write cut short can leave anything in seq and floor, and
+     * the old magic would vouch for it. Then the record, then the magic. */
+#ifndef BUG_EE_NO_INVALIDATE
+    uint32_t none = 0;
+    ee_write(target + 8, &none, sizeof none);
+#endif
+    ee_write(target, record, 8);
+    ee_write(target + 8, &record[2], 4);
+#elif defined(STM32L4)
+    /* two double words, each programmed once: seq and floor, then the magic */
+    flash_erase(target, 1);
+    flash_cell(target, ((uint64_t)floor << 32) | seq);
+    flash_cell(target + 8, 0xFFFFFFFF00000000ull | META_MAGIC);
+#elif defined(CELL_IS_BLOCK)
+    /* the whole record is one cell: one program, all of it or none */
+    flash_erase(target, 1);
+    flash_cell(target, (cell_t){{seq, floor, META_MAGIC, 0xFFFFFFFFu}});
 #else
     flash_erase(target, 1);
     flash_word(target + 0, seq);
@@ -205,6 +293,61 @@ static void meta_write(uint32_t floor)
 
 /* ---- install -------------------------------------------------------------- */
 
+#ifdef STANDBY_PAUSE
+#define PWR_CR         REG(0x40007000u)
+#define PWR_CSR        REG(0x40007004u)
+#define SCB_SCR        REG(0xE000ED10u)
+#define PWR_CR_PDDS    (1u << 1)
+#define PWR_CR_CWUF    (1u << 2)
+#define PWR_CR_CSBF    (1u << 3)
+#define PWR_CSR_SBF    (1u << 1)
+#define PAUSED         0x50415553u   /* "PAUS" */
+
+#ifdef BUG_STANDBY_RAM
+__attribute__((section(".noinit"))) static uint32_t paused;
+#endif
+
+/* Pause once in Standby. The wake is a reset: main() starts over and finds the install to do. */
+static void pause_in_standby(void)
+{
+#ifdef BUG_STANDBY_RAM
+    if (paused == PAUSED)
+        return;
+    paused = PAUSED;
+#else
+    if (PWR_CSR & PWR_CSR_SBF)
+        return;                           /* this boot is the wake: carry on */
+#endif
+    RCC_APB1ENR |= (1u << 28);            /* PWR */
+    PWR_CR |= PWR_CR_CWUF | PWR_CR_PDDS;
+    SCB_SCR |= (1u << 2);                 /* SLEEPDEEP */
+    __asm volatile("dsb\n wfi");
+    for (;;)
+        ;
+}
+
+/* The install is done: the next one may pause again. */
+static void standby_done(void)
+{
+#ifndef BUG_STANDBY_RAM
+    PWR_CR |= PWR_CR_CSBF;
+#endif
+}
+#else
+#define pause_in_standby() ((void)0)
+#define standby_done() ((void)0)
+#endif
+
+#ifdef BUG_NWRITE
+/* One bit per step, cleared in the staged image's unused header area. */
+static void progress(uint32_t step)
+{
+    flash_word(SLOT_B + 0x14, ~((2u << step) - 1u));
+}
+#else
+#define progress(step) ((void)0)
+#endif
+
 /* One program per cell: a halfword on the F1, a word on the F4. */
 static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
 {
@@ -212,7 +355,11 @@ static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
     flash_pg(1);
     for (uint32_t i = 0; i < n; i += CELL) {
         wdg_feed();
+#ifdef CELL_IS_BLOCK
+        cell_store(dst + i, (const cell_t *)(src + i));
+#else
         *(volatile cell_t *)(dst + i) = *(const cell_t *)(src + i);
+#endif
         flash_wait();
     }
     flash_pg(0);
@@ -221,13 +368,21 @@ static void copy_cells(uint32_t dst, uint32_t src, uint32_t n)
         wdg_feed();
         flash_cell(dst + i, *(const cell_t *)(src + i));
         if (i + CELL < n)                 /* PG is clear again by now */
+#ifdef CELL_IS_BLOCK
+            cell_store(dst + i + CELL, (const cell_t *)(src + i + CELL));
+#else
             *(volatile cell_t *)(dst + i + CELL) = *(const cell_t *)(src + i + CELL);
+#endif
     }
 #else
     for (uint32_t i = 0; i < n; i += CELL) {
         wdg_feed();
 #ifdef BUG_RESUME_COPY
+#ifdef CELL_IS_BLOCK
+        if (cell_same((const cell_t *)(dst + i), (const cell_t *)(src + i)))
+#else
         if (*(const cell_t *)(dst + i) == *(const cell_t *)(src + i))
+#endif
             continue;                     /* already there from the interrupted attempt */
 #endif
         flash_cell(dst + i, *(const cell_t *)(src + i));
@@ -261,17 +416,26 @@ static void install(void)
      * area, so a bad image cannot keep the device rebooting for ever. Two attempts
      * already started and not finished: give up on this update. */
     const volatile cell_t *tries = (const volatile cell_t *)(SLOT_B + 0x10);
+#ifdef CELL_IS_BLOCK
+    if (cell_clear(&tries[0]) && cell_clear(&tries[1])) {
+#else
     if (tries[0] == 0 && tries[1] == 0) {
+#endif
         uart_puts("BL: giving up on this update\r\n");
         consume_staging();
         flash_lock();
         return;
     }
+#ifdef CELL_IS_BLOCK
+    flash_cell(SLOT_B + 0x10 + (cell_clear(&tries[0]) ? CELL : 0), CELL_ZERO);
+#else
     flash_cell(SLOT_B + 0x10 + (tries[0] ? 0 : CELL), 0);
+#endif
 #endif
 #ifndef BUG_NAIVE_FLOOR
     meta_write(version);
 #endif
+    progress(0);
 #ifdef BUG_CONSUME_FIRST
     img_hdr_t h = *hdr(SLOT_B);           /* keep a RAM copy, Slot B is about to lose it */
     consume_staging();
@@ -282,10 +446,13 @@ static void install(void)
 #endif
     flash_erase(SLOT_A, IMG_OFFSET + body);
 #endif
+    pause_in_standby();                   /* Slot A erased: the worst moment for it */
+    progress(1);
 #ifdef BUG_TRUST_HEADER
     copy_cells(SLOT_A, SLOT_B, sizeof(img_hdr_t));
 #endif
     copy_cells(SLOT_A + IMG_OFFSET, SLOT_B + IMG_OFFSET, body);
+    progress(2);
 #if defined(BUG_CONSUME_FIRST)
     copy_cells(SLOT_A, (uint32_t)&h, sizeof(img_hdr_t));
 #elif !defined(BUG_TRUST_HEADER)
@@ -297,6 +464,7 @@ static void install(void)
 #ifdef BUG_NAIVE_FLOOR
     meta_write(version);
 #endif
+    standby_done();
     flash_lock();
 }
 
@@ -333,6 +501,9 @@ int main(void)
 #ifdef EXT_FLASH
     ext_init();
     ext_read(EXT_STAGING, staged, sizeof staged);
+#endif
+#ifdef EEPROM_FLOOR
+    ee_init();
 #endif
     uint32_t floor = meta_floor();
 

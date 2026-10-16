@@ -2,6 +2,7 @@
 image, pull the plug, power back up and ask whether the device recovered."""
 import hashlib
 import os
+import random
 import shutil
 import tempfile
 import threading
@@ -9,6 +10,8 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from brickproof import __version__
+from brickproof import bit_errors as bit_errs
+from brickproof import content as contents
 from brickproof import oracle as oracles
 from brickproof import plan as plans
 from brickproof import regulations
@@ -17,6 +20,7 @@ from brickproof import trace as traces
 from brickproof.adapter import Cut
 from brickproof.engine import workdir as wd
 from brickproof.pool import Pool
+from brickproof.engine.m33mu import M33muSession, find_m33mu
 from brickproof.engine.session import CUT_ERASE, MachineHung, RenodeSession, find_renode
 
 KIND_NAMES = {0: "none", 1: "erase", 2: "program"}
@@ -40,6 +44,9 @@ class CutResult:
     torn: str = None            # set for a torn state: which shape (see torn.py)
     depth: int = 1              # 2 = a second cut, during the recovery from a first one
     computed: bool = False      # powered up from the computed flash state, not cut in the emulator
+    content: str = None         # a content fault: which damaged image was staged (see content.py)
+    link: int = None            # a broken link: how many bytes of the host's session got through
+    bit_error: str = None       # bits flipped at rest: the region and where (see bit_errors.py)
     message: str = ""
     seconds: float = 0.0
 
@@ -59,6 +66,7 @@ class Golden:
         self.pre = pre
         self.check = adapter.check_states
         self.ops = []
+        self.link_bytes = 0         # bytes the host sends during the uninterrupted update
         self._local = threading.local()
 
     def record(self, ops):
@@ -99,13 +107,29 @@ def _fault_message(session):
     if v["refused"]:
         return ("flash rule broken: the chip refused %d program(s), first at 0x%08X, and kept "
                 "the old value. On an STM32F1 that is a cell that was not erased (PGERR), on an "
-                "STM32F4 a store that is not as wide as PSIZE says (PGPERR)" % v["refused"])
+                "STM32F4 a store that is not as wide as PSIZE says (PGPERR) or does not fit in one "
+                "16-byte flash row (PGAERR), on an STM32L4 a double word that is not erased "
+                "(PROGERR), not two whole words in order (SIZERR, PGAERR) or programmed while an "
+                "earlier error was still flagged (PGSERR), on an STM32H5 a 128-bit word that was "
+                "already programmed (PGSERR), on an nRF52 a store that is not a whole aligned word "
+                "or a third write to a word without an erase (nWRITE)" % v["refused"])
+    if v.get("pcrop"):
+        if session.flash.model == "nrf52_flash.py":
+            return ("protected read: %d read(s) in an ACL region with READ disabled, first at "
+                    "0x%08X. The chip blocks them with a bus fault" % v["pcrop"])
+        return ("proprietary code read as data: %d read(s) of a PCROP sector, first at 0x%08X. "
+                "The chip only lets that code run; a data read gets RDERR, not the code"
+                % v["pcrop"])
     if v.get("protected"):
         n, at = v["protected"]
         if session.flash.external(at):
             return ("write protection: %d erase or program operation(s) in the external flash chip "
                     "were refused, first at 0x%08X. Its status register (BP, TB, SEC, CMP) protects "
                     "that part, so the chip ignores the command" % (n, at))
+        if session.flash.model == "nrf52_flash.py":
+            return ("write protection: %d erase or program operation(s) in an ACL region with WRITE "
+                    "disabled were refused, first at 0x%08X. The chip blocks them with a bus fault"
+                    % (n, at))
         return ("write protection: %d erase or program operation(s) in write-protected flash "
                 "were refused, first at 0x%08X. The option bytes protect that part of flash, so the "
                 "chip changes nothing there" % (n, at))
@@ -136,11 +160,16 @@ def _rewind_program(session, golden, res):
         res.rewound = True
 
 
-def _verdict(session, driver, adapter, res, oracle):
+def _verdict(session, driver, adapter, res, oracle, update_op=None):
     """Power up and judge. Three voices, and any one of them can fail the run: what
     the chip would not have allowed, the oracle (from outside the firmware), and the
     driver (the firmware's own signs of life). A power cycle clears the fault latch,
-    so it is read before each one."""
+    so it is read before each one.
+
+    `update_op` is the operation of the update the (first) cut fell before, None for
+    the update left to finish. A driver that judges by it has a judging() method."""
+    if hasattr(driver, "judging"):
+        driver.judging(update_op)
     session.power_cycle(settle=adapter.boot_settle)     # RAM gone, flash as it was left
     res.alive = bool(driver.alive())
     fault = _fault_message(session)
@@ -189,7 +218,9 @@ def run_cut(session, driver, adapter, cut, golden):
         base = session.flash_ops()
         if cut is None:
             session.trace_start()
+            sent = getattr(session, "uart_sent", 0)
             driver.start_update()
+            golden.link_bytes = getattr(session, "uart_sent", 0) - sent
             session.run_for(adapter.update_time)
             golden.record(session.trace_stop())
             res.op_index = len(golden.ops)                 # here: how many operations it has
@@ -233,7 +264,7 @@ def run_cut(session, driver, adapter, cut, golden):
             res.message = "cut landed on %s 0x%08X, expected %s 0x%08X" % (
                 res.kind, addr, KIND_NAMES[cut.expect[0]], cut.expect[1])
             return res
-        _verdict(session, driver, adapter, res, golden.oracle)
+        _verdict(session, driver, adapter, res, golden.oracle, res.op_index)
         return res
     except MachineHung:
         # a locked-up CPU leaves Renode unusable; start a fresh one for the next cut
@@ -254,7 +285,7 @@ def run_torn(session, driver, adapter, state, golden):
     t0 = time.time()
     try:
         session.restore_flash(state.image)
-        _verdict(session, driver, adapter, res, golden.oracle)
+        _verdict(session, driver, adapter, res, golden.oracle, state.op_index)
         return res
     except MachineHung:
         res.message = "the device locked up (emulated CPU stopped making progress)"
@@ -275,7 +306,7 @@ def run_computed(session, driver, adapter, cut, golden):
     t0 = time.time()
     try:
         session.restore_flash(bytes(golden.replay.at(cut.at_op)))
-        _verdict(session, driver, adapter, res, golden.oracle)
+        _verdict(session, driver, adapter, res, golden.oracle, cut.at_op)
         return res
     except MachineHung:
         res.message = "the device locked up (emulated CPU stopped making progress)"
@@ -283,6 +314,196 @@ def run_computed(session, driver, adapter, cut, golden):
         return res
     finally:
         res.seconds = round(time.time() - t0, 1)
+
+
+def run_content(session, driver, adapter, name, image, judge):
+    """One damaged image, staged in place of the update, and the update left to run. Not a
+    power cut: the device must refuse the image and keep the one `judge` accepts, which the
+    oracle checks from outside. The driver's own recovery check is not used: it expects the
+    update to have happened."""
+    res = CutResult(cut="content " + name, fired=True, kind="content", content=name)
+    t0 = time.time()
+    try:
+        session.restore_flash(image)
+        on_boot = getattr(driver, "update_on_boot", False)
+        session.power_cycle(settle=0 if on_boot else adapter.boot_settle)
+        driver.start_update()
+        session.run_for(adapter.update_time)
+        res.message = _fault_message(session) or ""
+        if res.message:
+            return res
+        session.power_cycle(settle=adapter.boot_settle)
+        res.alive = bool(driver.alive())
+        res.message = _fault_message(session) or ("" if res.alive else "the device did not come back")
+        if res.message:
+            return res
+        v = judge.judge(session)
+        res.image = v.image
+        res.message = "" if v.ok else "the bootloader did not refuse it: " + v.message
+        res.recovered = res.passed = v.ok
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        res.seconds = round(time.time() - t0, 1)
+
+
+def run_bit_error(session, driver, adapter, name, image, region, judge):
+    """Boot from flash with bits flipped inside `region`. The device must not execute
+    there, nor sit in a fault handler: refusing the damaged image is the right answer."""
+    res = CutResult(cut="bits " + name, fired=True, kind="bit error", bit_error=name)
+    t0 = time.time()
+    try:
+        session.restore_flash(image)
+        session.power_cycle(settle=adapter.boot_settle)
+        session.run_for(adapter.update_time)
+        res.alive = True
+        res.message = _fault_message(session) or ""
+        if res.message:
+            return res
+        lo, hi = region
+        for pc, exc in session.sample_cpu(judge.samples, judge.interval):
+            if exc in oracles.FAULTS:
+                res.message = "the device is in the %s handler (PC 0x%08X)" % (oracles.FAULTS[exc], pc)
+                return res
+            if lo <= pc < hi:
+                res.message = "the damaged image is running (PC 0x%08X): nothing checked it" % pc
+                return res
+        res.recovered = res.passed = True
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        res.seconds = round(time.time() - t0, 1)
+
+
+def bit_errors(pool, adapter, golden, out, on_result=None, fail_fast=False):
+    """Bits flipped in the flash the update left behind, one test each."""
+    cfg = adapter.bit_errors
+    o = golden.oracle
+    flash = adapter.flash
+    regions = cfg["regions"]
+    if regions is None:
+        regions = {i.name: (i.addr, i.end) for i in o.images if i.name in o.accept}
+    regions = {n: r for n, r in regions.items()
+               if flash.base <= r[0] and r[1] <= flash.base + flash.size}
+    end = bytes(golden.replay.at(len(golden.ops)))
+    tasks = bit_errs.cases(end, flash.base, regions, cfg["flips"], cfg["runs"], cfg["seed"])
+    results = pool.run(lambda s, d, t: run_bit_error(s, d, adapter, t[0], t[1], t[2], o), tasks,
+                       on_result, _failed if fail_fast else None)
+    out.results += results
+
+
+def soak(pool, adapter, golden, out, on_result=None):
+    """Random tests until a deadline or the first failure: a clean cut before a random
+    operation (powered up from the computed state), or that operation left half done in a
+    random torn shape. Seeded, so the same seed draws the same tests."""
+    seconds, seed = adapter.soak
+    rng = random.Random("soak/%s" % seed)
+    kinds = list(getattr(adapter, "torn", None) or torns.KINDS)
+    deadline = time.time() + seconds
+    n_ops = len(golden.ops)
+
+    def one(session, driver, task):
+        n, kind = task
+        if kind is None:
+            return run_computed(session, driver, adapter, Cut(name="soak op-%d" % n, at_op=n), golden)
+        before = bytes(golden.replay.at(n))
+        states = torns.states(golden.ops[n], before, adapter.flash, (kind,), adapter.torn_seed)
+        if not states:              # that shape does not apply here: a clean cut instead
+            return run_computed(session, driver, adapter, Cut(name="soak op-%d" % n, at_op=n), golden)
+        res = run_torn(session, driver, adapter, states[0], golden)
+        res.cut = "soak " + res.cut
+        return res
+
+    while time.time() < deadline and n_ops:
+        tasks = [(rng.randrange(n_ops), rng.choice(kinds) if rng.random() < 0.4 else None)
+                 for _ in range(len(pool))]
+        results = pool.run(one, tasks, on_result, _failed)
+        out.results += results
+        if any(_failed(r) for r in results):
+            return
+
+
+def link_points(total, n):
+    """n byte counts spread over a session of `total` bytes, the first and last byte
+    included: where to break the link."""
+    if total <= 1:
+        return []
+    picks = {1, total - 1} | {round(total * k / (n + 1)) for k in range(1, n + 1)}
+    return sorted(p for p in picks if 0 < p < total)
+
+
+def run_link(session, driver, adapter, n, golden):
+    """The link breaks after the host has sent n bytes of the update; the device keeps its
+    power. After `wait` seconds the cable is back, the host runs the whole update again,
+    and the usual verdict follows: the device must be alive, the oracle content, and the
+    driver's own check (for a protocol driver, one more full session) must pass."""
+    res = CutResult(cut="link %d" % n, fired=True, kind="link", link=n)
+    t0 = time.time()
+    try:
+        session.restore_flash(golden.pre)
+        session.power_cycle(settle=adapter.boot_settle)
+        session.link_budget = n
+        try:
+            driver.start_update()           # the host's session; it fails when the link goes
+        except Exception:                   # noqa: BLE001 - a host tool giving up is expected here
+            pass
+        session.run_for(adapter.link_cuts["wait"])
+        session.link_budget = None          # the cable is back
+        res.message = _fault_message(session) or ""
+        if res.message:
+            return res
+        driver.start_update()               # the host tries again from the start
+        session.run_for(adapter.update_time)
+        _verdict(session, driver, adapter, res, golden.oracle, None)
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        session.link_budget = None
+        res.seconds = round(time.time() - t0, 1)
+
+
+def link_cuts(pool, adapter, golden, out, on_result=None, fail_fast=False):
+    """Break the host's link at points spread over the bytes it sends."""
+    points = link_points(golden.link_bytes, adapter.link_cuts["points"])
+    results = pool.run(lambda s, d, n: run_link(s, d, adapter, n, golden), points,
+                       on_result, _failed if fail_fast else None)
+    out.results += results
+
+
+def content_faults(pool, adapter, driver, golden, out, on_result=None, fail_fast=False):
+    """Every damaged image the adapter asks for, each run as its own test."""
+    cfg = adapter.content_faults
+    if not hasattr(driver, "staged"):
+        raise ValueError("scenario.content_faults: the driver does not say what it stages "
+                         "(it needs a staged() method, as staged_slot has)")
+    addr, staged = driver.staged()
+    files = {}
+    for name, path in cfg["images"].items():
+        with open(path, "rb") as f:
+            files[name] = f.read()
+    off, _ = traces.locate(addr, adapter.flash)
+    tasks = []
+    for name, data in contents.mutations(staged, cfg, files):
+        image = bytearray(golden.pre)
+        # an oversized image stops at the end of the flash it was staged in
+        unit_end = adapter.flash.size if off < adapter.flash.size else len(image)
+        data = data[:max(0, unit_end - off)]
+        image[off:off + len(data)] = data
+        tasks.append((name, bytes(image)))
+    o = golden.oracle
+    judge = oracles.Oracle(o.images, [cfg["keep"]], o.run_in, o.samples, o.interval)
+    results = pool.run(lambda s, d, t: run_content(s, d, adapter, t[0], t[1], judge), tasks,
+                       on_result, _failed if fail_fast else None)
+    out.results += results
 
 
 def _digest(image):
@@ -326,7 +547,8 @@ def run_deep(session, driver, adapter, parent, m, name, level, state, real):
             parent.verify(session, m, "recovery cut %s" % name)
         else:
             session.restore_flash(state)
-        _verdict(session, driver, adapter, res, parent.oracle)
+        # the update operation the first cut fell before: "op-N > op-M ..."
+        _verdict(session, driver, adapter, res, parent.oracle, int(name.split(" ")[0][3:]))
         return res
     except MachineHung:
         res.message = "the device locked up (emulated CPU stopped making progress)"
@@ -355,7 +577,8 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
     flash = adapter.flash
     plan_cfg = {k: cfg[k] for k in ("mode", "per_phase", "small")}
     torn_kinds = getattr(adapter, "torn", None) if cfg.get("torn") else None
-    stats = {"levels": cfg["levels"], "states": 0, "skipped_known": 0, "capped": False}
+    stats = {"levels": cfg["levels"], "states": 0, "skipped_known": 0, "capped": False,
+             "deepest": 1}
     out.depth = stats
     clean = {r.op_index: r for r in out.results[1:] if r.fired and not r.torn and r.depth == 1}
     seen = {_digest(golden.pre)}
@@ -372,6 +595,9 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
             parents.append(("op-%d" % n, bytes(golden.replay.at(n))))
 
     for level in range(2, cfg["levels"] + 1):
+        if not parents:
+            break                               # nothing new left to cut during
+        stats["deepest"] = level
         traces_ = pool.run(lambda s, d, p: [_recovery_trace(s, d, adapter, p[1])], parents)
         tasks = []
         for (label, image), ops in zip(parents, traces_, strict=True):
@@ -430,6 +656,7 @@ class Outcome:
     inputs: list = field(default_factory=list)   # the firmware files tested, with their hashes
     jobs: int = 1               # how many emulators shared the work
     shard: dict = None          # set when this run made only its share of the cuts
+    pre: bytes = None           # the whole flash image with the update staged, before it ran
 
     @property
     def passed(self):
@@ -474,7 +701,7 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     # anything, so that is checked first and a failure ends the run.
     golden = Golden(adapter, pre, oracle)
     baseline = run_cut(session, driver, adapter, None, golden)
-    out = Outcome(results=[baseline], trace=golden.ops, jobs=len(pool))
+    out = Outcome(results=[baseline], trace=golden.ops, jobs=len(pool), pre=bytes(pre))
     if on_result:
         on_result(baseline)
     if not baseline.passed:
@@ -485,6 +712,9 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     if on_plan:
         on_plan(out.plan)
     if baseline_only:
+        return out
+    if getattr(adapter, "soak", None):
+        soak(pool, adapter, golden, out, on_result)
         return out
     stop = _failed if fail_fast else None
 
@@ -532,7 +762,37 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
 
     if getattr(adapter, "depth", None):
         explore(pool, adapter, golden, out, on_result, fail_fast)
+        if fail_fast and any(_failed(r) for r in out.results):
+            return out
+
+    # content faults are not cuts: in a sharded campaign the first shard makes them
+    shard = getattr(adapter, "shard", None)
+    if getattr(adapter, "content_faults", None) and golden.oracle and (not shard or shard[0] == 1):
+        content_faults(pool, adapter, driver, golden, out, on_result, fail_fast)
+        if fail_fast and any(_failed(r) for r in out.results):
+            return out
+    if getattr(adapter, "link_cuts", None) and (not shard or shard[0] == 1):
+        link_cuts(pool, adapter, golden, out, on_result, fail_fast)
+        if fail_fast and any(_failed(r) for r in out.results):
+            return out
+    if getattr(adapter, "bit_errors", None) and golden.oracle and (not shard or shard[0] == 1):
+        bit_errors(pool, adapter, golden, out, on_result, fail_fast)
     return out
+
+
+def find_emulator(adapter):
+    """The executable of the emulator this adapter's chip runs on."""
+    if adapter.emulator == "m33mu":
+        exe = find_m33mu()
+        if not exe:
+            raise RuntimeError("m33mu not found: set M33MU_PATH or put m33mu on PATH "
+                               "(%s is emulated by m33mu, https://github.com/danielinux/m33mu)"
+                               % adapter.platform)
+        return exe
+    exe = find_renode()
+    if not exe:
+        raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
+    return exe
 
 
 def _bring_up(adapter, exe, log, shared=None):
@@ -542,10 +802,16 @@ def _bring_up(adapter, exe, log, shared=None):
     work = tempfile.mkdtemp(prefix="brickproof-")
     try:
         firmware = wd.prepare(work, adapter)
-        session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
-                                vector_table=adapter.vector_table, mips=adapter.mips,
-                                reset_cmds=adapter.reset_cmds, log=log,
-                                memory_sizes=wd.memory_sizes(adapter))
+        if adapter.emulator == "m33mu":
+            session = M33muSession(exe, work, adapter.flash, firmware, cpu=adapter.platform,
+                                   uart=adapter.uart, optbytes=adapter.optbytes,
+                                   vector_table=adapter.vector_table, log=log)
+        else:
+            session = RenodeSession(exe, work, adapter.flash, firmware, uart=adapter.uart,
+                                    vector_table=adapter.vector_table, mips=adapter.mips,
+                                    reset_cmds=adapter.reset_cmds, log=log,
+                                    ram=wd.MEMORIES[adapter.platform]["ram"][0],
+                                    memory_sizes=wd.memory_sizes(adapter))
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
@@ -565,11 +831,9 @@ def _bring_up(adapter, exe, log, shared=None):
 
 def run(adapter, keep_workdir=False, log=None, on_result=None, fail_fast=False, baseline_only=False,
         on_plan=None, jobs=1):
-    """Start Renode (`jobs` of them), stage the update and run the campaign (up to the
-    first failure with fail_fast). Returns an Outcome."""
-    exe = find_renode()
-    if not exe:
-        raise RuntimeError("Renode not found: set RENODE_PATH or put renode on PATH")
+    """Start the emulator (`jobs` of them), stage the update and run the campaign (up
+    to the first failure with fail_fast). Returns an Outcome."""
+    exe = find_emulator(adapter)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     inputs = []
     for path, _addr in adapter.firmware:

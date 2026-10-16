@@ -43,11 +43,17 @@ REG_CMP_FROM = 0x140
 REG_CMP_LEN = 0x144
 REG_PROTECTED = 0x148
 REG_PROTECTED_AT = 0x14C
+REG_PCROP_READS = 0x150         # STM32F4: data reads of proprietary-code (PCROP) sectors
+REG_PCROP_AT = 0x154
+REG_ECC_BROKEN = 0x160          # STM32L4: double words whose ECC does not match (internal)
+ECC_MAP = 0x94000000            # STM32L4: the flash model's ECC map, a byte per double word
+STATE_PWR_FLAGS = 0x90000000 + 4 * 41     # the PWR model's SBF and WUF (models/stm32_pwr.py)
+STATE_PWR_ASLEEP = 0x90000000 + 4 * 45    # and the Standby a wake is due for
 EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to compare flash with
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
-               "W": "protected"}
+               "W": "protected", "Q": "partial_erase"}
 NEVER = 0xFFFFFFFF
-EXT_STATUS_BYTES = 2
+EXT_STATUS_BYTES = 3            # an external chip's status registers 1, 2 and 3, as stored
 
 CUT_ERASE = 1
 CUT_PROGRAM = 2
@@ -89,14 +95,30 @@ class FlashGeometry:
     ext_cs: str = ""            # its chip select pin, for example PA4
     ext_sector: int = 0x1000    # its smallest erase
     ext_endurance: int = 100000
-    ext_status: int = 0         # its status registers as shipped: register 1 | register 2 << 8
+    ext_status: int = 0         # its status registers as shipped: 1 | 2 << 8 | 3 << 16
+    ext_wp: str = ""            # the pin wired to its /WP, if any (otherwise /WP reads high)
+    # an I2C EEPROM (24-series), if the board has one. Like the external flash it has no
+    # address on the system bus; eeprom_base names its bytes in traces and images.
+    eeprom_base: int = None
+    eeprom_size: int = 0
+    eeprom_page: int = 32       # bytes one write can cover (it wraps inside the page)
+    eeprom_bus: str = ""        # the I2C controller it hangs on, for example i2c1
+    eeprom_i2c: int = 0x50      # its 7-bit bus address
+    eeprom_address_bytes: int = 2
+    eeprom_endurance: int = 1000000
     endurance: int = 0          # erase cycles the datasheet promises per unit (0: unknown)
     # Option bytes, where the chip has them: their address, and what they hold when a
     # test starts. A flash image is then the flash followed by these bytes, so a change
     # to them is saved, restored, replayed and compared like any other.
     ob_base: int = None
+    mass_erase_ob: bool = False  # a mass erase wipes the option bytes too (the nRF52's UICR)
     option_bytes: bytes = b""
     wrp_unit: int = 0x1000      # how much flash one write-protection bit covers
+    worn: tuple = None          # (from, to): pages whose programs no longer take (flash.worn)
+    # ECC, where the chip has it (STM32L4): every 64 bits carry their own check bits, and a
+    # program or erase cut short leaves them not matching. The image ends with a map, one
+    # byte per double word, 1 where that is so.
+    ecc: bool = False
 
     def unit_at(self, addr):
         """(first address, size) of the erase unit that holds `addr`."""
@@ -121,11 +143,27 @@ class FlashGeometry:
     def external(self, addr):
         return self.ext_base is not None and self.ext_base <= addr < self.ext_base + self.ext_size
 
+    def eeprom(self, addr):
+        return self.eeprom_base is not None and self.eeprom_base <= addr < self.eeprom_base + self.eeprom_size
+
+    @property
+    def eeprom_offset(self):
+        # where the EEPROM starts in a flash image: after everything else
+        return self.size + self.ob_size + self.ext_size + (EXT_STATUS_BYTES if self.ext_size else 0)
+
+    @property
+    def ecc_offset(self):
+        return self.eeprom_offset + self.eeprom_size
+
+    @property
+    def ecc_size(self):
+        return self.size // 8 if self.ecc else 0
+
     @property
     def image_size(self):
         # the external chip's two status registers follow its contents: they are
         # non-volatile, so a power cut leaves them as they were, like the flash
-        return self.size + self.ob_size + self.ext_size + (EXT_STATUS_BYTES if self.ext_size else 0)
+        return self.ecc_offset + self.ecc_size
 
 
 SLOWEST_START = 6.0     # assume a slow machine until this one has been measured
@@ -209,6 +247,8 @@ class RenodeSession:
         self.log = log
         self.virtual_time = 0.0
         self.rx = bytearray()
+        self.uart_sent = 0              # bytes the host has sent to the device, ever
+        self.link_budget = None         # bytes the link still carries before it breaks; None: no limit
         self._slowest = SLOWEST_START   # wall seconds per emulated second, the worst seen
         self._start()
 
@@ -269,7 +309,11 @@ class RenodeSession:
         if self.flash.ext_size:
             # the external flash chip is a C# model, compiled as it is loaded
             self.cmd("include @models/BpSpiNor.cs", timeout=120)
+        if self.flash.eeprom_size:
+            self.cmd("include @models/BpI2cEeprom.cs", timeout=120)
         self.cmd("machine LoadPlatformDescription @platform.repl")
+        if os.path.exists(os.path.join(self.workdir, "models", "nrf52_power.py")):
+            self.cmd("include @models/nrf52_power.py")        # System OFF (see the file)
         self._check_memory_sizes()
         # Renode's flash starts as 0x00; real erased flash reads 0xFF. The option bytes
         # go in with it, before anything reads them.
@@ -279,6 +323,8 @@ class RenodeSession:
                 self.cmd("sysbus LoadELF @%s" % rel)
             elif self.flash.external(addr):
                 self.cmd('%s LoadAt "%s" 0x%X' % (self._ext, self._path(rel), addr - self.flash.ext_base))
+            elif self.flash.eeprom(addr):
+                self.cmd('%s LoadAt "%s" 0x%X' % (self._ee, self._path(rel), addr - self.flash.eeprom_base))
             else:
                 self.cmd("sysbus LoadBinary @%s 0x%X" % (rel, addr))
         self.cmd("cpu VectorTableOffset 0x%X" % self.vector_table)
@@ -419,7 +465,15 @@ class RenodeSession:
 
     def uart_write(self, data, baud=115200, port=None):
         """Inject bytes one at a time at wire speed. An STM32 USART holds a single
-        received byte, so a burst would overrun it, as on hardware."""
+        received byte, so a burst would overrun it, as on hardware.
+
+        With a link budget set (a broken link, see runner.run_link), only that many more
+        bytes reach the device; the rest are lost, as when the cable comes out."""
+        self.uart_sent += len(data)
+        if self.link_budget is not None:
+            data, self.link_budget = data[:self.link_budget], max(0, self.link_budget - len(data))
+            if not data:
+                return
         port = port or self.uart_name
         per_byte = max(10.0 / baud, 0.0001)             # never finer than one 100 us quantum
         lines = []
@@ -444,6 +498,9 @@ class RenodeSession:
         if self.flash.external(addr):
             self.ext_load(value.to_bytes(size, "little"), addr - self.flash.ext_base, name)
             return
+        if self.flash.eeprom(addr):
+            self.ee_load(value.to_bytes(size, "little"), addr - self.flash.eeprom_base, name)
+            return
         with open(os.path.join(self.workdir, name), "wb") as f:
             f.write(value.to_bytes(size, "little"))
         self.cmd_batch(["sysbus LoadBinary @%s 0x%X" % (name, addr), self._set(REG_RESYNC, 1)])
@@ -457,6 +514,9 @@ class RenodeSession:
         if self.flash.external(addr):
             self.cmd('%s LoadAt "%s" 0x%X' % (self._ext, self._path(rel_path), addr - self.flash.ext_base))
             return
+        if self.flash.eeprom(addr):
+            self.cmd('%s LoadAt "%s" 0x%X' % (self._ee, self._path(rel_path), addr - self.flash.eeprom_base))
+            return
         self.cmd_batch(["sysbus LoadBinary @%s 0x%X" % (rel_path, addr), self._set(REG_RESYNC, 1)])
 
     # ---- the external flash chip ------------------------------------------------
@@ -469,6 +529,32 @@ class RenodeSession:
         """A work-folder file as the chip model wants it: a full path with forward slashes."""
         return os.path.abspath(os.path.join(self.workdir, name)).replace("\\", "/")
 
+    @property
+    def _ee(self):
+        return "sysbus.%s.eeprom" % self.flash.eeprom_bus
+
+    def ee_dump(self, name="ee_dump.bin"):
+        """Everything in the I2C EEPROM."""
+        self.cmd('%s SaveTo "%s"' % (self._ee, self._path(name)))
+        with open(os.path.join(self.workdir, name), "rb") as f:
+            return f.read()
+
+    def ee_load(self, data, offset=0, name="ee_load.bin"):
+        with open(os.path.join(self.workdir, name), "wb") as f:
+            f.write(data)
+        self.cmd('%s LoadAt "%s" 0x%X' % (self._ee, self._path(name), offset))
+
+    def ee_mismatch(self, data, offset=0, name="ee_expect.bin"):
+        """First address where the EEPROM differs from `data` laid at `offset`, or None."""
+        with open(os.path.join(self.workdir, name), "wb") as f:
+            f.write(data)
+        reply = self.cmd('%s Mismatch "%s" 0x%X' % (self._ee, self._path(name), offset))
+        found = re.findall(r"0x[0-9A-Fa-f]+|-?\d+", reply.split(name)[-1])
+        at = int(found[-1], 0) if found else -1
+        if at >= 1 << 62:
+            at = -1
+        return None if at < 0 else self.flash.eeprom_base + at
+
     def ext_dump(self, name="ext_dump.bin"):
         """Everything in the external flash chip."""
         self.cmd('%s SaveTo "%s"' % (self._ext, self._path(name)))
@@ -476,7 +562,7 @@ class RenodeSession:
             return f.read()
 
     def ext_status(self):
-        """The external chip's status registers: register 1 | register 2 << 8."""
+        """The external chip's status registers as stored: 1 | 2 << 8 | 3 << 16."""
         reply = self.cmd("%s GetStatus" % self._ext)
         return int(re.findall(r"^\s*(0x[0-9A-Fa-f]+|\d+)\s*$", reply, re.M)[-1], 0)
 
@@ -502,6 +588,9 @@ class RenodeSession:
         if self.flash.external(addr):
             off = addr - self.flash.ext_base
             return self.ext_dump()[off:off + n]
+        if self.flash.eeprom(addr):
+            off = addr - self.flash.eeprom_base
+            return self.ee_dump()[off:off + n]
         out = self.cmd("sysbus ReadBytes 0x%X 0x%X" % (addr, n), timeout=600)
         out = out[out.find("["):]
         data = bytes(int(t, 16) for t in re.findall(r"0x[0-9A-Fa-f]{2}", out))
@@ -517,7 +606,18 @@ class RenodeSession:
             image += self.read_bytes(self.flash.ob_base, self.flash.ob_size)
         if self.flash.ext_size:
             image += self.ext_dump() + self.ext_status().to_bytes(EXT_STATUS_BYTES, "little")
+        if self.flash.eeprom_size:
+            image += self.ee_dump()
+        if self.flash.ecc:
+            image += self.ecc_map()
         return image
+
+    def ecc_map(self):
+        """The ECC map: all sound unless the flash model counts a broken double word, and
+        only then read back (128 KB of it takes a while)."""
+        if not self.read_word(self._ctl(REG_ECC_BROKEN)):
+            return bytes(self.flash.ecc_size)
+        return self.read_bytes(ECC_MAP, self.flash.ecc_size)
 
     def restore_flash(self, data, name="flash_restore.bin"):
         """Replace the whole flash with `data` and forget what the flash checks had seen.
@@ -531,6 +631,12 @@ class RenodeSession:
             with open(os.path.join(self.workdir, "ob_" + name), "wb") as out:
                 out.write(data[f.size:f.size + f.ob_size])
             lines.append("sysbus LoadBinary @ob_%s 0x%X" % (name, f.ob_base))
+        if f.ecc:
+            # before the resync, which counts what is broken in it
+            ecc = data[f.ecc_offset:f.ecc_offset + f.ecc_size]
+            with open(os.path.join(self.workdir, "ecc_" + name), "wb") as out:
+                out.write(ecc if len(ecc) == f.ecc_size else bytes(f.ecc_size))
+            lines.append("sysbus LoadBinary @ecc_%s 0x%X" % (name, ECC_MAP))
         self.cmd_batch(lines + [self._set(REG_RESYNC, 1)] + self._clear_checks())
         inner = f.size + f.ob_size
         if f.ext_size and len(data) > inner:
@@ -538,6 +644,8 @@ class RenodeSession:
         status = data[inner + f.ext_size:inner + f.ext_size + EXT_STATUS_BYTES]
         if f.ext_size and len(status) == EXT_STATUS_BYTES:
             self.cmd("%s SetStatus 0x%X" % (self._ext, int.from_bytes(status, "little")))
+        if f.eeprom_size and len(data) > f.eeprom_offset:
+            self.ee_load(data[f.eeprom_offset:f.eeprom_offset + f.eeprom_size])
 
     def flash_mismatch(self, expected, name="flash_expect.bin"):
         """First address where flash differs from `expected` (a whole-flash image), or
@@ -552,7 +660,15 @@ class RenodeSession:
                     return f.ob_base + i
         inner = f.size + f.ob_size
         if addr is None and f.ext_size and len(expected) > inner:
-            return self.ext_mismatch(expected[inner:inner + f.ext_size])
+            addr = self.ext_mismatch(expected[inner:inner + f.ext_size])
+        if addr is None and f.eeprom_size and len(expected) > f.eeprom_offset:
+            addr = self.ee_mismatch(expected[f.eeprom_offset:f.eeprom_offset + f.eeprom_size])
+        if addr is None and f.ecc and len(expected) > f.ecc_offset:
+            want = expected[f.ecc_offset:f.ecc_offset + f.ecc_size]
+            now = self.ecc_map()
+            for i in range(min(len(want), len(now))):
+                if want[i] != now[i]:
+                    return f.base + 8 * i          # the double word whose ECC differs
         return addr
 
     def image_mismatch(self, data, addr, name="image_expect.bin", whole=False):
@@ -560,6 +676,8 @@ class RenodeSession:
         image is exactly what is there."""
         if self.flash.external(addr):
             return self.ext_mismatch(data, addr - self.flash.ext_base)
+        if self.flash.eeprom(addr):
+            return self.ee_mismatch(data, addr - self.flash.eeprom_base)
         with open(os.path.join(self.workdir, name), "wb") as f:
             f.write(data)
         reply = self.cmd_batch(
@@ -655,15 +773,18 @@ class RenodeSession:
           refused  (count, first address): programs over cells that were not erased
           stray    first address where flash changed with no flash operation behind it
           protected  (count, first address): erases or programs in write-protected pages
+          pcrop    (count, first address): data reads of proprietary code (STM32F4 PCROP)
         Each is None when clean. A power cycle clears the fault; restore_flash the rest."""
-        fa, fpc, n, at, stray, wn, wat = self._values(self.cmd_batch(
+        fa, fpc, n, at, stray, wn, wat, pn, pat = self._values(self.cmd_batch(
             [self._get(REG_FAULT_ADDR), self._get(REG_FAULT_PC), self._get(REG_REFUSED),
              self._get(REG_REFUSED_AT), self._set(REG_AUDIT, 1), self._get(REG_AUDIT),
-             self._get(REG_PROTECTED), self._get(REG_PROTECTED_AT)]))
+             self._get(REG_PROTECTED), self._get(REG_PROTECTED_AT),
+             self._get(REG_PCROP_READS), self._get(REG_PCROP_AT)]))
         return {"fault": (fa, fpc) if fa else None,
                 "refused": (n, at) if n else None,
                 "stray": stray or None,
-                "protected": (wn, wat) if wn else None}
+                "protected": (wn, wat) if wn else None,
+                "pcrop": (pn, pat) if pn else None}
 
     def bus_fault(self):
         return self.violations()["fault"]
@@ -676,7 +797,7 @@ class RenodeSession:
 
     def _clear_checks(self):
         return [self._set(reg, 0) for reg in (REG_AUDIT, REG_REFUSED, REG_REFUSED_AT, REG_PROTECTED,
-                                             REG_PROTECTED_AT)]
+                                             REG_PROTECTED_AT, REG_PCROP_READS, REG_PCROP_AT)]
 
     # ---- the golden-run trace ---------------------------------------------
 
@@ -710,6 +831,8 @@ class RenodeSession:
                     # the number of hex digits says how many bytes the program wrote
                     op["value"] = int(parts[2], 16)
                     op["size"] = len(parts[2].replace("0x", "")) // 2
+                if parts[0] == "Q":
+                    op["total_us"] = int(parts[2])     # partial erase time on the page so far
                 if parts[0] == "X":
                     op["old"] = int(parts[3], 16)
                 elif parts[0] == "P?":
@@ -751,7 +874,13 @@ class RenodeSession:
         self.cmd_batch(["%s ZeroAll" % self.ram, "cpu IsHalted false",
                         self._set(REG_CUTPOINT, NEVER), self._set(REG_CUT_PAGE, NEVER),
                         self._set(REG_OPCOUNT, 0), self._set(REG_FAULT_ADDR, 0),
-                        self._set(REG_FAULT_PC, 0), self._set(REG_PENDING, 0)] + self._reset_lines())
+                        self._set(REG_FAULT_PC, 0), self._set(REG_PENDING, 0),
+                        # the PWR model's wake flags and pending wake (models/stm32_pwr.py):
+                        # a power-on reset clears them
+                        "sysbus WriteDoubleWord 0x%X 0" % (STATE_PWR_FLAGS),
+                        "sysbus WriteDoubleWord 0x%X 0" % (STATE_PWR_ASLEEP)]
+                       + (["%s PowerCycle" % self._ext] if self.flash.ext_size else [])
+                       + self._reset_lines())
         self.rx.clear()
         if settle:
             self.run_for(settle)

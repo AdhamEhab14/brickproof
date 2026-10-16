@@ -1,0 +1,73 @@
+# The same demo on an STM32L476: 2 KB pages in two banks, and programs of 64 bits at a
+# time, each double word with its own ECC. A double word is written once between erases,
+# and an erase or program cut short can leave its ECC wrong, so that reading it raises an
+# NMI: the bootloader has to catch that and treat what it read as invalid. Runs from the
+# committed prebuilt/ files:
+#
+#   brickproof demo l476
+#
+# The l476-bug-*.yaml files next to this one swap in a bootloader with a known bug.
+
+name: demo_ab_bootloader_l476
+target: .
+
+platform:
+  base: stm32l476
+
+flash:
+  base: 0x08000000
+  size: 0x100000         # 1 MB, bank 2 from 0x08080000
+  page: 0x800
+  write_unit: 8
+  write_protected:                   # as shipped: the bootloader's own pages are locked
+    - {from: 0x08000000, size: 0x4000}
+
+ram:
+  size: 0x18000        # 96 KB of SRAM1. Not optional: extra emulated RAM hides stack faults
+
+# the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
+firmware:
+  - file: prebuilt/l476_bootloader.elf
+  - file: prebuilt/l476_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000
+
+uart: usart2
+boot_settle: 0.3
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x08040000
+    image: prebuilt/l476_app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    boot_timeout: 2
+    rollback:
+      image: prebuilt/l476_app_v1.img
+      forbidden: "APP v1"
+
+# Judged from outside the firmware: the bytes in Slot A must be exactly one of
+# these images, and the core must be running inside it, not in a fault handler.
+oracle:
+  images:
+    v1: {file: prebuilt/l476_app_v1.img, at: 0x08020000}
+    v2: {file: prebuilt/l476_app_v2.img, at: 0x08020000}
+  accept: [v2]
+
+scenario:
+  name: update-v1-to-v2
+  cut_limit: 2                       # virtual seconds; a page erase takes 22 ms
+  update_time: 1.5
+  plan: every
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]
+      body: [0x200, 0x33C]
+  bit_errors:
+    runs: 4
+    regions:
+      header: [0x08020000, 0x08020010]
+      body: [0x08020200, 0x0802033C]

@@ -4,11 +4,11 @@
 # A small app (app/) prints "APP v<n>". v2 is staged in slot 1, signed with --pad --confirm,
 # so the upgrade is permanent and v2 must be what runs after any cut.
 #
-# Build first:  python build.py <zephyr workspace> <output folder>
-# then:  brickproof run adapters/mcuboot_f411/adapter.yaml --target <output folder>
+# Build first:  python build.py <zephyr workspace> <output folder> f411
+# then:  brickproof run adapters/mcuboot/f411.yaml --target <output folder>
 
 name: mcuboot_f411
-target: ../../../mcuboot-out          # default: next to this repo
+target: prebuilt/f411                 # built by build.py (see prebuilt/README.md); --target for your own
 
 platform:
   base: stm32f411
@@ -53,3 +53,14 @@ scenario:
   update_time: 30
   cut_limit: 40
   plan: {mode: phases, per_phase: 4}
+  # damaged images in place of v2 (the trailer that asks for the upgrade is kept): MCUboot
+  # must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    image_size: 0x43D7                   # header, body and TLVs of app_v2_staged.img
+    regions:
+      header: [0x0, 0x20]
+      body: [0x200, 0x4340]
+      tlv: [0x4340, 0x43D7]              # hash and signature
+  # bits flipped in the installed v2 while the device is off: MCUboot must not run it
+  bit_errors: {runs: 4}

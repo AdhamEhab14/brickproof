@@ -8,11 +8,35 @@ the cells are left half way:
   program  moves bits from 1 to 0. Cut short, some of the halfword's bits that were
            due to become 0 have, and some have not.
 
-Both rules are what flash cells do; which bits get there first is not knowable from
-here. So each torn operation is tried as a few shapes that obey the rules: a clean
-half, a scattered random part, an almost-finished one. They are models, not
-measurements. Until the hardware rig has compared them with real cuts, a pass on a
-torn state means "survives these plausible shapes", and the report says "torn".
+Both rules are what flash cells do. Which bits get there first was measured on a real
+STM32F103 (a Nucleo-F103RB, 2026-10-14), with an erase or a program stopped by a reset
+at a known number of cycles, three times each:
+
+  erase    every bit that is still 0 goes to 1 on its own, and the slow ones are the
+           same cells every time. Stopped at once, 4.5% of the old 0 bits were still 0
+           (31% of the bytes showed one, nearly all of them a single bit); 15 us later
+           0.35%; after 50 us of a 22 ms erase, none. The page is never left half done
+           in one piece. `erase-early` and `erase-late` are those two measurements.
+  program  a halfword was untouched up to 0.5 us and complete from 0.6 us: no torn
+           program was seen.
+
+An EEPROM page write is both, in one internal cycle: the chip erases the bytes it was
+given (0 bits to 1), then writes them (1 bits to 0), every byte of the page at once. Cut
+short, `page-erasing` has some of the old 0 bits flipped, `page-erased` all of them and
+nothing written yet, `page-writing` some of the bits the new value clears cleared. Unlike a
+flash program the result need not be old AND new: an old record can come back as 0xFF.
+Models too; nothing was measured on an EEPROM.
+
+On a chip with ECC (the STM32L4: 8 check bits per 64 data bits, written with them) a torn
+program or erase also leaves the check bits half written, so they do not match the data:
+every torn state marks the double words the operation touched as broken in the image's ECC
+map, and a read of one is an ECC error (ECCD, and an NMI). Of a torn erase, only double
+words that were not already blank: those had nothing to erase.
+
+A reset is not a power loss, which lets the supply sag rather than stopping the
+operation cleanly, so the other shapes stay as harder cases: a clean half, a scattered
+random part, an almost-finished one, and the torn programs. They are models, not
+measurements, and the report says "torn" for all of them.
 
 A torn state is built, not provoked: the flash just before the operation comes from
 replaying the golden run (checked against real cuts on every one of them), and the
@@ -23,9 +47,12 @@ from dataclasses import dataclass
 
 from brickproof import trace as traces
 
-ERASE_KINDS = ("erase-half", "erase-partial", "erase-almost")
+ERASE_KINDS = ("erase-early", "erase-late", "erase-half", "erase-partial", "erase-almost")
+# measured (see the top): the chance an old 0 bit is still 0 when the erase is stopped
+ERASE_MEASURED = {"erase-early": 0.045, "erase-late": 0.0035}
 PROGRAM_KINDS = ("program-low", "program-high", "program-partial")
-KINDS = ERASE_KINDS + PROGRAM_KINDS
+PAGE_KINDS = ("page-erasing", "page-erased", "page-writing")
+KINDS = ERASE_KINDS + PROGRAM_KINDS + PAGE_KINDS
 
 
 @dataclass
@@ -49,7 +76,14 @@ def _torn_erases(page_bytes, rng):
     partial = bytes(b | rng.getrandbits(8) for b in page_bytes)
     # nearly done: one byte in 64 still holds its old value
     almost = bytes(b if i % 64 == 17 else 0xFF for i, b in enumerate(page_bytes))
-    return {"erase-half": half, "erase-partial": partial, "erase-almost": almost}
+    out = {"erase-half": half, "erase-partial": partial, "erase-almost": almost}
+    # measured: each old 0 bit stays 0 on its own with probability p. Drawn after the
+    # shapes above, so their bytes are what they were before these were added.
+    for kind, p in ERASE_MEASURED.items():
+        out[kind] = bytes(0xFF & ~sum(1 << i for i in range(8)
+                                      if not (b >> i) & 1 and rng.random() < p)
+                          for b in page_bytes)
+    return out
 
 
 def _torn_programs(old, target, rng, size=2):
@@ -69,6 +103,33 @@ def _torn_programs(old, target, rng, size=2):
     return {k: v for k, v in out.items() if v not in (old, done)}
 
 
+def _torn_pages(old, new, rng):
+    """{kind: bytes} for EEPROM bytes whose write from `old` to `new` was cut short:
+    in the erase half of the cycle, after it, or in the write half. Every bit gets there on
+    its own, with even odds."""
+    erasing = bytes(b | rng.getrandbits(8) for b in old)
+    writing = bytes(0xFF & ~(~w & rng.getrandbits(8)) for w in new)
+    return {"page-erasing": erasing, "page-erased": bytes([0xFF]) * len(new), "page-writing": writing}
+
+
+def _ecc_broken(op, before, image, flash):
+    """`image` with the ECC of what a torn `op` touched marked broken, on a chip with ECC."""
+    if not getattr(flash, "ecc", False):
+        return image
+    if op["kind"] == "erase":
+        off, size = traces.erase_span(op, flash)
+    else:
+        off, _ = traces.locate(op["addr"], flash)
+        size = traces.size_of(op, flash)
+    if off >= flash.size:
+        return image
+    out = bytearray(image)
+    for dw in range(off // 8, (min(off + size, flash.size) + 7) // 8):
+        if op["kind"] != "erase" or before[8 * dw:8 * dw + 8] != b"\xff" * 8:
+            out[flash.ecc_offset + dw] = 1
+    return bytes(out)
+
+
 def states(op, before, flash, kinds=KINDS, seed=0):
     """The torn states of one traced operation. `before` is the whole flash just before
     it. States equal to the flash before or after the operation are left out (those
@@ -79,6 +140,7 @@ def states(op, before, flash, kinds=KINDS, seed=0):
     out, seen = [], set()
 
     def add(kind, image):
+        image = _ecc_broken(op, before, image, flash)
         if kind in kinds and image != before and image not in seen:
             seen.add(image)
             out.append(TornState(kind, op["index"], op["addr"], image))
@@ -90,6 +152,14 @@ def states(op, before, flash, kinds=KINDS, seed=0):
             torn = _torn_erases(page, _rng(seed, op["index"], kind))[kind]
             if torn != after:
                 add(kind, bytes(before[:off]) + torn + bytes(before[off + unit:]))
+    elif op["kind"] == "program" and "value" in op and traces.in_eeprom(op["addr"], flash):
+        size = traces.size_of(op, flash)
+        old = bytes(before[off:off + size])
+        new = op["value"].to_bytes(size, "little")
+        for kind in PAGE_KINDS:
+            torn = _torn_pages(old, new, _rng(seed, op["index"], kind))[kind]
+            if torn != new:
+                add(kind, bytes(before[:off]) + torn + bytes(before[off + size:]))
     elif op["kind"] == "program" and "value" in op:
         size = traces.size_of(op, flash)
         old = int.from_bytes(before[off:off + size], "little")

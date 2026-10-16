@@ -152,7 +152,7 @@ class OpenBltUart:
         """The bootloader must take a whole new session, and the program must run."""
         if self.started_incomplete:
             return False, ("the bootloader started a program that is not completely written: "
-                           "its checksum was in flash before the last block was")
+                           "its checksum was in flash before the rest of the program")
         why = self._session()
         if why:
             return False, "a new programming session after the cut failed: " + why

@@ -1,7 +1,7 @@
 name: BrickProof power-fail test
 description: >
-  Run a firmware update in the Renode emulator, cut power at its flash operations,
-  and fail the job if the device does not recover.
+  Run a firmware update in an emulator (Renode, or m33mu for the chips Renode does not
+  have), cut power at its flash operations, and fail the job if the device does not recover.
 branding:
   icon: zap-off
   color: gray-dark
@@ -31,10 +31,22 @@ inputs:
     description: Name of the uploaded artifact.
     required: false
     default: brickproof-report
+  sarif:
+    description: >
+      Also write the failures as SARIF and upload them to GitHub code scanning ("true" or
+      "false"). The calling workflow needs `permissions: security-events: write`.
+    required: false
+    default: "false"
   renode-version:
     description: Renode release to run on.
     required: false
     default: "1.17.0"
+  m33mu-ref:
+    description: >
+      m33mu commit to build, for adapters whose chip m33mu emulates (STM32H5).
+      Built once and cached.
+    required: false
+    default: "23960ed50ea186c52dd7799ab1435752c257f4fc"
   python-version:
     description: Python to run BrickProof with.
     required: false
@@ -52,15 +64,33 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
+    - name: Install BrickProof
+      shell: bash
+      run: pip install "${{ github.action_path }}"
+
+    - name: Which emulator the adapter's chip runs on
+      id: emulator
+      shell: bash
+      env:
+        BP_ADAPTER: ${{ inputs.adapter }}
+        BP_TARGET: ${{ inputs.target }}
+      run: |
+        # an adapter that does not load is reported by the run step; Renode until then
+        emulator=$(python -c 'import sys; from brickproof import adapter
+        print(adapter.load(sys.argv[1], sys.argv[2] or None).emulator)' "$BP_ADAPTER" "$BP_TARGET" \
+          2>/dev/null || echo renode)
+        echo "name=$emulator" >> "$GITHUB_OUTPUT"
+
     - name: Cache Renode
       id: renode-cache
+      if: steps.emulator.outputs.name == 'renode'
       uses: actions/cache@v4
       with:
         path: ~/renode
         key: renode-${{ inputs.renode-version }}-${{ runner.os }}
 
     - name: Install Renode
-      if: steps.renode-cache.outputs.cache-hit != 'true'
+      if: steps.emulator.outputs.name == 'renode' && steps.renode-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         RENODE_VERSION: ${{ inputs.renode-version }}
@@ -69,9 +99,28 @@ runs:
         curl -sL "https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz" \
           | tar xz -C ~/renode --strip-components=1
 
-    - name: Install BrickProof
+    - name: Cache m33mu
+      id: m33mu-cache
+      if: steps.emulator.outputs.name == 'm33mu'
+      uses: actions/cache@v4
+      with:
+        path: ~/m33mu-bin
+        key: m33mu-${{ inputs.m33mu-ref }}-${{ runner.os }}
+
+    - name: Build m33mu
+      if: steps.emulator.outputs.name == 'm33mu' && steps.m33mu-cache.outputs.cache-hit != 'true'
       shell: bash
-      run: pip install "${{ github.action_path }}"
+      env:
+        M33MU_REF: ${{ inputs.m33mu-ref }}
+      run: |
+        sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libelf-dev
+        git clone --filter=blob:none https://github.com/danielinux/m33mu.git /tmp/m33mu
+        git -C /tmp/m33mu checkout --quiet "$M33MU_REF"
+        cmake -S /tmp/m33mu -B /tmp/m33mu/build -DM33MU_BUILD_TESTS=OFF \
+          -DM33MU_ENABLE_CAPSTONE=OFF -DM33MU_ENABLE_TPM_LIBTPMS=OFF -DM33MU_ENABLE_WOLFSSL=OFF \
+          -DM33MU_ENABLE_LIBDW=OFF -DM33MU_ENABLE_RUST_PLUGINS=OFF
+        cmake --build /tmp/m33mu/build -j"$(nproc)" --target m33mu
+        mkdir -p ~/m33mu-bin && cp /tmp/m33mu/build/m33mu ~/m33mu-bin/
 
     - name: Cut power during the update
       id: run
@@ -82,10 +131,12 @@ runs:
         BP_TARGET: ${{ inputs.target }}
         BP_ARGS: ${{ inputs.args }}
         BP_REPORT: ${{ inputs.report-dir }}
+        BP_SARIF: ${{ inputs.sarif }}
       run: |
-        export RENODE_PATH="$HOME/renode/renode"
+        export RENODE_PATH="$HOME/renode/renode" M33MU_PATH="$HOME/m33mu-bin/m33mu"
         set -- run "$BP_ADAPTER" --json "$BP_REPORT/report.json" --junit "$BP_REPORT/report.xml" --html "$BP_REPORT/report.html"
         if [ -n "$BP_TARGET" ]; then set -- "$@" --target "$BP_TARGET"; fi
+        if [ "$BP_SARIF" = "true" ]; then set -- "$@" --sarif "$BP_REPORT/report.sarif"; fi
         # shellcheck disable=SC2086  # BP_ARGS is a list of options, split on purpose
         set +e
         brickproof "$@" $BP_ARGS
@@ -100,3 +151,11 @@ runs:
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.report-dir }}
+
+    - name: Upload the failures to code scanning
+      if: always() && inputs.sarif == 'true'
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.report-dir }}/report.sarif
+        category: brickproof

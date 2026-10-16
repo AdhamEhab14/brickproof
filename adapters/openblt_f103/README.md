@@ -58,5 +58,28 @@ The fix suggested to the maintainers is to make the checksum the last thing writ
 the last data block first, then the checksum block with the checksum word left erased, then
 the checksum word on its own.
 
+Reported to Feaser by email on 2026-10-13. Their fix came the next day, r1326 on SourceForge
+(`62786e72` on GitHub): `FlashDone()` in every port now writes the last data block before the
+boot block. Writing the checksum word on its own was turned down, because some chips' flash
+may be written only once after an erase, even with a value that looks erased.
+
+Run again on `62786e72` (phases plan, 23 cuts): the data blocks are fine now, and 4 cuts
+still fail, all inside the boot block after the checksum: at `0x08004132`, `0x08004198`,
+`0x080041FC` and `0x080041FE`. The block is still written from its start, so `0x110..0x1FF`
+(the demo's startup code, `Reset_Handler` at `0x0800419C` included) is erased while the
+checksum already passes. That is the third row of the table above. Suggested back: write the
+part of the block after the checksum first, then the part up to and including it, so the
+checksum is last and nothing is written twice.
+
 Reported to Feaser on 2026-10-13 (the GitHub repository is a read-only mirror and takes no
-issues).
+issues). Their answer, 2026-10-16: the remaining window is accepted as it is, since a power
+cut while the boot block is being written is very unlikely, and Feaser's improved checksum
+add-on closes it for users who want that. So with the standard checksum, this adapter's run
+on `62786e72` is expected to fail those 4 cuts.
+
+## A broken link
+
+The adapter also breaks the UART link at 10 points of the programming session
+(`scenario.link_cuts`): the device keeps its power, only the first N bytes of the session
+reach it, and after 2 s the host starts a new session. On `62786e72` (a 6,422-byte session)
+all 10 recovered: each new session installed the program and it ran.

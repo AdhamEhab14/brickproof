@@ -53,3 +53,5 @@ scenario:
   # erases and the 40 KB copy). `brickproof trace` shows the phases; `--plan every`
   # cuts all of them, which takes many hours for this update.
   plan: {mode: phases, per_phase: 4}
+  # the UART link broken at 10 points of the UPDATE_FBL frame, then the host sends it again
+  link_cuts: {points: 8, wait: 2}

@@ -3,7 +3,8 @@
 Pull the plug on your firmware update, in an emulator, at every point where it matters, and
 check that the device still comes back.
 
-BrickProof runs your firmware in [Renode](https://renode.io), cuts power during an update,
+BrickProof runs your firmware in an emulator ([Renode](https://renode.io), or
+[m33mu](https://github.com/danielinux/m33mu) for the chips Renode does not have), cuts power during an update,
 powers the device back up, and checks that it recovered: an approved image is installed, it is
 really running, the update was not lost, and an older image cannot sneak back in. It tells you
 which cuts brick the device, and how to reproduce each one.
@@ -11,7 +12,8 @@ which cuts brick the device, and how to reproduce each one.
 It came out of the power-cut tests of
 [Three-Tier-STM32-Secure-Bootloader](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader),
 where it found three real bugs. That bootloader's fixed release has since been cut at every one
-of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1 and STM32F4 (F411).
+of the 12,109 distinct flash states of its self-update, with no failure. Supported chips: STM32F1,
+STM32F4 (F411), STM32L4 (L476) and Nordic nRF52840 on Renode, STM32H5 (H563) on m33mu.
 
 Run on bootloaders that are not ours, it found:
 
@@ -23,15 +25,22 @@ Run on bootloaders that are not ours, it found:
   simulator: [wolfSSL/wolfBoot#937](https://github.com/wolfSSL/wolfBoot/issues/937). Details
   and the adapter: [adapters/wolfboot_f411](adapters/wolfboot_f411).
 
-It also ran on **MCUboot** (STM32F411, the Black Pill's one-sector slots, swap with
-scratch): 57 cuts over every phase of the swap, no failure.
-[adapters/mcuboot_f411](adapters/mcuboot_f411).
+It also ran on **MCUboot**, on two boards with two upgrade modes: the STM32F411 Black Pill
+(one-sector slots, swap with scratch, 57 cuts) and the nRF52840 DK (swap with move, 156
+cuts). No failure on either.
+[adapters/mcuboot](adapters/mcuboot).
+
+And on **wolfBoot** on an STM32H563 with TrustZone, emulated by m33mu (its `stm32h5-tz` config,
+swap update): 171 cuts, 403 torn states and 323 second cuts during recovery, no failure.
+[adapters/wolfboot_h563](adapters/wolfboot_h563).
 
 ## Quick start
 
 You need Python 3.10+ and [Renode 1.17](https://github.com/renode/renode/releases) (put
-`renode` on PATH or set `RENODE_PATH`). No toolchain, no board, no firmware of your own: a demo
-comes with the package.
+`renode` on PATH or set `RENODE_PATH`). For an STM32H5 you need
+[m33mu](https://github.com/danielinux/m33mu) instead, commit 23960ed or later (put `m33mu` on
+PATH or set `M33MU_PATH`). No toolchain, no board, no firmware of your own: a demo comes with
+the package.
 
 ```bash
 git clone https://github.com/AdhamEhab14/brickproof
@@ -91,6 +100,25 @@ sector erase that takes a second gets the chip reset half way through, on every 
 `f411-hold_pg` are the correct build writing flash the other common way, with programming
 mode left on over a whole run of cells.
 
+And for an **nRF52840**, which has no flash keys at all: one register (CONFIG) says whether a
+store is a program, whether an erase is allowed, or neither. `brickproof demo nrf52` and the
+`nrf52-bug-*` builds have the mistakes that apply there (`early_unpg` becomes a store made
+with CONFIG back to read-only). It has one of its own, `nrf52-bug-nwrite`: progress kept by
+clearing one more bit of the same word after each step. An STM32F4 takes that; the nRF52
+promises only two writes to a word between erases.
+
+And for an **STM32L476**: `brickproof demo l476`. Every 64 bits of its flash carry ECC, and an
+erase or program cut short leaves the ECC wrong, so the next read of that double word raises
+an NMI. The bootloader has to catch it; `l476-bug-no_ecc_nmi` does not, and only torn states
+find that.
+
+And for an **STM32H563**, on m33mu: `brickproof demo h563`. The H5 programs a 128-bit word with
+its ECC in one operation, and a word programmed once cannot be programmed again before its
+sector is erased, so the update is 26 operations and the `h563-bug-*` builds meet a chip that
+refuses what the F-series accepts. Its torn states found a bug in the port itself: a torn
+program of the "staging slot consumed" marker was retried, over the half-written word.
+The bootloader now takes any cleared bit in the marker as consumed.
+
 ## What a run covers
 
 **Clean cuts.** A golden run traces every flash operation of the update. After a power loss
@@ -105,7 +133,34 @@ some bits written. The shapes follow what flash cells do, but they are a model u
 with real hardware, so they are counted on their own line.
 
 **Cuts during recovery** (`--depth 2`). Recovery writes flash too. BrickProof traces it and
-cuts again. A flash state already tested is skipped.
+cuts again. A flash state already tested is skipped. `--depth 3` and beyond go on cutting
+during the recovery from those, and `--depth exhaustive` until a level finds no flash state
+not already tested (or the state limit, 2,000 by default, is reached).
+
+**Bad update content** (`scenario.content_faults`). Not a power cut: the image itself is
+wrong. BrickProof stages damaged versions of the update (truncated at several lengths, one
+bit flipped in each region the adapter names, such as header, body and signature, erased, or
+images made elsewhere: another key, an older version) and the bootloader must refuse each
+one and keep the old image running, as the oracle sees it from outside.
+
+**Worn pages** (`flash.worn`). A page past its endurance programs badly: the chip reports
+success and the data read back is not what was written. BrickProof models one worn range:
+programs there leave bit 0 of each cell as it was. A bootloader that writes an image there
+and does not read it back cannot tell.
+
+**Bit errors at rest** (`scenario.bit_errors`). A stored image loses a bit while the device
+is off. BrickProof flips seeded random bits in the installed image and powers up: the CPU must
+not run the damaged image, nor end in a fault handler. Staying in the bootloader is right.
+
+**A broken link** (`scenario.link_cuts`). For updates sent over a protocol, the link breaks
+part-way through the host's session while the device keeps its power: only the first N
+bytes arrive. After a pause the host starts again, and the device must take the new
+session and end up running.
+
+**Flash storage libraries.** The built-in `storage` driver tests a key-value store or a file
+system instead of a bootloader: every value a finished write left must be there after a cut,
+nothing half-written may come back, and the store must still take and keep a new write
+([adapters/zephyr_storage](adapters/zephyr_storage)).
 
 **The chip's rules.** A plain emulator is more forgiving than silicon. BrickProof gives the
 emulated chip its real RAM and flash sizes, faults on memory that is not there, refuses to
@@ -160,15 +215,28 @@ plan (every): 167 cut(s) over 167 distinct flash states (168 operations): every 
 | `--depth 2` | also cut during the recovery from each first cut |
 | `-j N` / `-j auto` | run N emulators side by side; the results do not depend on N |
 | `--real-every N` | on a long update, make every Nth cut in the emulator and compute the rest |
+| `--soak MINUTES --seed N` | instead of the plan, random cuts and torn states until the time is up or one fails |
 | `--shard K/N` | run every Nth cut, starting with the Kth: splits a long campaign over N machines |
 | `--cut N` | run one operation alone, to reproduce a result |
 | `--fail-fast` | stop at the first failure |
 | `--json`, `--junit`, `--html FILE` | reports |
+| `--sarif FILE` | the failures as SARIF 2.1.0, for GitHub code scanning |
 
 The HTML report is one self-contained page: the verdict, what was covered and what was
-sampled, each failure with a command that reproduces it, the SHA-256 of every firmware file
+sampled, each failure with a command that reproduces it and one that exports its flash
+for a real board, the SHA-256 of every firmware file
 tested, and where the evidence fits in UN R156 and the EU Cyber Resilience Act
 ([how that map is made](docs/regulations.md)).
+
+To check a failure on a real board, export the flash that cut leaves and program it:
+
+```bash
+brickproof export my_adapter.yaml --cut 3232 -o op-3232.bin        # add --torn KIND for a torn state
+```
+
+It writes `op-3232.bin` (the chip's flash; option bytes and an external flash chip get files
+of their own) and `op-3232.txt` with the ST-LINK or nrfjprog commands. The bytes are the ones
+the run powered the emulator up from.
 
 Exit codes: `0` every cut recovered, `1` at least one failed, `2` adapter error, `3` BrickProof
 itself failed (including its own flash self-check).
@@ -190,6 +258,15 @@ Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103). E
 brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
 ```
 
+For MCUboot built with Zephyr, the adapter can be written from the build:
+
+```bash
+brickproof adapter-from-zephyr build/mcuboot --images <folder with the signed images> -o adapter.yaml
+```
+
+It reads the chip, MCUboot's upgrade mode, the flash, the RAM, the slots, the console UART
+and an STM32 board's crystal from `zephyr/zephyr.dts` and `zephyr/.config`.
+
 ## In CI
 
 ```yaml
@@ -200,7 +277,9 @@ brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
 ```
 
 The job fails if any cut does not recover, and the JSON, JUnit and HTML reports are uploaded
-as an artifact.
+as an artifact. With `sarif: "true"` (and `permissions: security-events: write` in the
+workflow) each failure also shows up in the repository's code scanning alerts, with its
+reproduce and export commands.
 
 ## Docker
 
@@ -209,11 +288,14 @@ docker run --rm ghcr.io/adhamehab14/brickproof              # the demo
 docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml --html report.html
 ```
 
+The image brings Renode, so it runs every chip but the STM32H563. m33mu is AGPL-3.0 and is
+not shipped in it: build m33mu yourself (or use the GitHub Action, which builds it) for that one.
+
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/brickproof/engine/` | Renode driver in lock-step virtual time, work-folder setup |
+| `src/brickproof/engine/` | Renode and m33mu drivers in lock-step virtual time, work-folder setup |
 | `src/brickproof/models/` | The flash controller model (operation counting, cuts, the chip's rules, option bytes) and the memory guard |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
 | `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
@@ -222,17 +304,26 @@ docker run --rm -v "$PWD:/work" ghcr.io/adhamehab14/brickproof run adapter.yaml 
 | `src/brickproof/oracle.py` | The outside judge: approved image installed, and really running |
 | `src/brickproof/runner.py`, `pool.py` | A campaign: baseline, cuts, torn states, depth, over one or many emulators |
 | `src/brickproof/report.py`, `regulations.py` | JUnit and HTML reports, and the regulation map |
+| `src/brickproof/export.py` | A cut's flash as files for a real board |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
 | `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
-| `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot, MCUboot) |
+| `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot on the F411 and the H563, MCUboot) |
+| `hardware/torn_f103/`, `tools/torn_fit.py` | The firmware that measured torn writes on a real STM32F103, its results, and the tool that turns them into `torn.py`'s numbers |
 | `docs/decisions.md` | Why things are the way they are, with the measurements behind them |
 
 ## Limits
 
-- The device is emulated. Torn-operation shapes are a model until compared with hardware.
-- Flash is modelled for STM32F1 (pages, halfword programming) and STM32F411 (sectors, byte
-  to double-word programming). Another family needs a model of its flash controller in
-  `src/brickproof/models/`; the engine itself no longer assumes either chip.
+- The device is emulated. Two of the torn erase shapes are measured on a real STM32F103,
+  with the erase stopped by a reset; the others, and every torn program, are models. A real
+  power loss, which lets the supply sag, is not measured yet.
+- Flash is modelled for STM32F1 (pages, halfword programming), STM32F411 (sectors, byte
+  to double-word programming), STM32L476 (2 KB pages, 64-bit programs with ECC) and nRF52840
+  (4 KB pages, word programming, at most two writes to a word between erases) in
+  `src/brickproof/models/` for Renode; m33mu models the STM32H5 (128-bit programs, write
+  protection, bank swap) itself. Another family needs a model of its flash controller in one
+  emulator or the other; the engine itself assumes neither.
+- On m33mu, option bytes are kept apart from the flash image: a run starts every cut from the
+  option bytes as shipped, and a cut while the firmware changes them is not modelled.
 - Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
   vary with temperature, voltage or age. Wear is counted per update, not simulated.
 - An external flash chip is modelled as SPI NOR with the 25-series commands in single-line

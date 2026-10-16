@@ -135,7 +135,7 @@ def test_a_passing_page_says_pass_and_counts_each_group():
     assert "PASS: every run recovered" in text and "Failures" not in text
     assert "10 / 10" in text and "clean cuts passed" in text and "torn states passed" in text
     assert "Every distinct flash state the update goes through was cut." in text
-    assert "not been calibrated against real hardware" in text
+    assert "a real power loss has not been measured yet" in text
     assert "runs new" in text
 
 
@@ -217,3 +217,51 @@ def test_the_page_has_the_map_with_its_disclaimer_and_links():
     assert "Where this evidence fits" in text and "A map, not a verdict" in text
     assert "7.2.2.1.1" in text and "Annex I, Part I, (2)(h)" in text
     assert "href='https://unece.org/" in page and "href='https://eur-lex.europa.eu/" in page
+
+
+def test_each_failure_says_how_to_put_its_state_on_a_board():
+    report = make_report(FakeDevice(no_recovery=True))
+    failed = [c for c in report["cuts"] if not c["passed"] and not c["skipped"]]
+    assert failed
+    for c in failed:
+        n = c["op_index"]
+        assert reports.export_command(report, c) == (
+            "brickproof export adapters/fake/adapter.yaml --cut %d -o op-%d.bin" % (n, n))
+    assert reports.export_command(report, failed[0]) in reports.html_page(report)
+    assert "on a board: " + reports.export_command(report, failed[0]) in reports.junit(report)
+
+
+def test_cuts_in_a_row_have_no_single_state_to_export():
+    report = bad()
+    deep = [c for c in report["cuts"] if c["depth"] > 1 and not c["passed"]]
+    assert deep
+    assert all(reports.export_command(report, c) is None for c in deep)
+
+
+# ---- SARIF ---------------------------------------------------------------------
+
+def test_sarif_has_one_result_per_failure_with_its_kind_as_the_rule():
+    report = make_report(FakeDevice(no_recovery=True))
+    doc = reports.sarif(report)
+    assert doc["version"] == "2.1.0"
+    run = doc["runs"][0]
+    failed = [c for c in report["cuts"] if not c["passed"] and not c["skipped"]]
+    assert len(run["results"]) == len(failed) > 0
+    assert {r["ruleId"] for r in run["results"]} == {"cut"}
+    assert [r["id"] for r in run["tool"]["driver"]["rules"]] == ["cut"]
+    first = run["results"][0]
+    where = first["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert where == "adapters/fake/adapter.yaml"
+    assert "Reproduce: brickproof run" in first["message"]["text"]
+    fingerprints = [r["partialFingerprints"]["brickproofResult/v1"] for r in run["results"]]
+    assert len(set(fingerprints)) == len(fingerprints)
+
+
+def test_sarif_for_a_clean_run_has_no_results():
+    doc = reports.sarif(good())
+    assert doc["runs"][0]["results"] == [] and doc["runs"][0]["tool"]["driver"]["rules"] == []
+
+
+def test_cuts_in_a_row_get_their_own_rule():
+    doc = reports.sarif(bad())
+    assert "depth" in {r["ruleId"] for r in doc["runs"][0]["results"]}

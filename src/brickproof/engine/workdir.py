@@ -1,5 +1,5 @@
-"""Build the folder a Renode run works in: models with the target's geometry, the
-platform file, and copies of the firmware under paths without spaces."""
+"""Build the folder a run works in: copies of the firmware under paths without spaces
+and, for Renode, models with the target's geometry and the platform file."""
 import os
 import re
 import shutil
@@ -28,7 +28,27 @@ MEMORIES = {
     "stm32f411": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x08000000),
                   "ram_hole_end": 0x22000000, "flash_hole_end": 0x1FFF0000,
                   "ob_region": 0x400},
+    # flash at 0x08000000 and at 0; SRAM2 at 0x10000000; system memory and option bytes from
+    # 0x1FFF0000
+    "stm32l476": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x08000000), "ob_region": 0x800,
+                  "holes": lambda flash_end, ram_end, ram_size: [
+                      ("aliasGuard", flash_end - 0x08000000, 0x08000000 - (flash_end - 0x08000000)),
+                      ("flashGuard", flash_end, 0x10000000 - flash_end),
+                      ("sram2Guard", 0x10008000, 0x1FFF0000 - 0x10008000),
+                      ("ramGuard", ram_end, 0x22000000 - ram_end)]},
+    # flash at 0 with no alias; RAM also seen at 0x00800000 for code; FICR and UICR at
+    # 0x10000000; peripherals from 0x40000000
+    "nrf52840": {"ram": ("ram", 0x20000000), "flash": ("flash", 0x0), "ob_region": 0x1000,
+                 "holes": lambda flash_end, ram_end, ram_size: [
+                     ("flashGuard", flash_end, 0x800000 - flash_end),
+                     ("codeRamGuard", 0x800000 + ram_size, 0x10000000 - 0x800000 - ram_size),
+                     ("infoGuard", 0x10002000, 0x20000000 - 0x10002000),
+                     ("ramGuard", ram_end, 0x40000000 - ram_end)]},
 }
+
+
+# Where USER is in each chip's option bytes and which of its bits are nRST_STOP and nRST_STDBY
+PWR_USER = {"stm32f103": (2, 1, 2), "stm32f411": (0, 6, 7)}
 
 
 def holes(adapter):
@@ -37,6 +57,8 @@ def holes(adapter):
     info = MEMORIES[adapter.platform]
     ram_end = adapter.ram_base + adapter.ram_size
     flash_end = adapter.flash.base + adapter.flash.size
+    if "holes" in info:
+        return info["holes"](flash_end, ram_end, adapter.ram_size)
     # flash is also seen at address 0 (the boot alias); between the end of that copy
     # and the flash itself there is nothing
     return [("ramGuard", ram_end, info["ram_hole_end"] - ram_end),
@@ -52,8 +74,11 @@ def memory_sizes(adapter):
     if adapter.ram_base != ram_base:
         raise ValueError("ram.base 0x%X does not match the %s platform (0x%X)"
                          % (adapter.ram_base, adapter.platform, ram_base))
-    return {ram_name: adapter.ram_size,
-            flash_name: adapter.flash.base + adapter.flash.size - region_base}
+    sizes = {ram_name: adapter.ram_size,
+             flash_name: adapter.flash.base + adapter.flash.size - region_base}
+    if adapter.flash.ecc:
+        sizes["bpEcc"] = adapter.flash.ecc_size
+    return sizes
 
 
 def _set_const(model_text, const, value):
@@ -116,6 +141,8 @@ def platform_text(platform, models_dir, extra_file=None, adapter_dir=None, sizes
 
 def prepare(workdir, adapter):
     """Fill `workdir` for `adapter`; return the firmware list as session-relative paths."""
+    if adapter.emulator == "m33mu":
+        return copy_firmware(workdir, adapter)      # m33mu brings its own chip
     models = os.path.join(workdir, "models")
     os.makedirs(models, exist_ok=True)
     for name in os.listdir(MODELS):
@@ -132,9 +159,27 @@ def prepare(workdir, adapter):
             if adapter.flash.wrp_unit:
                 text = _set_const(text, "WRP_UNIT", adapter.flash.wrp_unit)
             text = _set_const(text, "TIMING", adapter.flash.timing)
+            if adapter.flash.worn:
+                text = _set_const(text, "WORN_FROM", adapter.flash.worn[0])
+                text = _set_const(text, "WORN_TO", adapter.flash.worn[1])
             text = _set_trace_file(text, "%s/%s" % (_slash(workdir), TRACE_NAME))
         elif name.endswith("_rcc.py"):
             text = _set_const(text, "HSE_HZ", adapter.hse)
+        elif name == "nrf52_power.py":
+            if adapter.platform != "nrf52840":
+                continue
+            for const, value in (("RAM_BASE", adapter.ram_base), ("RAM_SIZE", adapter.ram_size),
+                                 ("WAKE_AFTER_US", int(adapter.wake_after * 1e6))):
+                text = _set_const(text, const, value)
+        elif name == "stm32_pwr.py":
+            if adapter.platform not in PWR_USER:
+                continue                        # the F1 and F4's PWR only
+            at, stop, standby = PWR_USER[adapter.platform]
+            for const, value in (("RAM_BASE", adapter.ram_base), ("RAM_SIZE", adapter.ram_size),
+                                 ("OB_USER", adapter.flash.ob_base + at), ("NRST_STOP_BIT", stop),
+                                 ("NRST_STDBY_BIT", standby),
+                                 ("WAKE_AFTER_US", int(adapter.wake_after * 1e6))):
+                text = _set_const(text, const, value)
         with open(os.path.join(models, name), "w", newline="\n") as f:
             f.write(text)
 
@@ -154,10 +199,29 @@ def prepare(workdir, adapter):
     if f.ext_size:
         shutil.copyfile(os.path.join(MODELS, "BpSpiNor.cs"), os.path.join(models, "BpSpiNor.cs"))
         repl += ('\nextflash: SPI.BpSpiNor @ %s\n    size: 0x%X\n    address: 0x%X\n    state: 0x%X\n'
-                 '    traceFile: "%s/%s"\n    timing: %d\n    status1: 0x%X\n    status2: 0x%X\n' % (
+                 '    traceFile: "%s/%s"\n    timing: %d\n    status1: 0x%X\n    status2: 0x%X\n'
+                 '    status3: 0x%X\n' % (
                      f.ext_bus, f.ext_size, f.ext_base, STATE_BASE, _slash(workdir), TRACE_NAME, f.timing,
-                     f.ext_status & 0xFF, f.ext_status >> 8))
-        repl += "\ngpioPort%s:\n    %d -> extflash@0\n" % (f.ext_cs[1], int(f.ext_cs[2:]))
+                     f.ext_status & 0xFF, (f.ext_status >> 8) & 0xFF, (f.ext_status >> 16) & 0xFF))
+        lines = {f.ext_cs: 0}
+        if f.ext_wp:
+            lines[f.ext_wp] = 1                 # /WP is the chip's GPIO 1
+        for port in sorted({pin[1] for pin in lines}):
+            repl += "\ngpioPort%s:\n" % port + "".join(
+                "    %d -> extflash@%d\n" % (int(pin[2:]), n) for pin, n in lines.items() if pin[1] == port)
+    # an I2C EEPROM: its model and where it sits on the bus
+    if f.eeprom_size:
+        shutil.copyfile(os.path.join(MODELS, "BpI2cEeprom.cs"), os.path.join(models, "BpI2cEeprom.cs"))
+        repl += ('\neeprom: I2C.BpI2cEeprom @ %s 0x%X\n    size: 0x%X\n    address: 0x%X\n    state: 0x%X\n'
+                 '    traceFile: "%s/%s"\n    pageSize: %d\n    addressBytes: %d\n    timing: %d\n' % (
+                     f.eeprom_bus, f.eeprom_i2c, f.eeprom_size, f.eeprom_base, STATE_BASE, _slash(workdir),
+                     TRACE_NAME, f.eeprom_page, f.eeprom_address_bytes, f.timing))
+    # the PWR controller's low-power modes (models/stm32_pwr.py), in place of Renode's
+    if adapter.platform in PWR_USER:
+        if adapter.platform == "stm32f411":
+            repl += "\npwr: @ none\n"
+        repl += ('\nlowPower: Python.PythonPeripheral @ sysbus 0x40007000\n    size: 0x400\n'
+                 '    initable: true\n    filename: "%s/stm32_pwr.py"\n' % _slash(models))
     guard = open(os.path.join(MODELS, "mem_guard.py")).read()
     for name, base, size in holes(adapter):
         text = _set_const(guard, "GUARD_BASE", base)
@@ -168,7 +232,11 @@ def prepare(workdir, adapter):
                  '    filename: "%s/%s.py"\n' % (name, base, size, _slash(models), name))
     with open(os.path.join(workdir, "platform.repl"), "w", newline="\n") as f:
         f.write(repl)
+    return copy_firmware(workdir, adapter)
 
+
+def copy_firmware(workdir, adapter):
+    """Copy the firmware into `workdir/fw`; return [(relative path, address)]."""
     fw_dir = os.path.join(workdir, "fw")
     os.makedirs(fw_dir, exist_ok=True)
     firmware = []

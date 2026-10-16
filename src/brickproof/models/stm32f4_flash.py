@@ -38,8 +38,14 @@
 # simply stops for that long. The model skips the same amount of virtual time: timers,
 # watchdogs and timeouts see a one-second sector erase as one second.
 #
-# Not modelled: PGAERR (a store across a 128-bit row), PCROP (SPRMOD is kept but the
-# nWRP bits always mean write protection), and RDP level 2.
+# PGAERR: a program whose data does not fit in one 128-bit (16-byte) row is refused.
+# PCROP: with SPRMOD set in the option bytes, a set nWRP bit no longer means "writable" but
+# "proprietary code": the sector can be run but not read as data, erased or programmed. A
+# data read there sets RDERR and is counted for BrickProof (0x150, 0x154): the model cannot
+# change the value Renode returns, so the read is reported as a broken rule instead. Finding
+# those reads takes listening to every memory access, so it is on only while SPRMOD is.
+# RDP level 2 (0xCC) is for good: the option bytes can no longer be changed, and an
+# OPTSTRT does nothing.
 #
 # The test-only registers at 0x100..0x14C are the same as the F1 model's, see there.
 # "cut page" (0x114) takes the first address of a sector.
@@ -62,6 +68,8 @@ CHUNK = 0x400               # flash is compared with its shadow in pieces of thi
 # 64 needs an external supply and is given the 32-bit figures). Programming a cell takes
 # 16 us, at most 100.
 TIMING = 0
+WORN_FROM = 0x0           # worn pages (flash.worn): [WORN_FROM, WORN_TO), none by default
+WORN_TO = 0x0
 T_PROGRAM_US = (0, 16, 100)
 T_ERASE_US = {
     0x4000: ((0, 0, 0, 0), (400000, 300000, 250000, 250000), (800000, 600000, 500000, 500000)),
@@ -75,17 +83,21 @@ IWDG_KR = 0x40003000        # writing 0xCCCC here starts the independent watchdo
 NEVER = 0xFFFFFFFF
 MAGIC = 0xB81C0004          # state word 0: set once the defaults below are in place
 SR_WRPERR = 0x10
+SR_PGAERR = 0x20
 SR_PGPERR = 0x40
+SR_RDERR = 0x100
 CR_PG, CR_SER, CR_MER, CR_STRT, CR_LOCK = 1, 2, 4, 1 << 16, 1 << 31
 OPTCR_OPTLOCK, OPTCR_OPTSTRT = 1, 2
 RDP_LEVEL_0 = 0xAA
+RDP_LEVEL_2 = 0xCC
+ROW = 16                    # bytes of one flash row: a program must fit in one
 
 from System import Array, Byte, Convert
 from Antmicro.Renode.Time import TimeInterval
 
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
- PROTECTED, PROTECTED_AT) = range(1, 21)
+ PROTECTED, PROTECTED_AT, PCROP_READS, PCROP_AT, PCROP_MASK, RDERR_FLAG) = range(1, 25)
 
 bus = None if request.IsInit else self.GetMachine().SystemBus   # no machine yet at construction
 
@@ -105,17 +117,57 @@ def ensure_state():
         st_w(CUT_PAGE, NEVER)
         resync()
         st_w(0, MAGIC)
-        self.GetMachine().MachineReset += after_reset
+        st_w(PCROP_MASK, pcrop_mask(bus))
+        self.GetMachine().MachineReset += lambda m, k=(PCROP_MASK, PCROP_READS, PCROP_AT, RDERR_FLAG): \
+            after_reset(m, slots=k)
+        if st(PCROP_MASK):
+            listen(True)
 
 
-def after_reset(machine, ob=OB_BASE, kr=IWDG_KR):
+def pcrop_mask(b, ob=OB_BASE):
+    # the sectors the option bytes make proprietary code: SPRMOD (bit 15 of the nWRP
+    # halfword, stored inverted) set, then each set nWRP bit is one
+    wrp = int(b.ReadByte(ob + 8)) | (int(b.ReadByte(ob + 9)) << 8)
+    return 0 if wrp & 0x8000 else wrp & 0xFFF
+
+
+def after_reset(machine, ob=OB_BASE, kr=IWDG_KR, state=STATE, slots=None, base=FLASH_BASE,
+                size=FLASH_SIZE, sectors=SECTORS):
     # Runs after every reset of the machine, for as long as this emulator lives. With
     # WDG_SW (bit 5 of the USER byte) cleared the watchdog is a hardware one: it is
     # running before the first instruction, with its reset timeout of about 0.5 s.
-    # The values come in as defaults because this outlives the script that defined it.
+    # The values come in as defaults because this outlives the script that defined it
+    # (a reset runs the script's init again, which drops its handle on the bus: the
+    # read watcher below carries its own).
     b = machine.SystemBus
+    mask_slot, reads_slot, at_slot, flag_slot = slots
+    mask = pcrop_mask(b, ob)
+    b.WriteDoubleWord(state + 4 * mask_slot, mask)
+
+    def watch(pc, operation, virtual, addr, width, value):
+        # proprietary-code sectors: a data read there gets RDERR on the chip
+        if str(operation) != "MemoryRead":
+            return
+        a = int(addr)
+        if a < size:
+            a += base
+        if not base <= a < base + size:
+            return
+        off = a - base
+        for i, (start, n) in enumerate(sectors):
+            if start <= off < start + n:
+                if (mask >> i) & 1:
+                    count = int(b.ReadDoubleWord(state + 4 * reads_slot))
+                    if not count:
+                        b.WriteDoubleWord(state + 4 * at_slot, a)
+                    b.WriteDoubleWord(state + 4 * reads_slot, count + 1)
+                    b.WriteDoubleWord(state + 4 * flag_slot, 1)
+                return
+
     for c in b.GetCPUs():
-        c.SetHookAtMemoryAccess(None)           # a reset ends any program that was going on
+        # a reset ends any program that was going on; proprietary-code sectors are
+        # watched from the first instruction on
+        c.SetHookAtMemoryAccess(watch if mask else None)
     if not int(b.ReadByte(ob)) & 0x20:
         b.WriteDoubleWord(kr, 0xCCCC)
 
@@ -194,8 +246,10 @@ def load_option_bytes():
 
 
 def is_protected(addr):
-    # one nWRP bit per sector, and a cleared bit protects it
-    return not (nwrp >> sector_of(addr)) & 1
+    # one nWRP bit per sector: a cleared bit protects it, or with SPRMOD a set bit makes
+    # it proprietary code, which cannot be erased or programmed either
+    bit = (nwrp >> sector_of(addr)) & 1
+    return bool(bit) if optcr >> 31 else not bit
 
 
 def refuse_protected(addr):
@@ -243,7 +297,9 @@ def first_difference(addr, n):
 def listen(on):
     # Hear every memory access of the CPU, or stop hearing them. Ending the current
     # block of translated code makes the very next instruction count already: the
-    # store usually follows the write to CR at once.
+    # store usually follows the write to CR at once. With proprietary-code sectors the
+    # CPU is heard all the time.
+    on = on or bool(st(PCROP_MASK))
     for c in bus.GetCPUs():
         c.SetHookAtMemoryAccess(on_access if on else None)
         if on:
@@ -251,14 +307,28 @@ def listen(on):
 
 
 def on_access(pc, operation, virtual, addr, width, value):
-    # called by the CPU after each of its memory accesses while PG is set
-    if str(operation) != "MemoryWrite":
-        return
+    # called by the CPU after each of its memory accesses while PG is set (or always,
+    # with proprietary-code sectors)
+    op = str(operation)
     addr = int(addr)
     if addr < FLASH_SIZE:
-        addr += FLASH_BASE                      # a store through the boot alias at address 0
-    if FLASH_BASE <= addr < FLASH_BASE + FLASH_SIZE:
+        addr += FLASH_BASE                      # through the boot alias at address 0
+    if not FLASH_BASE <= addr < FLASH_BASE + FLASH_SIZE:
+        return
+    if op == "MemoryRead":
+        mask = st(PCROP_MASK)
+        if mask and (mask >> sector_of(addr)) & 1:
+            pcrop_read(addr)
+    elif op == "MemoryWrite" and cr & CR_PG and not cr & CR_LOCK:
         program(addr, int(width), int(value))
+
+
+def pcrop_read(addr):
+    # a data read of proprietary code: the chip answers RDERR, not the code
+    if not st(PCROP_READS):
+        st_w(PCROP_AT, addr)
+    st_w(PCROP_READS, st(PCROP_READS) + 1)
+    st_w(RDERR_FLAG, 1)
 
 
 def program(a, width, value):
@@ -283,14 +353,30 @@ def program(a, width, value):
             st_w(REFUSED_AT, a)
         st_w(REFUSED, st(REFUSED) + 1)
         log("X 0x%08X 0x%0*X 0x%0*X" % (a, 2 * width, value, 2 * width, old))
+    elif (a % ROW) + width > ROW:
+        # the data does not fit in one 128-bit row: the chip does not write and sets PGAERR
+        put(a, width, old)
+        sr_err |= SR_PGAERR
+        if not st(REFUSED):
+            st_w(REFUSED_AT, a)
+        st_w(REFUSED, st(REFUSED) + 1)
+        log("X 0x%08X 0x%0*X 0x%0*X" % (a, 2 * width, value, 2 * width, old))
     elif is_protected(a):
         put(a, width, old)                      # write-protected: nothing is written
         refuse_protected(a)
     else:
         stored = old & value                    # a program clears bits, it cannot set them
+        if worn(a):
+            stored = (stored & ~1) | (old & 1)
         put(a, width, stored)
         put(shadow_of(a), width, stored)
         log("P 0x%08X 0x%0*X @%d" % (a, 2 * width, stored, T_PROGRAM_US[TIMING]))
+
+
+def worn(a):
+    # a worn page (flash.worn in the adapter): programs there report success, but bit 0 of
+    # each cell no longer changes, so the data read back differs from what was written
+    return WORN_FROM <= a < WORN_TO
 
 
 def begin(erasing, addr):
@@ -317,6 +403,9 @@ def with_complement(half):
 def program_option_bytes(value):
     # OPTSTRT: the chip rewrites its option bytes from OPTCR. If that takes read
     # protection away, it erases the whole main flash before anything else.
+    if rdp == RDP_LEVEL_2:
+        log("X 0x%08X level 2: the option bytes cannot change" % OB_BASE)
+        return                                  # RDP level 2 is for good
     user_rdp = (value & 0xFFEC) | 0x0003
     wrp = ((value >> 16) & 0x0FFF) | 0x7000 | (0 if value >> 31 else 0x8000)
     if rdp != RDP_LEVEL_0 and (user_rdp >> 8) == RDP_LEVEL_0:
@@ -356,10 +445,11 @@ elif request.IsWrite or request.IsRead:
 
     if request.IsRead:
         if o == 0x00: request.Value = acr
-        elif o == 0x0C: request.Value = sr_err        # BSY never set: operations are instant
+        elif o == 0x0C:                                # BSY never set: operations are instant
+            request.Value = sr_err | (SR_RDERR if st(RDERR_FLAG) else 0)
         elif o == 0x10: request.Value = cr
         elif o == 0x14: request.Value = optcr
-        elif 0x100 <= o <= 0x14C: request.Value = st((o - 0x100) // 4 + 1)
+        elif 0x100 <= o <= 0x154: request.Value = st((o - 0x100) // 4 + 1)
         else: request.Value = 0
     else:
         v = request.Value
@@ -416,6 +506,8 @@ elif request.IsWrite or request.IsRead:
                     program_option_bytes(v)
         elif o == 0x0C:
             sr_err &= ~v                     # error flags are write-1-to-clear
+            if v & SR_RDERR:
+                st_w(RDERR_FLAG, 0)
         elif o == 0x104 or o == 0x114:       # arming a cut clears the last one's result
             st_w(CUTPOINT if o == 0x104 else CUT_PAGE, v)
             st_w(CUT_HIT, 0)
@@ -433,5 +525,5 @@ elif request.IsWrite or request.IsRead:
         elif o == 0x13C:
             n = st(CMP_LEN)
             st_w(COMPARE, first_difference(st(CMP_FROM), n) if n else first_difference(FLASH_BASE, FLASH_SIZE))
-        elif 0x100 <= o <= 0x14C:
+        elif 0x100 <= o <= 0x154:
             st_w((o - 0x100) // 4 + 1, v)

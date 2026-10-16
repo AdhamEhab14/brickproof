@@ -1,0 +1,118 @@
+// nRF52840 base platform for BrickProof.
+// Renode's stock nRF52840 peripherals, written out here instead of included: the stock
+// file downloads a register description (SVD) at every start, only to name registers
+// in logs, and a run must not depend on that server. Renode has no model of the flash
+// controller (NVMC) at all; ours counts operations, cuts power and enforces the chip's
+// rules. @MODELS@ is replaced with the models folder when the engine writes the run's
+// platform file. A target adapter can append its own lines.
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+uart0: UART.NRF52840_UART @ sysbus 0x40002000
+    easyDMA: true
+    -> nvic@2
+
+uart1: UART.NRF52840_UART @ sysbus 0x40028000
+    easyDMA: true
+    -> nvic@40
+
+rtc0: Timers.NRF52840_RTC @ sysbus 0x4000B000
+    numberOfEvents: 3
+    -> nvic@11
+
+rtc1: Timers.NRF52840_RTC @ sysbus 0x40011000
+    numberOfEvents: 3
+    -> nvic@17
+
+rtc2: Timers.NRF52840_RTC @ sysbus 0x40024000
+    numberOfEvents: 4
+    -> nvic@36
+
+wdt: Timers.NRF52840_Watchdog @ sysbus 0x40010000
+    -> nvic@16
+
+ppi: Miscellaneous.NRF52840_PPI @ sysbus 0x4001F000
+
+// 1 MB of flash in 4 KB pages, at address 0
+flash: Memory.MappedMemory @ sysbus 0x0
+    size: 0x100000
+
+// 256 KB of RAM, also seen at 0x00800000 for code
+ram: Memory.MappedMemory @ { sysbus 0x800000; sysbus 0x20000000 }
+    size: 0x40000
+
+clock: Miscellaneous.NRF_CLOCK @ sysbus 0x40000000
+    -> nvic@0
+
+spi2: SPI.NRF52840_SPI @ sysbus 0x40023000
+    -> nvic@0x23
+
+gpio0: GPIOPort.NRF52840_GPIO @ sysbus 0x50000500
+
+gpio1: GPIOPort.NRF52840_GPIO @ sysbus 0x50000800
+
+gpiote: GPIOPort.NRF52840_GPIOTasksEvents @ sysbus 0x40006000
+    port0: gpio0
+    port1: gpio1
+    -> nvic@6
+
+timer0: Timers.NRF52840_Timer @ sysbus 0x40008000
+    numberOfEvents: 4
+    -> nvic@8
+
+timer1: Timers.NRF52840_Timer @ sysbus 0x40009000
+    numberOfEvents: 4
+    -> nvic@9
+
+timer2: Timers.NRF52840_Timer @ sysbus 0x4000A000
+    numberOfEvents: 4
+    -> nvic@10
+
+timer3: Timers.NRF52840_Timer @ sysbus 0x4001A000
+    numberOfEvents: 6
+    -> nvic@26
+
+timer4: Timers.NRF52840_Timer @ sysbus 0x4001B000
+    numberOfEvents: 6
+    -> nvic@27
+
+rng: Miscellaneous.NRF52840_RNG @ sysbus 0x4000D000
+    -> nvic@13
+
+ecb: Miscellaneous.NRF52840_ECB @ sysbus 0x4000E000
+    -> nvic@14
+
+egu0: Miscellaneous.NRF52840_EGU @ sysbus 0x40014000
+    -> nvic@20
+
+egu1: Miscellaneous.NRF52840_EGU @ sysbus 0x40015000
+    -> nvic@21
+
+flashctl: Python.PythonPeripheral @ sysbus 0x4001E000
+    size: 0x1000
+    initable: true
+    filename: "@MODELS@/nrf52_flash.py"
+
+// Where the flash model keeps its test state (op count, cut point, fault latch).
+// Plain memory survives a firmware reset; the model's own variables do not.
+bpState: Memory.MappedMemory @ sysbus 0x90000000
+    size: 0x1000
+
+// How often each flash and UICR word was written since its erase (one byte a word), then
+// partial erase time per page, kept here and not in the model because a CPU reset does
+// not undo either on the chip.
+bpCounts: Memory.MappedMemory @ sysbus 0x93000000
+    size: 0x41000
+
+sysbus:
+    init:
+        Tag <0x10000000, 0x10000FFF> "FICR"
+        Tag <0x10000010, 0x10000013> "CODEPAGESIZE" 0x1000
+        Tag <0x10000014, 0x10000017> "CODESIZE" 0x100
+        Tag <0x100000a0, 0x100000a3> "DEVICEADDRTYPE" 0x1
+        Tag <0x100000a4, 0x100000a7> "DEVICEADDR[0]" 0xAABBCCDD

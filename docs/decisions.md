@@ -1105,7 +1105,7 @@ four cuts that had failed then passed, with three emulators side by side.
 
 ## 2026-10-13: MCUboot
 
-`adapters/mcuboot_f411`: MCUboot built with Zephyr v4.2.0 for `blackpill_f411ce`, its
+`adapters/mcuboot` (then `adapters/mcuboot_f411`): MCUboot built with Zephyr v4.2.0 for `blackpill_f411ce`, its
 default swap using scratch, the board's own layout (MCUboot 32 KB, then slot 0, slot 1 and
 scratch at one 128 KB sector each), ECDSA-P256 signatures (RSA-2048 does not fit 32 KB with
 Ubuntu's compiler). A small app prints its version; v2 is staged with `--pad --confirm`, so
@@ -1117,3 +1117,744 @@ more, every one recovered to v2. One build mistake on the way, worth knowing: an
 for MCUboot on this board must be linked for slot 0 (`zephyr,code-partition`), which the
 board files do not choose; without it MCUboot jumps into an app linked for address 0 and
 the app aborts.
+
+## 2026-10-14: A third chip family, the nRF52840
+
+Chosen over the STM32L4 because Renode emulates the nRF52840 (UARTE, timers, RTC, clock)
+and has no L4 platform at all: the L4 would have meant a whole platform first. The nRF52 is
+also a different vendor with different flash rules, and the home of MCUboot.
+
+**The NVMC model** (`models/nrf52_flash.py`). Renode has none: its flash is plain memory.
+CONFIG.WEN says what the flash does (Ren, Wen, Een). A program is a store while WEN is Wen,
+heard through the CPU's memory-access hook as on the F4; it must be a whole, aligned 32-bit
+word (narrower is a hard fault on the chip, refused and reported here), it can only clear
+bits, and a word may be written twice between erases (nWRITE = 2; a third write is refused
+and reported). How often each word was written lives in memory (`bpCounts`), not in the
+model, because a CPU reset does not undo it on the chip. ERASEPAGE erases a 4 KB page and
+ERASEALL everything. Times from the product specification, which gives only maximums: 41 us
+a word, 85 ms a page, 169 ms for all. The test registers sit at 0x100..0x14C as on the STM32
+models; the NVMC's own start at 0x400.
+
+**The platform** is Renode's, written out (`platforms/nrf52840.repl`): the stock file applies
+an SVD it downloads at every start, only to name registers in logs, and the download failing
+prints an error the engine takes as Renode refusing a command. FICR gets CODEPAGESIZE and
+CODESIZE, because Zephyr's flash driver takes the flash size from them; without them MCUboot
+cannot read its own slots. The guards cover what is empty on this chip: after flash up to the
+RAM alias at 0x00800000, after that alias up to FICR, between UICR and RAM, and after RAM up
+to the peripherals. The engine no longer assumes an STM32: the RAM name and the CPU speed
+(64 MHz here) come from the chip.
+
+**Checked** with MCUboot on the nRF52840 DK (swap using move, the board's own partitions):
+15,400 operations in 52 phases, baseline and 156 cuts, all recovered to v2.
+
+Not modelled: partial erase, the UICR (not part of the flash image; ERASEUICR is ignored),
+ACL protection, the cache.
+
+## 2026-10-14: Torn erases, measured
+
+The torn shapes were guesses until now. Measured on a Nucleo-F103RB with a small firmware
+(running from RAM) that starts an operation and resets the chip a counted number of cycles
+later (DWT, 125 ns), then reads what is left; every delay three times.
+
+- **Erase** (22 ms when not stopped): stopped at once, 69% of the bytes were 0xFF and 4.5% of
+  the old 0 bits were still 0; at 5 us 91% and 1.2%; at 15 us 97% and 0.35%; from 50 us the
+  page was always fully erased. The bits still 0 were scattered over the whole page, nearly
+  always one in a byte, and the same cells in every repeat. Their count fits each old 0 bit
+  staying 0 on its own with one probability (4.5% predicts 31% of the bytes showing a 0;
+  measured 31%). Never a half page, never a byte keeping its old value.
+- **Program** (55 us): untouched up to 0.5 us, complete from 0.6 us; nothing in between.
+
+So two shapes are added from the measurements, `erase-early` (each old 0 bit stays 0 with
+probability 4.5%) and `erase-late` (0.35%). They are drawn after the old shapes from the
+same seed, so the old shapes' bytes, and old reports' reproduce commands, do not change. The
+guessed shapes stay: they are harder than anything seen, and passing them still means
+something. What is not known: a reset stops the flash cleanly, a power loss lets the supply
+sag. Whether the 22 ms after the first 50 us is the chip finishing what a reset cannot stop
+needs a switch on the supply.
+
+## 2026-10-15: The demo on the nRF52840
+
+The demo bootloader builds for a third chip with `-DNRF52` (`common/chip_nrf52.h`). Flash
+map in 4 KB pages: bootloader 16 KB at 0, the two rollback-floor pages at 0x4000 and 0x5000,
+Slot A at 0x10000 and Slot B at 0x30000, 128 KB each. There are no keys: `flash_unlock()`
+does nothing, and each erase or program sets CONFIG (Een or Wen) and puts it back to Ren.
+The UART is UARTE0, which sends by EasyDMA from RAM only, so the text goes through a RAM
+buffer, a line at a time. The watchdog is only fed: the nRF WDT cannot change its timeout
+once it runs.
+
+Builds left out on this chip, and why: `no_unlock` (no keys to forget), `self_lock` (needs
+the UICR, not modelled yet), `watchdog` (a 4 KB page erase takes 85 ms), `resume_copy` (a
+half-written word may be written once more, as on the F4), and the external-flash builds
+(F411 only). One build is new, `nwrite`, for the rule this chip adds: install progress kept
+by clearing one more bit of the same word after each step, so the third step is a third
+write.
+
+The STM32 binaries are byte for byte what they were before the change (checked with
+objcopy on every bootloader and app).
+
+**Checked** in Renode: the correct build, 98 cuts over 98 distinct flash states, all
+recovered to v2. Caught: `consume_first` (cut at the Slot A erase), `trust_header` (cut in
+the copy: locked up), `naive_floor` (rollback accepted), `pop_after_switch` (bus fault at
+0x20040000, baseline), `no_erase` (baseline), `early_unpg` (store with CONFIG not Wen,
+baseline), `nwrite` (third write refused, baseline), and `retry_limit` with `--depth 2` (every
+single cut recovers, 99 of them; two cuts in a row leave v1). `hold_pg`, the correct build
+with CONFIG held at Wen, recovered at all 98 cuts.
+
+## 2026-10-15: Exporting a failing state
+
+Checking a finding on a board took a hand-made flash image (OpenBLT, 2026-10-13). `brickproof
+export` makes it: one uninterrupted run, then the golden run replayed to just before the
+operation (`trace.Replay`, the same bytes a computed cut powers up from, and checked against
+every real cut). `--torn KIND` builds that operation's torn state with the adapter's seed, so
+it is the state the campaign booted. The image is split the way a programmer writes it: the
+flash, the option bytes (a file of their own, with a warning: a wrong value can lock the
+chip), the external chip and its status registers. A state after cuts in a row has no export
+command: it is the recovery's flash, and a replay of the second cut needs that first
+recovery run.
+
+The image is not run again to check it can be: that is what the campaign did.
+
+**Checked** against the five OpenBLT images made by hand on 2026-10-13 and flashed to the
+Nucleo (commit 7dfd266): with the bootloader and the program taken from the complete image,
+one run of the update (3,335 operations), and the states before operations 2957, 2976, 3079
+and 3148 and after the last one exported. All five are identical to the hand-made files,
+byte for byte.
+
+## 2026-10-15: The torn-write kit in the repository
+
+`hardware/torn_f103` is the v2 firmware that gave the 2026-10-14 measurements, the binary that
+ran (rebuilt with another compiler the bytes differ, so the measured one is kept), and both
+runs' results. `tools/torn_fit.py` reads a run: per delay, the share of old 0 bits still 0 and
+the share of bytes showing one against what independent bits predict; where the program goes
+from untouched to complete. On the v2 run it gives 4.50% at 0 us and 0.35% at 15 us, the
+values in `torn.py`, and a test keeps the two in step. The same reading will take the F411 and
+nRF52840 kits (plan item 29) once they exist.
+
+## 2026-10-15: Re-running the fixes from OpenBLT and wolfBoot
+
+Both maintainers answered our reports with a fix within two days, so the adapters ran the
+fixes.
+
+**OpenBLT r1326** (`62786e72`) swaps the two writes in `FlashDone()`: the last data block now
+goes before the boot block. Run with the same adapter (phases plan, 23 cuts): the data
+blocks are fine, and 4 cuts fail, all in the boot block after its checksum word (0x10C),
+because the block is still written from its start. The driver's message said "before the
+last block", which no longer fits: it now says "before the rest of the program". Suggested
+back to Feaser: the part of the block after the checksum first, then the part up to and
+including it, so nothing is written twice (some of their targets allow one write per cell).
+
+**wolfBoot PR #940** (`45a5909e`) moves the STM32F4 trailers to sectors 1 and 2. The driver
+gets a `trailer` option, the address where the UPDATE trailer ends, because the update flag
+is no longer at the end of the partition; `adapter-custom-trailer.yaml` sets it. 44 cuts, all
+recovered, every state cut in the new trailer rewrite (erase the 16 KB sector, write 64
+bytes back), which was the step most likely to fail. Run on this PC with 6 emulators: 86
+minutes, each cut 10 to 12 minutes of byte-by-byte programming over 128 KB sectors.
+
+## 2026-10-16: MCUboot and the nRF52840 in CI
+
+MCUboot needs a Zephyr workspace to build, which is too much for every CI run and for a new
+user. `build.py`'s output for both boards is committed in `adapters/mcuboot/prebuilt`
+(built once on an ubuntu-latest runner: MCUboot `4eba8087`, Zephyr v4.2.0 `413b789`, Ubuntu's
+arm-none-eabi-gcc 13.2.1), and the adapters point there unless `--target` says otherwise.
+`mcuboot.elf` has its debug sections stripped: 1.1 MB down to 90 KB, symbols kept, the
+loaded bytes checked identical.
+
+Timing decided the CI settings. One uninterrupted update: 4 min on the F411 (391,974 byte
+programs), 2 min on the nRF52840. Every cut then runs MCUboot's recovery, which on the F411
+redoes the rest of a 128 KB byte-by-byte swap, about 5 minutes. The adapters' own plans (57
+and 156 cuts) would take hours on a 4-core runner. CI therefore runs `--per-phase 1
+--real-every 4`: every edge between phases is cut, one sample inside each long phase, and
+three in four cuts start from the computed state (the real ones check it byte for byte). On
+this PC with 6 emulators: nRF52840 111 cuts, all recovered, 3.5 min; F411 42 cuts, all
+recovered, 56 min. So on a runner the F411 is split over four shards (`--shard K/4`), which
+together make exactly those 42 cuts. First CI run: the shards took 8 to 19 minutes (a runner
+goes through the F411 update in about a minute, four times faster than this PC), the
+nRF52840 5 minutes.
+
+The nRF52840 demo joins the `demo` matrix: the correct build with torn states and depth 2,
+`hold_pg` with torn states, and the eight bug builds, each expected to fail.
+`nrf52-bug-retry_limit.yaml` now sets `scenario.depth: 2` like its STM32 versions, so it is
+caught without a command-line flag.
+
+## 2026-10-16: Flash storage libraries (plan item 18)
+
+**What is judged.** A store promises less than a bootloader: not "one of two images", but
+"what I said I stored is there". The `storage` driver checks exactly that. The firmware runs
+a fixed workload (80 writes and deletes over 8 keys) and says "C <step>" when each call
+returned. Values carry their key, generation and length and a pattern made from them, so a
+read tells a whole value from a half-written or mixed-up one.
+
+**Which steps had finished, at any cut.** The verdict needs the commits made before the cut,
+also for cuts that are computed or torn (never run in that emulator), so reading the UART at
+cut time is not enough. Before the campaign the driver runs the workload one step at a time
+("S" commands) and notes the flash operation count before and after each step. The workload
+is deterministic, which the golden run's self-check already relies on, so a cut before
+operation N has finished every step that ended at or before N; the step that started and had
+not ended may or may not have taken effect, and both values are accepted. The runner now
+tells a driver which update operation each result was cut at (`judging()`): the cut's
+operation, the torn state's, or for cuts in a row the first cut's.
+
+**After a cut**, three checks: the store mounts and was not formatted again; every key holds
+its last finished value or the one under way, and nothing reads back half-written or fails
+to read; and the store takes a new write (the probe key) that is still there after another
+power cycle with the other keys unchanged. The last check is what catches a store that
+mounts fine but has a damaged write position.
+
+**The workload firmware** is one Zephyr app built four ways (NVS, ZMS, settings on FCB,
+littlefs), on the nRF52840 DK, built once on a GitHub runner and committed as prebuilt like
+MCUboot. Two things had to change for Renode: the DK's external QSPI flash is disabled (Renode
+does not model the QSPI controller and Zephyr's driver waits for it at start-up for ever),
+and the oracle's `.bin` files are objcopy's output from the ELF, not Zephyr's `zephyr.bin`,
+which fills a gap between sections with 0xFF where loading the ELF leaves zeros. littlefs
+needed its cache raised to 256 bytes so the values stay inline (with 64, every file takes a
+4 KB block and 8 files do not fit 8 blocks), and a littlefs file left empty by a cut between
+its creation (committed at open) and its data (committed at close) is read as absent.
+
+**Results** (every distinct flash state cut, this PC, 6 emulators): NVS 2,158 of 2,158 (17
+min), plus 754 cuts and 2,253 torn states with the phases plan; littlefs 3,228 of 3,228 (28
+min); ZMS 130 of 2,327: every cut inside a value's data or ATE leaves the next write landing
+on the half-written words, which on the nRF52 (two writes per word, old AND new) reads back
+wrong. That is the open report zephyrproject-rtos/zephyr#121747; booting the exported op-5
+state shows the overlap word by word.
+
+**CI** runs NVS and littlefs with the adapters' phases plan, expecting no failure, and ZMS
+with `--fail-fast`, expecting exit code 1 until #121747 is fixed upstream.
+
+## 2026-10-16: Bad update content (plan item 12)
+
+A bootloader that survives every power cut can still run an image that is wrong. Content
+faults stage damaged versions of the update and let it run to the end. Judging uses only the
+oracle and the driver's `alive()`: the image named by `keep` must still be installed, and the
+CPU running inside it. The driver's own recovery check is not used, because it expects the
+update to have happened.
+
+The mutations are generic, so they need no knowledge of the image format: truncation (at a
+quarter, a half, three quarters, and four bytes short, the rest erased), one bit flipped in
+the middle of each region the adapter names, and an erased image. What needs the format
+(another signing key, an older version, the wrong slot) comes from the adapter as finished
+files (`images`). `image_size` keeps the part of the staged file after the image as it was:
+MCUboot's staged image is padded to the slot with a trailer that asks for the upgrade, and
+truncating that away would make MCUboot not try the image at all, which tests nothing.
+
+**Checked** in Renode: the demo on the F103, F411 (internal and external staging) and nRF52
+refuses all 7 and keeps v1; the `trust_header` bug build, which checks only the magic,
+accepts 6 of 7 (all but the erased one; a truncated image left installed ran into erased
+code and stored to flash, which the flash rules caught). MCUboot refuses all 8 on both boards
+(F411 and nRF52840), a bit in its TLV area included. A first version cut a damaged image staged in the external
+chip to nothing (it limited the copy to the internal flash's size), so `f411-ext` passed
+nothing; the copy now stops at the end of the flash it is staged in.
+
+In a sharded run only shard 1 makes the content faults: they are not cuts, and the other
+shards would repeat them. Not done yet: a cut while a bad image is being checked or erased.
+
+## 2026-10-16: A broken link instead of lost power (plan item 14)
+
+An update sent over a protocol can also be lost to the link: the cable comes out, the host
+crashes, a CAN bus goes quiet, while the device keeps its power. The bootloader then has a
+half-received session to deal with, not a half-written flash.
+
+The break is made in the session, not in the drivers: `uart_write` gets a byte budget, and
+once it is used up the rest of what the host sends is dropped. Both protocol drivers send
+everything through `uart_write`, so neither needed a change. The baseline counts the bytes
+the host sends; link cuts are placed at the first byte, the last, and `points` evenly between.
+After a cut the link stays down for `wait` virtual seconds, then the host runs the whole
+update again (`start_update()`), and the result is judged like a power cut's.
+
+**Checked** in Renode: OpenBLT 62786e72 (a 6,422-byte XCP session) recovered at all 10
+points: after each, a new session installed the program and it ran. The Three-Tier
+bootloader v2.0.0 (its 170-byte UPDATE_FBL frame) recovered at all 10: a partial frame
+never started the self-update, and the frame sent again installed the new FBL. A unit test
+checks that with a budget only that many bytes reach the device. Only the UART is covered:
+the Three-Tier adapter drives its update over the UART too, and a CAN link would need the
+same budget on the CAN frames.
+
+## 2026-10-16: Bit errors at rest (plan item 16)
+
+Flash cells lose charge over the years, and a bit in a stored image can flip while the device
+is off. The test takes the flash the uninterrupted update left (the golden run replayed to its
+end), flips seeded random bits in one region, powers up and samples the CPU from outside: it
+must not execute inside that region, and must not be in a fault handler. Refusing to boot
+counts as right, because running damaged code is the failure that matters.
+
+The first run used the whole of each accepted image as the region and failed the correct demo
+on 3 of 4 flips. All three were in the 0x1F0 bytes of padding between the demo's 16-byte header
+and its body at +0x200, which nothing reads and its CRC does not cover: the image there is as
+good as before. So the demo adapters name header and body. MCUboot hashes its whole header
+area, so its default regions are right.
+
+**Checked** in Renode: the demo on the F103, F411 and nRF52 refuses all 8 (4 in the header, 4 in
+the body) and stays in its bootloader; `bug-trust_header` (magic only) runs every damaged body
+(one run stored to flash from the damaged code, which the flash rules caught); MCUboot on the
+F411 and the nRF52840 refuses all 4 on each.
+
+## 2026-10-16: Worn pages (plan item 15)
+
+A page past its rated cycles may still erase but no longer program reliably. The datasheets
+say it differently per chip (on an F1 the data does not match after programming; the F4 may
+or may not flag it; on the nRF52 nothing flags it), and they agree on the part that matters:
+the program can look fine and the data is wrong. So one behaviour is modelled on all three:
+in the `flash.worn` range a program is accepted and bit 0 of each cell keeps its old value.
+No status flag is set, which is the hardest case for firmware.
+
+The models get the range as two constants (`WORN_FROM`, `WORN_TO`, none by default), like
+their geometry, so nothing changes for an adapter that does not set it. The value the model
+stores is what goes into the trace and the shadow copy, so the replay and the self-check
+follow the worn cells too.
+
+Not modelled: a cycle count after which a page wears out (`fail_after` in the plan). Counting
+erases per page across runs would need state that outlives a run, and one fixed worn range
+already answers the question the plan asks: does the bootloader notice. The demo does not:
+with its Slot A worn the copy of v2 is wrong, its CRC fails at boot, and the old image has
+already been erased, so the update fails with no power cut at all. That is what an
+overwrite updater that does not read back its writes does on such a chip.
+
+## 2026-10-16: Power cuts many times in a row (plan item 17)
+
+The exploration of cuts during recovery already went level by level, so depth 3 and beyond
+needed no new machinery: each level's new states are the parents of the next, and a flash
+state already tested is skipped. What was missing is a way to say "until nothing new turns
+up": `depth: exhaustive` (or `--depth exhaustive`) runs levels until one brings no new state,
+with `max_states` (2,000 by default) as the stop that keeps it finite. The report says how
+deep it went.
+
+**Checked** in Renode, this PC, 6 emulators: the demo at depth 3, 173 first cuts and 202 new
+states, all recovered, 2 minutes. The Three-Tier bootloader v2.0.0 at depth 3: 37 first cuts,
+10 broken links and 34 new states, all recovered, 13 minutes. The demo exhaustive stopped at
+the 2,000-state limit after 20 cuts in a row, all recovered: it never runs out of new states,
+because every interrupted install raises the rollback-floor record's sequence number, so each
+further cut leaves flash never seen before. For such a design the limit is the answer; a
+design whose recovery repeats itself exactly (the unit test's fake updater) stops at level 2.
+
+## 2026-10-16: SARIF output (plan item 22)
+
+`--sarif FILE` writes the failures as SARIF 2.1.0, so a CI run's failures appear as code
+scanning alerts next to the code. One result per failure; the rule is its kind (power cut,
+torn state, cuts in a row, bad content, broken link, bit error, or the update failing with
+no cut), so alerts group by what went wrong. The location is the adapter file, not the
+firmware the plan named: code scanning needs a file in the repository, and the firmware is a
+build output that is usually not committed, while the adapter always is. A stable
+fingerprint (adapter name and result name) lets GitHub match an alert across runs. The
+message carries the reproduce and export commands.
+
+**Checked**: the SARIF from a run of the demo's consume_first bug (15 failures) validates
+against the SARIF 2.1.0 schema from schemastore.org. Not checked yet: an upload to a
+repository's code scanning (it needs code scanning turned on there).
+
+## 2026-10-16: Soak runs (plan item 21)
+
+The planned campaign covers what a plan can: every distinct state, or the edges and samples
+of long phases. A soak spends a time budget on random tests instead, for long unattended
+runs on a machine with nothing else to do. `--soak MINUTES --seed N` draws, after the
+baseline, a random operation and either a clean cut before it (60%) or that operation left
+half done in a random torn shape (40%; a shape that does not apply there becomes a clean
+cut). Each test powers up from the computed state, which every real cut checks, so a test
+costs one boot. Draws come in batches of one per emulator and stop at the first failure,
+which keeps its usual reproduce and export commands. The same seed draws the same tests.
+
+Not in a soak yet: content faults and cuts in a row. Content faults are a fixed small set,
+better run by the plan, and a cut during recovery needs that recovery traced first, which
+is the depth exploration's job.
+
+**Checked** in Renode: `brickproof demo resume_copy --soak 10 --seed 1` (a bug only a torn
+program shows) failed at its 10th test, a torn program at op 73, after about 10 seconds. The
+correct demo with `--soak 3 --seed 1`: 1,038 tests (885 cuts, 153 torn states), no failure.
+
+## 2026-10-16: Adapters from a Zephyr build (plan item 20)
+
+Writing an MCUboot adapter by hand means copying numbers out of the board's devicetree. The
+build already has them all: `zephyr/zephyr.dts` (the devicetree after every overlay) gives the
+flash (base, size, write and erase block size), the RAM, the partitions and the console UART
+(`/chosen`), and an STM32 board's crystal (`clk_hse`); MCUboot's `zephyr/.config` gives the
+chip (`CONFIG_SOC`) and the upgrade mode (`CONFIG_BOOT_SWAP_USING_SCRATCH`, `_MOVE`, ...).
+`brickproof adapter-from-zephyr` reads those two files with a small parser of the flattened
+devicetree (nodes, labels, properties; no dtc needed) and writes the adapter, with the images
+folder relative to it.
+
+Only the MCUboot build is read: the app's devicetree carries the same partitions. What the
+devicetree does not say is the STM32F4's sector layout, so the chip table holds it for the
+parts BrickProof models. `--alive` and `--expect` name what the app prints (by default the
+test app's "APP v[0-9]" and "APP v2").
+
+**Checked**: from the Black Pill and nRF52840 DK builds (their devicetree and Kconfig are in
+tests/fixtures/zephyr), the generated adapters equal adapters/mcuboot/f411.yaml and
+nrf52840.yaml in every field a run uses (chip, flash layout, RAM, UART, crystal, firmware,
+driver options, oracle). The generated nRF52840 adapter, run with the CI settings: 111 of 111.
+
+## 2026-10-16: Settings on FCB, written up
+
+The settings-on-FCB results were kept out of the repository until they were reported. Every
+distinct flash state cut (2,314): 2,305 recover. 7 are a cut inside an entry's data whose
+CRC-8 over what reached flash is 0xFF, the erased value of the marker slot, so FCB accepts
+the unfinished entry (each checked byte by byte on the state BrickProof replays to that
+cut); reported as zephyrproject-rtos/zephyr#122446. 2 are a cut inside a new sector's header
+after its magic word: the sector is accepted with the erased id 0xFFFF, which makes it the
+oldest, and `settings_fcb_src()` then erases the active sector; added to #121749. CI now
+runs settings on FCB expecting it to be caught, like ZMS.
+
+## 2026-10-16: Testing the chip rules one by one, and the F1's option byte check (plan item 6)
+
+The flash models' rules were only ever checked through whole firmware runs (a bug build is
+caught or it is not). The plan's chip-detail items ask for a test per rule, so `tests/renode`
+now boots the demo's chip in Renode and checks a rule directly: load a flash image, reset,
+then read the controller's registers off the bus, no test firmware needed for register rules.
+They are skipped where Renode is not installed and run in CI as `model-rules`. Each new rule
+gets a test that fails without the change (checked by running the tests on the old model).
+
+**F1 option bytes.** RM0008 (FLASH_OBR): at reset each option byte is checked against its
+complement, and where they do not match OPTERR is set and the byte and its complement read as
+0xFF. The model loaded the bytes as they were. Now it checks each pair. What that changes:
+OBR's OPTERR bit, and a byte with a bad complement loads as 0xFF. For RDP that is "protected"
+(any value but 0xA5 is), for a WRP byte "not protected"; erased option bytes (0xFF/0xFF) give
+OPTERR and read protection, as before minus the flag. Data0 and Data1 were already in OBR;
+the tests now cover them. Tests: good bytes (no OPTERR, Data0/Data1 in place), a bad WRP0 and
+a bad Data0 complement, a bad RDP complement, all erased. Three of the four fail on the old
+model. The USER bits nRST_STOP and nRST_STDBY come with the low-power modes (item 4).
+
+## 2026-10-16: STM32F4 details: PGAERR, PCROP, RDP level 2 (plan item 5)
+
+From RM0383. **PGAERR**: the data of one program must fit in one 128-bit (16-byte) flash row;
+a store across a row boundary is not written and sets PGAERR. The model checks it after the
+width (PGPERR) and before write protection, and counts it with the refused programs, so the
+run fails the way a PGPERR does.
+
+**PCROP**: with SPRMOD set the nWRP bits change meaning: a set bit makes the sector
+proprietary code, which the CPU can execute but not read as data, erase or program. Erase and
+program refusals go through write protection as before, with the bit's meaning flipped. A
+data read is the hard part: on the chip it gets RDERR and no data, but a Renode memory hook
+cannot change the value a read returns. So the model finds the read and fails the run
+("proprietary code read as data", new test registers 0x150 and 0x154), the way it reports a
+store the chip ignores. Finding reads means hearing every memory access, which is slow, so it
+is on only while SPRMOD is set; nothing changes for other adapters. Two Renode details shaped
+it: a reset runs the model's init again and drops its handle on the bus, so the read watcher
+is made in the reset handler with its own (a hook using the model's handle crashed Renode on
+the first read after a reset); and RDERR lives in the model's state memory, read into SR, for
+the same reason.
+
+**RDP level 2** (0xCC) is for good: an OPTSTRT changes nothing. `flash.read_protected: 2`
+builds such option bytes.
+
+**Checked** in Renode (tests/renode/test_f4_rules.py), with the CPU itself making each store
+and read from a few instructions in RAM: a word inside one row is programmed; a word across a
+row is refused with PGAERR; a data read of a PCROP sector is counted, with RDERR, and running
+code there is not; a PCROP sector cannot be erased; without SPRMOD a set nWRP bit is plain
+writable flash; level 2 option bytes do not change. Four of the six fail on the old model. The
+F411 demo builds (correct, external flash, hold_pg and the bug builds) behave as before.
+
+## 2026-10-16: The SPI NOR chip's own protection (plan item 8)
+
+Following the W25Q16JV datasheet's status register protection table. **/WP**: the chip's
+GPIO 1, active low, reads high unless `external_flash.wp` wires an MCU pin to it; with SRP set
+and /WP low, status writes are refused. **SRL**: with SRP clear it locks the status
+registers until the next power cycle, with SRP set for good. **Volatile writes**: after 50h
+the next status write changes what is in force but not what is stored, and a power cycle goes
+back to the stored value; the engine saves the stored value with the chip's contents, which
+is what survives a power cut. **Individual block locks**: with WPS (status register 3) set,
+BP/TB/SEC/CMP no longer count and each 64 KB block (each 4 KB sector in the bottom and top
+blocks) has a lock bit, all set at power-up, changed by 36h/39h and 7Eh/98h, read by 3Dh.
+
+Status register 3 is non-volatile, so the chip's saved state grew from two status bytes to
+three (`EXT_STATUS_BYTES`); an image saved by an older version is one byte shorter. The
+device's power cycle now power-cycles the chip as well (`PowerCycle`), because a reset of
+the MCU alone does not reset the chip's volatile state, and a power loss does.
+
+**Not modelled: suspend and resume** (75h/7Ah) beyond being accepted. The model finishes an
+erase at once and skips its time; firmware never sees the chip busy, so there is never an
+erase to suspend, and the chip ignores 75h when it is not busy. Modelling a suspended erase
+needs erases that take time the firmware can see, which is a change to how every external
+operation is timed; it stays a known gap until a target uses suspend.
+
+Status writes are not counted operations (a power cut does not fall on them). They are rare
+in an update, and making them operations would change the trace format.
+
+**Checked** in Renode (tests/renode/test_spinor_rules.py, commands straight to the chip
+through the monitor): SRP with /WP low refuses a status write and /WP high allows it; SRL
+locks until a power cycle; a volatile write is in force but not stored and is gone after a
+power cycle; with WPS every block is locked at power-up, unlock lets a program through, lock
+and read-lock agree; global unlock and lock; without WPS the lock bits do not matter. The
+f411-ext demo: 90/90 cuts and 268/268 torn states, its consume_first bug still caught.
+
+## 2026-10-16: FCB is covered through settings
+
+The plan lists FCB and settings as separate adapters. FCB is a log, not a key-value store, so
+running the storage workload on it directly would need a compaction layer written for the
+purpose, which is what Zephyr's settings FCB backend already is. The settings-on-FCB adapter
+exercises FCB's append, CRC, sector rotation and init under every cut, and found both FCB
+problems (zephyrproject-rtos/zephyr#122446 and the addition to #121749). A second adapter with
+our own compaction would mostly test that compaction, so there is none.
+
+## 2026-10-16: An I2C EEPROM (plan item 10)
+
+A C# model (`BpI2cEeprom.cs`, an `II2CPeripheral`) for the 24-series, attached to the
+platform's own I2C controller, so firmware drives it through the real controller model. It
+shares the flash model's operation count, cut point and trace switch, as the SPI NOR model
+does, so one numbering covers every memory.
+
+**A write is not a program.** A 24-series EEPROM erases the bytes it was given and writes
+them in one internal cycle, all bytes of the page at once. So a write can set bits as well
+as clear them, and a cut inside one leaves the page part way through the erase (old 0 bits
+partly back to 1), erased (0xFF), or part way through the write (from 0xFF, part of the new
+value's 0 bits cleared). The flash torn shapes all assume old AND new and would never give
+the case that matters: an old record coming back as 0xFF, or half new under a magic the
+write had not reached yet. The EEPROM has three shapes of its own, `page-erasing`,
+`page-erased` and `page-writing`, chosen by address (`trace.in_eeprom`). They are models,
+like most flash shapes; nothing was measured on a real EEPROM.
+
+A first version mixed whole bytes (each byte old, 0xFF or new). The chip does not write
+byte by byte, and with that model the demo bug below was caught only by luck, so it went.
+
+**Where it sits.** It comes last in the flash image, after the external flash and its status
+bytes, so images saved before it existed keep their layout. Its unit in `locate` is the
+page, which is what a write can touch.
+
+**Timing.** The write cycle (5 ms, the 24LC256's maximum, which the datasheet also gives as
+the only figure) is spent, but the model never NAKs its address while busy. That is the same
+choice as the SPI NOR model, which never reports busy. Firmware that polls correctly sees
+one poll succeed. Firmware that forgets to poll would work in the emulator and fail on a real
+chip, which is a known gap.
+
+**Renode's I2C controller** (STM32F1_I2C, also used for the F4) does not end the transfer
+before a repeated start, so a random read reaches the model as a word address with no stop
+and then a read. The model takes a pending word address at the start of a read.
+tests/renode/test_eeprom_rules.py checks this; it fails without the fix.
+
+**The demo.** `EEPROM_FLOOR` keeps the F411 demo's rollback floor in a 24C256 on I2C1, a
+record per 64-byte page, through a bare-metal polling I2C driver. The device ships as one
+that has been updated before (both records written), so the next record goes over an old
+one. The correct build clears the old magic, writes seq and floor, then the magic: three
+writes, each harmless to cut. `BUG_EE_NO_INVALIDATE` skips the first. Between two writes
+the page holds the old record or the new seq and floor under the old magic, which is still
+right, so every clean cut passes. A torn record write leaves seq and floor at anything
+under a valid magic, and the newest-looking record names a floor no image meets.
+
+Not modelled: the write-protect pin, the chip select address pins beyond the bus address,
+and the 24C04 to 24C16 kind that puts address bits in the bus address.
+
+## 2026-10-16: The nRF52's UICR, partial erase and ACL (plan item 7)
+
+From the nRF52840 Product Specification (NVMC, UICR, ACL chapters) and the register fields
+in Nordic's MDK (nrf52840_bitfields.h, nrfx v3.0.0), which settles what the specification
+pages leave unclear: ACL PERM's WRITE is bit 1 and READ bit 2, ERASEPAGEPARTIALCFG's
+DURATION is 7 bits of milliseconds (10 after reset).
+
+**UICR.** It is flash, with the code area's rules, and the engine already had a place for
+memory like it: the STM32 option bytes. So the nRF52's option bytes are now its UICR,
+0x400 bytes at 0x10001000 (the last register, REGOUT0, is at 0x304), after the code area
+in an image. Images saved for the nRF52 before this are 0x400 bytes shorter. ERASEALL
+erases the UICR too, which an STM32 mass erase does not do to its option bytes, so the
+geometry says which (`mass_erase_ob`) and the replay and `value_before` follow it.
+`read_protected: true` writes APPROTECT as Enabled (0x00); what APPROTECT does to a debugger
+is not modelled, since the engine is not a debugger. Partial erase does not apply to the
+UICR (the specification says so), and the model ignores it there.
+
+**Partial erase.** The specification: a page is erased once the partial erase time spent on
+it reaches tERASEPAGE, and its bits are undefined until then. Undefined is not something a
+replay can reproduce, so the model makes it definite: each 0 bit of the page needs its own
+share of tERASEPAGE (an integer hash of its position, spread evenly), and reads 1 once the
+time spent passes it. The same function is in the model and in `trace.py`, and a Renode
+test checks that the model's page equals the replay's after 1, 4 and 8 steps. The page so
+far is old data with bits flipped to 1, never anything a program could not have reached;
+firmware reading it as data before the erase is done sees a mix, as it would on the chip.
+Each step is an operation (traced as `Q`, kind `partial_erase`, with the time so far), so
+a cut can fall between any two. The time spent is kept per page in model memory, not in the
+image: after a power cut a page starts from zero again, so firmware that starts its erase
+over erases for longer than it needs, which is the safe side of not knowing. A completed
+partial erase counts as one erase cycle for wear. Torn states are not made for a partial
+step: it is already a part of an erase.
+
+**ACL.** Eight regions, each register written once until a reset, enforced once its address
+is on a page boundary and its size a whole number of pages. On the chip a blocked access is
+a bus fault. Here a blocked write or erase is refused and fails the run as write protection
+(the STM32 models' registers and message), and a blocked read is counted and fails it as a
+protected read (the PCROP registers). The specification does not say whether ERASEPAGE and
+ERASEALL are blocked in a region; the model blocks them, on the side of reporting.
+
+**A Renode quirk for the rule tests:** a single `b .` stops Renode from taking a new PC from
+the monitor, so test snippets end in `nop` and a branch back to it.
+
+## 2026-10-16: 4-byte addresses; no quad mode (plan item 9)
+
+**4-byte addresses** follow the W25Q256JV datasheet, for chips over 16 MB: B7h and E9h
+enter and leave 4-byte mode, ADS (status register 3, bit 0) reports it, ADP (bit 1, stored)
+sets it at power-up; 13h, 0Ch, 12h, 21h, 5Ch and DCh take four address bytes in either
+mode; in 3-byte mode the extended address register (C5h with a write enable, C8h to read,
+volatile) is the top byte. That chip has no SEC bit and four BP bits, so its block
+protection table is its own: BP = n protects 64 KB << (n - 1) from the top, or with TB from
+the bottom, until it covers everything. A chip of 16 MB or less ignores all of these
+commands, as a W25Q128 does, so firmware that sends them to the wrong chip sees them do
+nothing. `external_flash.size` goes to 64 MB (a W25Q512).
+
+The plan said this needs sparse flash images. It does not, up to 64 MB: an image is held
+whole, and a 64 MB chip makes each saved state 64 MB bigger, which costs memory and time
+but works. Sparse images would make a campaign on a big chip cheaper, not possible; they
+wait until someone needs one.
+
+**Quad and dual modes are not modelled.** Renode's SPI controllers on these chips (STM32
+SPI, nRF52 SPIM) move one bit per clock. Firmware cannot send a quad command through one,
+so a quad read in the model could never be reached. The controllers that can (an STM32
+QUADSPI, the nRF52840 QSPI) are where the work would be: the F411 has no QUADSPI, and
+Zephyr's nRF QSPI driver hangs in Renode (found with the storage adapters). This stays
+out until a target with a working quad controller needs it.
+
+**Checked** in Renode (tests/renode/test_spinor_4byte_rules.py, the f411-ext chip made
+32 MB through the fixture's new ADJUST hook): the 4-byte commands above 16 MB, 4-byte mode
+for the 3-byte commands, the extended address register and its loss at power cycle, ADP at
+power-up, the BP3-BP0 table at the top, the bottom and all of it. On the 1 MB chip, B7h and
+13h do nothing.
+
+## 2026-10-16: The STM32L4, and ECC (plan item 11)
+
+Renode has no STM32L4 platform, so `platforms/stm32l476.repl` is written out here, as the
+nRF52840's is: the core, flash (also at 0), SRAM1 and SRAM2, USART1-3 (Renode's STM32F7_USART
+has the L4's register layout), GPIO A-C, the IWDG, and two models of ours, the flash
+controller (`stm32l4_flash.py`) and an RCC (`stm32l4_rcc.py`: MSI at 4 MHz from reset, HSI16,
+HSE, the PLL, and the frequencies handed to the timers, USARTs and SysTick). The register
+layout and bit positions come from ST's CMSIS header for the L476 (cmsis_device_l4). The
+flash is the one the L4, G0, G4, WB and WL share, so the model covers that whole family.
+
+**The rules.** A program writes a 64-bit double word as two word stores, the first at the
+8-byte boundary; the operation is the second store. SIZERR for a store that is not 32 bits,
+PGAERR for a first word off the boundary or a second word anywhere else, PROGERR for a
+double word that is not erased unless the new value is all zeros, PGSERR for any program
+while an earlier error flag is still set. The last one is a common firmware mistake (not
+clearing SR after a failed program makes every later one fail) that plain memory never
+shows. Page erase (PER, PNB, BKER for bank 2), bank erase (MER1, MER2), option bytes at
+0x1FFF7800 as five words with their complements, written by OPTSTRT as an erase and five
+programs, loaded at reset (a mismatch loads as all ones and sets OPTVERR, as on the F1),
+RDP 1 to 0 erasing both banks first, level 2 for good, IWDG_SW cleared starting the watchdog.
+
+**ECC.** Every double word carries 8 check bits written with it. A program or erase that
+finishes leaves them right; one cut short leaves them wrong, and on the chip a read of that
+double word sets ECCD in ECCR (with the address) and raises an NMI. This is where L4 and G0
+bootloaders brick after a power loss: an erase cut short leaves a page that reads as noise
+and faults on every read, and a bootloader that never expected an NMI from a flash read
+hangs in its default handler. The engine keeps an ECC map, one byte per double word, as
+the last part of every flash image, so it is saved, restored, replayed and compared like the
+flash. Replaying a finished operation marks what it wrote sound. A torn state marks broken
+the double words its operation touched; for a torn erase only those that were not blank,
+since a blank double word had nothing to erase. Correctable single-bit errors (ECCC) are not
+modelled: broken is always ECCD. The model checks data reads (not instruction fetches)
+only while the map has a broken double word, since
+watching costs time. The NMI is raised through the core's own ICSR.NMIPENDSET, which Renode
+was checked to honour.
+
+Reading the 128 KB map back costs about 13 s, so the engine reads it only when the model
+counts a broken double word, and otherwise knows it is all zeros.
+
+**Times** from the STM32L4 datasheets' flash table (the L412 and L475 give the same, the
+L476's own table not found to compare): 81.69 us per double word (90.76 at most), 22.02 ms
+per page (24.47), 22.13 ms per bank (24.59).
+
+**Not modelled:** bank 2's write-protected areas and PCROP (the adapter refuses them), fast
+programming (FSTPG), the data and instruction caches, dual-bank swap (BFB2).
+
+**The demo** runs on it: `common/chip_l476.h`, 2 KB pages, Slot A and B in bank 1. Its
+bootloader handles the NMI (clears ECCD, notes it) and treats whatever it was reading as
+invalid: an image whose header or body faulted, a floor record that faulted. The floor record
+is two double words, the magic last. `BUG_NO_ECC_NMI` leaves the NMI to the default handler.
+Results: the correct build 194/194 (every clean cut, every torn state); the bug build passes
+every clean cut and fails its first torn state, a cut inside the floor record's program; the
+other bug builds as on the F411. tests/renode/test_l4_rules.py checks the program errors,
+page erase in both banks, and an ECC error's ECCD, address and clearing.
+
+## 2026-10-16: m33mu, from wolfBoot's maintainer (PR #35)
+
+Daniele Lacamera (wolfBoot) contributed a second emulator backend: m33mu, his Cortex-M33
+emulator, driven over its GDB server's monitor commands (`engine/m33mu.py`), with the STM32H563
+as its first chip, the demo ported to it, and a wolfBoot adapter for the H563 with TrustZone.
+It is the one way here to reach Armv8-M chips, which Renode does not have. His seven commits
+were brought onto this branch as he wrote them (his authorship kept), with conflicts resolved
+against everything that landed after his base, and then fitted in:
+
+- **Taken whole:** the backend, the H563 demo and its bug builds, the wolfBoot H563 adapter,
+  his tests, the `demo-m33mu` CI lane, and the Action building m33mu from a pinned commit
+  when an adapter needs it.
+- **Left out: m33mu in the Docker image.** m33mu is AGPL-3.0 and BrickProof is Apache-2.0.
+  Calling it as a separate program is fine either way; shipping its binary inside our image
+  would make the image carry AGPL terms, and every image build would compile it. The image
+  stays Renode only, and the README says how to get m33mu for the H563.
+- **Fitted to what came after his base:** the H563 path now parses content faults, link cuts
+  and bit errors like every other adapter (his `h563.yaml` gets the same checks as the other
+  demos), `M33muSession.uart_write` honours the link budget as `RenodeSession` does, and the
+  Renode-only keys added since (`external_eeprom`, `flash.worn`, `flash.uicr`) are refused on
+  an m33mu chip instead of being ignored. The demo's UART goes by `UART_*` names, his scheme,
+  which the L476 uses too.
+
+**Known gap:** on m33mu the option bytes are kept by name, outside the flash image, so a cut
+while firmware changes them is not modelled and torn states do not cover them. The Renode
+chips do cover theirs. Closing it needs m33mu to save and load its option bytes with the
+flash, which is m33mu's side.
+
+m33mu does not build on this machine (no Linux toolchain), so the H563 lane is checked on
+GitHub's runners only.
+
+## 2026-10-16: Low-power modes (plan item 4)
+
+Renode takes every WFI as a light sleep: any interrupt ends it, and RAM is intact. On the
+chip, WFI with SLEEPDEEP is Stop or Standby, and Standby loses RAM and ends in a reset. Both
+ways the plain emulator is wrong for an update: firmware that pauses in Standby either sleeps
+for ever (nothing wakes it: a false failure) or wakes with RAM it should have lost (a false
+pass).
+
+**STM32F1 and F4** (RM0008 and RM0383, PWR): a Python model at 0x40007000 (`stm32_pwr.py`,
+the same address on both) with CR (LPDS, PDDS, CWUF, CSBF) and CSR (WUF, SBF, EWUP). It sees
+the core enter WFI through Renode's WFI hook. SLEEPDEEP and PDDS: Standby, RAM zeroed, the
+core stopped, and a wake WAKE_AFTER_US later through a reset with SBF and WUF set. SLEEPDEEP
+alone: Stop, the SysTick held until the core leaves WFI (other timers keep counting in the
+emulator, which they do not on the chip: a known gap). nRST_STDBY / nRST_STOP cleared in the
+USER option byte (F1 bits 2 and 1, F4 bits 7 and 6): entering the mode resets at once, RAM
+kept. SBF, WUF and PWR's CR live in the state memory, because the reset that ends Standby
+reruns the model's script; CR is cleared by every reset and SBF by a power cycle, as a
+power-on reset does, which also cancels a wake still to come. The hook is set up the first
+time firmware touches PWR, which entering Standby or Stop always does.
+
+**The wake** cannot come from what started it on the board (an RTC alarm, the WKUP pin, a
+button), none of which a power-fail test drives, so the adapter says when:
+`low_power.wake_after`, 0.5 s unless given.
+
+**nRF52** (Product Specification, POWER): SYSTEMOFF powers the chip off, RAM is lost (RAM
+retention not modelled), and a wake comes back through a reset. Renode's NRF_CLOCK owns that
+register block, so this is a bus watchpoint on SYSTEMOFF (`nrf52_power.py`, included once
+when the machine is made). RESETREAS is not modelled.
+
+**Checked:** tests/renode/test_pwr_rules.py (Standby loses RAM and wakes with SBF set,
+nRST_STDBY cleared turns it into a reset with RAM kept, a power cycle clears SBF) and the
+nRF52 rule test for System OFF. The demo pauses an install once in Standby right after Slot A
+is erased (`STANDBY_PAUSE`, F1 and F411) and asks SBF whether it already has; every cut and
+torn state recovers. `BUG_STANDBY_RAM` keeps that in a RAM variable start-up leaves alone, so
+every wake pauses again: it fails at the baseline. The same bug build without the PWR model
+also fails, but because nothing ever wakes the core, and so would the correct build: the
+model is what lets the correct one pass.
+
+## 2026-10-16: Reset during an erase is covered by the torn states (plan item 3)
+
+The plan: when a watchdog or the firmware resets the chip during an erase, apply the measured
+torn shape if the reset falls in its first 50 us, else finish the erase. Both halves are
+already what happens. The measured shapes (`erase-early`, 4.5% of old 0 bits still 0, and
+`erase-late`, 0.35%) were measured with exactly that, a reset at a counted cycle (the torn
+kit, 2026-10-14), and every `--torn` campaign applies them at every erase. From 50 us on the
+measurement found the page fully erased, which is what the models do when a reset comes
+after the erase. So the flash a mid-erase reset leaves is already among the states tested.
+
+What a reset adds over a power cut is that RAM survives it. That only matters to firmware
+that keeps state in RAM across a reset (a `.noinit` variable), which the Standby work above
+now covers where it matters most. The plan's acceptance case, a demo bug that resets in the
+middle of an erase, is `f411-bug-watchdog` (a one-second sector erase under a half-second
+hardware watchdog), caught in CI since 2026-10-11.
+
+A separate path would only be needed if a real power loss turns out to tear an erase
+differently from a reset: that is the power-cut rig's question (item 27), not this one's.
+
+## 2026-10-16: SD cards, evaluated and left out (rest of plan item 10)
+
+The common bootloader case is reading: the update is a file on the card, written to flash.
+Reads change nothing a cut can tear, and every flash operation of such an update is counted
+as usual, so that case needs no model of ours. Renode has an SD card model of its own
+(`SD.SDCard`); adding it through `platform.extra` should cover it, but that is not tried
+here yet.
+
+Cuts during SD writes are a different matter. A card's controller remaps sectors behind its
+own flash translation layer, and what a power loss leaves behind there (the sector written,
+its neighbours, the mapping) is not documented by any card maker and differs between cards.
+Torn shapes for it would be invented, not measured, which this project does not do for its
+other memories. SD writes stay out until there is a measured basis, for instance from the
+power-cut rig on a few cards.
