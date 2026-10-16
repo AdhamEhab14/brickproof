@@ -28,6 +28,11 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**A broken link.** `scenario.link_cuts` breaks the host's UART link at points spread
+over the bytes of its session (the device keeps its power), waits, and lets the host run
+the update again; the usual verdict follows. OpenBLT (a full XCP session) and the
+Three-Tier bootloader (its UPDATE_FBL frame) recover at all 10 points each.
+
 **Bad update content.** `scenario.content_faults` stages damaged versions of the update
 (truncated, a bit flipped in each named region, erased, or images made elsewhere) and the
 bootloader must refuse each one and keep the image named by `keep` running, judged by the

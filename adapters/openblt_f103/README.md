@@ -73,3 +73,10 @@ checksum is last and nothing is written twice.
 
 Reported to Feaser on 2026-10-13 (the GitHub repository is a read-only mirror and takes no
 issues).
+
+## A broken link
+
+The adapter also breaks the UART link at 10 points of the programming session
+(`scenario.link_cuts`): the device keeps its power, only the first N bytes of the session
+reach it, and after 2 s the host starts a new session. On `62786e72` (a 6,422-byte session)
+all 10 recovered: each new session installed the program and it ran.

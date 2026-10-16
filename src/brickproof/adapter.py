@@ -64,6 +64,7 @@ class Adapter:
     depth: dict = None            # explore cuts during recovery (see runner.explore)
     shard: tuple = None           # (k, n): run only every nth cut, starting with the kth
     content_faults: dict = None   # damaged images the bootloader must refuse (see content.py)
+    link_cuts: dict = None        # break the host's link mid-session (see runner.run_link)
     hse: int = 8000000            # the board's crystal or external clock, in Hz
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
@@ -347,6 +348,24 @@ def _parse_content(scenario, target, oracle):
     return out
 
 
+def _parse_link(scenario):
+    """scenario.link_cuts: true, or {points, wait}. None if off."""
+    c = scenario.get("link_cuts")
+    if not c:
+        return None
+    out = {"points": 8, "wait": 2.0}
+    if c is not True:
+        if not isinstance(c, dict) or set(c) - set(out):
+            raise AdapterError("scenario.link_cuts: true, or a mapping with points and wait")
+        out.update(c)
+    if not isinstance(out["points"], int) or out["points"] < 1:
+        raise AdapterError("scenario.link_cuts.points: how many places to break the link, 1 or more")
+    if not isinstance(out["wait"], (int, float)) or out["wait"] < 0:
+        raise AdapterError("scenario.link_cuts.wait: seconds the link stays down")
+    out["wait"] = float(out["wait"])
+    return out
+
+
 def _parse_oracle(d, target):
     """The `oracle:` section, with image paths made absolute. None if there is none."""
     o = d.get("oracle")
@@ -483,6 +502,7 @@ def load(path, target=None):
         check_states=bool(scenario.get("check_states", True)),
         oracle=oracle,
         content_faults=_parse_content(scenario, target, oracle),
+        link_cuts=_parse_link(scenario),
         plan=_parse_plan(scenario),
         torn=_parse_torn(scenario),
         torn_seed=int(scenario.get("torn_seed", 0)),

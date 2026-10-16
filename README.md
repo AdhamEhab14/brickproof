@@ -121,6 +121,11 @@ bit flipped in each region the adapter names, such as header, body and signature
 images made elsewhere: another key, an older version) and the bootloader must refuse each
 one and keep the old image running, as the oracle sees it from outside.
 
+**A broken link** (`scenario.link_cuts`). For updates sent over a protocol, the link breaks
+part-way through the host's session while the device keeps its power: only the first N
+bytes arrive. After a pause the host starts again, and the device must take the new
+session and end up running.
+
 **Flash storage libraries.** The built-in `storage` driver tests a key-value store or a file
 system instead of a bootloader: every value a finished write left must be there after a cut,
 nothing half-written may come back, and the store must still take and keep a new write

@@ -42,6 +42,7 @@ class CutResult:
     depth: int = 1              # 2 = a second cut, during the recovery from a first one
     computed: bool = False      # powered up from the computed flash state, not cut in the emulator
     content: str = None         # a content fault: which damaged image was staged (see content.py)
+    link: int = None            # a broken link: how many bytes of the host's session got through
     message: str = ""
     seconds: float = 0.0
 
@@ -61,6 +62,7 @@ class Golden:
         self.pre = pre
         self.check = adapter.check_states
         self.ops = []
+        self.link_bytes = 0         # bytes the host sends during the uninterrupted update
         self._local = threading.local()
 
     def record(self, ops):
@@ -198,7 +200,9 @@ def run_cut(session, driver, adapter, cut, golden):
         base = session.flash_ops()
         if cut is None:
             session.trace_start()
+            sent = getattr(session, "uart_sent", 0)
             driver.start_update()
+            golden.link_bytes = getattr(session, "uart_sent", 0) - sent
             session.run_for(adapter.update_time)
             golden.record(session.trace_stop())
             res.op_index = len(golden.ops)                 # here: how many operations it has
@@ -326,6 +330,56 @@ def run_content(session, driver, adapter, name, image, judge):
         return res
     finally:
         res.seconds = round(time.time() - t0, 1)
+
+
+def link_points(total, n):
+    """n byte counts spread over a session of `total` bytes, the first and last byte
+    included: where to break the link."""
+    if total <= 1:
+        return []
+    picks = {1, total - 1} | {round(total * k / (n + 1)) for k in range(1, n + 1)}
+    return sorted(p for p in picks if 0 < p < total)
+
+
+def run_link(session, driver, adapter, n, golden):
+    """The link breaks after the host has sent n bytes of the update; the device keeps its
+    power. After `wait` seconds the cable is back, the host runs the whole update again,
+    and the usual verdict follows: the device must be alive, the oracle content, and the
+    driver's own check (for a protocol driver, one more full session) must pass."""
+    res = CutResult(cut="link %d" % n, fired=True, kind="link", link=n)
+    t0 = time.time()
+    try:
+        session.restore_flash(golden.pre)
+        session.power_cycle(settle=adapter.boot_settle)
+        session.link_budget = n
+        try:
+            driver.start_update()           # the host's session; it fails when the link goes
+        except Exception:                   # noqa: BLE001 - a host tool giving up is expected here
+            pass
+        session.run_for(adapter.link_cuts["wait"])
+        session.link_budget = None          # the cable is back
+        res.message = _fault_message(session) or ""
+        if res.message:
+            return res
+        driver.start_update()               # the host tries again from the start
+        session.run_for(adapter.update_time)
+        _verdict(session, driver, adapter, res, golden.oracle, None)
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        session.link_budget = None
+        res.seconds = round(time.time() - t0, 1)
+
+
+def link_cuts(pool, adapter, golden, out, on_result=None, fail_fast=False):
+    """Break the host's link at points spread over the bytes it sends."""
+    points = link_points(golden.link_bytes, adapter.link_cuts["points"])
+    results = pool.run(lambda s, d, n: run_link(s, d, adapter, n, golden), points,
+                       on_result, _failed if fail_fast else None)
+    out.results += results
 
 
 def content_faults(pool, adapter, driver, golden, out, on_result=None, fail_fast=False):
@@ -611,6 +665,10 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
     shard = getattr(adapter, "shard", None)
     if getattr(adapter, "content_faults", None) and golden.oracle and (not shard or shard[0] == 1):
         content_faults(pool, adapter, driver, golden, out, on_result, fail_fast)
+        if fail_fast and any(_failed(r) for r in out.results):
+            return out
+    if getattr(adapter, "link_cuts", None) and (not shard or shard[0] == 1):
+        link_cuts(pool, adapter, golden, out, on_result, fail_fast)
     return out
 
 

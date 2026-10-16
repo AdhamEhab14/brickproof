@@ -198,6 +198,16 @@ what it stages (`staged()`, which `staged_slot` has), and the adapter needs an o
 | `regions` | `{name: [start, end]}` offsets in the image to flip a bit in, for example header, body and the signature area. Default: the whole image as one region |
 | `images` | `{name: file}`: bad images made elsewhere (signed with another key, older, built for another slot), staged as they are |
 
+## A broken link
+
+`scenario.link_cuts: {points: 8, wait: 2}` (or `true` for those values) is for drivers that
+send the update over the UART. The uninterrupted update counts the bytes the host sends.
+Then, for each of `points` byte counts spread over that session plus the first and the last
+byte, a run lets only that many bytes reach the device and drops the rest, as when the cable
+comes out; the driver's session fails as it would. After `wait` virtual seconds the link is
+back, the driver's `start_update()` runs again (the host tries from the start), and the
+usual verdict follows: alive, the oracle, and the driver's `check_recovered()`.
+
 ## The oracle
 
 Without an `oracle` section the verdict rests on what the firmware says about itself, and

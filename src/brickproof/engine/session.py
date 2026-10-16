@@ -209,6 +209,8 @@ class RenodeSession:
         self.log = log
         self.virtual_time = 0.0
         self.rx = bytearray()
+        self.uart_sent = 0              # bytes the host has sent to the device, ever
+        self.link_budget = None         # bytes the link still carries before it breaks; None: no limit
         self._slowest = SLOWEST_START   # wall seconds per emulated second, the worst seen
         self._start()
 
@@ -419,7 +421,15 @@ class RenodeSession:
 
     def uart_write(self, data, baud=115200, port=None):
         """Inject bytes one at a time at wire speed. An STM32 USART holds a single
-        received byte, so a burst would overrun it, as on hardware."""
+        received byte, so a burst would overrun it, as on hardware.
+
+        With a link budget set (a broken link, see runner.run_link), only that many more
+        bytes reach the device; the rest are lost, as when the cable comes out."""
+        self.uart_sent += len(data)
+        if self.link_budget is not None:
+            data, self.link_budget = data[:self.link_budget], max(0, self.link_budget - len(data))
+            if not data:
+                return
         port = port or self.uart_name
         per_byte = max(10.0 / baud, 0.0001)             # never finer than one 100 us quantum
         lines = []

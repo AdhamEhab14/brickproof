@@ -15,6 +15,8 @@ def group(cut):
         return "baseline"
     if cut.get("content"):
         return "content"
+    if cut.get("link") is not None:
+        return "link"
     if cut["torn"]:
         return "torn"
     if cut["depth"] > 1:
@@ -27,6 +29,7 @@ GROUP_TITLES = {
     "cut": "Clean cuts: power lost between two flash operations",
     "torn": "Torn states: power lost inside an erase or a program",
     "content": "Bad update content: a damaged image the bootloader must refuse",
+    "link": "A broken link: the host's session cut off, then tried again",
 }
 
 
