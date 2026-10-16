@@ -28,6 +28,12 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**STM32F1 option bytes checked as the chip checks them.** At reset each option byte is
+compared with its complement; where they do not match, FLASH_OBR's OPTERR is set and the
+byte loads as 0xFF (so a damaged RDP byte means read protection, a damaged WRP byte none).
+The flash models' chip rules now have tests that run in Renode (`tests/renode`, skipped
+without Renode) and a CI job, `model-rules`.
+
 **Adapters from a Zephyr build.** `brickproof adapter-from-zephyr <MCUboot build folder>
 --images <folder>` writes an MCUboot adapter from the build's devicetree and Kconfig. For the
 Black Pill and the nRF52840 DK it gives the same adapter as the hand-written ones, and the

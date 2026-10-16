@@ -5,6 +5,7 @@
 #         not 0 or 3).
 # action, docker, package - the three ways BrickProof is handed to someone else, each
 #         built and used for real.
+# model-rules - the flash models' chip rules, checked one by one in Renode.
 # mcuboot - MCUboot from its prebuilt files on the Black Pill and the nRF52840 DK.
 # storage - Zephyr's flash stores (NVS, littlefs, ZMS) under the storage workload.
 # e2e   - builds the Three-Tier bootloader (the first real target), then cuts power
@@ -212,6 +213,41 @@ jobs:
         with:
           name: demo-${{ matrix.adapter }}
           path: brickproof-out/
+
+  # the flash models' chip rules, one register or one store at a time, in Renode
+  model-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz \
+            | tar xz -C ~/renode --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: The chip rules
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          python -m pytest -v tests/renode
 
   # MCUboot from its committed prebuilt files, on both boards. A full campaign takes over an
   # hour per board on a runner (392,000 byte programs on the F411), so CI cuts every edge

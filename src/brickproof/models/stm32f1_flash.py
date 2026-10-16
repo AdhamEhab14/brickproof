@@ -167,11 +167,21 @@ def fill_ff(addr, size):
 def load_option_bytes():
     # what the chip does at reset: WRPR and OBR are loaded from the option bytes.
     # Returns (wrpr, read protected, obr). A set bit in WRPR means "not protected".
-    # OBR shows RDPRT in bit 1, then the USER byte, Data0 and Data1.
+    # OBR shows OPTERR in bit 0, RDPRT in bit 1, then the USER byte, Data0 and Data1.
+    # Each option byte is stored with its complement. Where the two do not match, the
+    # chip sets OPTERR and loads that byte as 0xFF (RM0008, FLASH_OBR): an RDP byte
+    # read that way means "protected", a WRP byte that way means "not protected".
     ob = bus.ReadBytes(OB_BASE, OB_SIZE)
-    wrpr = int(ob[8]) | (int(ob[10]) << 8) | (int(ob[12]) << 16) | (int(ob[14]) << 24)
-    protected = int(ob[0]) != 0xA5
-    obr = (int(ob[6]) << 18) | (int(ob[4]) << 10) | (int(ob[2]) << 2) | (2 if protected else 0)
+    byte = []
+    opterr = 0
+    for i in range(OB_SIZE // 2):
+        b, c = int(ob[2 * i]), int(ob[2 * i + 1])
+        if b ^ c != 0xFF:
+            b, opterr = 0xFF, 1
+        byte.append(b)
+    wrpr = byte[4] | (byte[5] << 8) | (byte[6] << 16) | (byte[7] << 24)
+    protected = byte[0] != 0xA5
+    obr = (byte[3] << 18) | (byte[2] << 10) | (byte[1] << 2) | (2 if protected else 0) | opterr
     return wrpr, protected, obr
 
 
@@ -362,7 +372,7 @@ elif request.IsWrite or request.IsRead:
 
     if request.IsRead:
         if o == 0x0C: request.Value = 0x20 | sr_err   # EOP set, BSY clear, plus any error
-        elif o == 0x1C: request.Value = obr           # no option byte error is ever raised
+        elif o == 0x1C: request.Value = obr           # OPTERR, RDPRT, USER, Data0, Data1
         elif o == 0x20: request.Value = wrpr
         elif 0x100 <= o <= 0x14C: request.Value = st((o - 0x100) // 4 + 1)
         else: request.Value = regs.get(o, 0)
