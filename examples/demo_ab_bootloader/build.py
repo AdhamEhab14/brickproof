@@ -26,10 +26,12 @@ CHIPS = [
     # an F1 page erase is far shorter than the watchdog's timeout: no bug to show there
     ("", ["-mcpu=cortex-m3"], "", ("bootloader_bug_watchdog", "bootloader_ext",
                                    "bootloader_ext_bug_consume_first", "bootloader_bug_nwrite",
-                                   "bootloader_ee", "bootloader_ee_bug_no_invalidate")),
+                                   "bootloader_ee", "bootloader_ee_bug_no_invalidate",
+                                   "bootloader_bug_no_ecc_nmi")),
     # an F4 lets a half-written cell be programmed again, so resuming a copy is fine there
     ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",
-                                                         "bootloader_bug_nwrite")),
+                                                         "bootloader_bug_nwrite",
+                                                         "bootloader_bug_no_ecc_nmi")),
     # the nRF52 has no flash keys to forget, a 4 KB page erase is far shorter than any
     # watchdog timeout, a half-written word may be written once more, and its protection
     # (the ACL) is set at run time, not in option bytes a cut can leave half rewritten
@@ -37,6 +39,17 @@ CHIPS = [
                                                          "bootloader_bug_no_unlock",
                                                          "bootloader_bug_self_lock",
                                                          "bootloader_bug_watchdog",
+                                                         "bootloader_ext",
+                                                         "bootloader_ext_bug_consume_first",
+                                                         "bootloader_ee",
+                                                         "bootloader_ee_bug_no_invalidate",
+                                                         "bootloader_bug_no_ecc_nmi")),
+    # the L4: double words with ECC. A 2 KB page erase is far shorter than the watchdog's
+    # timeout, the option-byte bug is F-series code, and the external memories are wired
+    # up on the F411 only
+    ("l476_", ["-mcpu=cortex-m4", "-DSTM32L4"], "_l476", ("bootloader_bug_self_lock",
+                                                         "bootloader_bug_watchdog",
+                                                         "bootloader_bug_nwrite",
                                                          "bootloader_ext",
                                                          "bootloader_ext_bug_consume_first",
                                                          "bootloader_ee",
@@ -66,6 +79,8 @@ BOOTLOADERS = {
     # not a bug: the rollback floor in an I2C EEPROM
     "bootloader_ee": ["-DEEPROM_FLOOR"],
     "bootloader_ee_bug_no_invalidate": ["-DEEPROM_FLOOR", "-DBUG_EE_NO_INVALIDATE"],
+    # an ECC error's NMI left to the default handler (the L4 only)
+    "bootloader_bug_no_ecc_nmi": ["-DBUG_NO_ECC_NMI"],
 }
 APP_VERSIONS = (1, 2)
 META_MAGIC = 0x4D455441

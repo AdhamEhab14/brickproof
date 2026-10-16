@@ -27,6 +27,12 @@ nothing written yet, `page-writing` some of the bits the new value clears cleare
 flash program the result need not be old AND new: an old record can come back as 0xFF.
 Models too; nothing was measured on an EEPROM.
 
+On a chip with ECC (the STM32L4: 8 check bits per 64 data bits, written with them) a torn
+program or erase also leaves the check bits half written, so they do not match the data:
+every torn state marks the double words the operation touched as broken in the image's ECC
+map, and a read of one is an ECC error (ECCD, and an NMI). Of a torn erase, only double
+words that were not already blank: those had nothing to erase.
+
 A reset is not a power loss, which lets the supply sag rather than stopping the
 operation cleanly, so the other shapes stay as harder cases: a clean half, a scattered
 random part, an almost-finished one, and the torn programs. They are models, not
@@ -106,6 +112,24 @@ def _torn_pages(old, new, rng):
     return {"page-erasing": erasing, "page-erased": bytes([0xFF]) * len(new), "page-writing": writing}
 
 
+def _ecc_broken(op, before, image, flash):
+    """`image` with the ECC of what a torn `op` touched marked broken, on a chip with ECC."""
+    if not getattr(flash, "ecc", False):
+        return image
+    if op["kind"] == "erase":
+        off, size = traces.erase_span(op, flash)
+    else:
+        off, _ = traces.locate(op["addr"], flash)
+        size = traces.size_of(op, flash)
+    if off >= flash.size:
+        return image
+    out = bytearray(image)
+    for dw in range(off // 8, (min(off + size, flash.size) + 7) // 8):
+        if op["kind"] != "erase" or before[8 * dw:8 * dw + 8] != b"\xff" * 8:
+            out[flash.ecc_offset + dw] = 1
+    return bytes(out)
+
+
 def states(op, before, flash, kinds=KINDS, seed=0):
     """The torn states of one traced operation. `before` is the whole flash just before
     it. States equal to the flash before or after the operation are left out (those
@@ -116,6 +140,7 @@ def states(op, before, flash, kinds=KINDS, seed=0):
     out, seen = [], set()
 
     def add(kind, image):
+        image = _ecc_broken(op, before, image, flash)
         if kind in kinds and image != before and image not in seen:
             seen.add(image)
             out.append(TornState(kind, op["index"], op["addr"], image))

@@ -28,6 +28,14 @@ MEMORIES = {
     "stm32f411": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x08000000),
                   "ram_hole_end": 0x22000000, "flash_hole_end": 0x1FFF0000,
                   "ob_region": 0x400},
+    # flash at 0x08000000 and at 0; SRAM2 at 0x10000000; system memory and option bytes from
+    # 0x1FFF0000
+    "stm32l476": {"ram": ("sram", 0x20000000), "flash": ("flash", 0x08000000), "ob_region": 0x800,
+                  "holes": lambda flash_end, ram_end, ram_size: [
+                      ("aliasGuard", flash_end - 0x08000000, 0x08000000 - (flash_end - 0x08000000)),
+                      ("flashGuard", flash_end, 0x10000000 - flash_end),
+                      ("sram2Guard", 0x10008000, 0x1FFF0000 - 0x10008000),
+                      ("ramGuard", ram_end, 0x22000000 - ram_end)]},
     # flash at 0 with no alias; RAM also seen at 0x00800000 for code; FICR and UICR at
     # 0x10000000; peripherals from 0x40000000
     "nrf52840": {"ram": ("ram", 0x20000000), "flash": ("flash", 0x0), "ob_region": 0x1000,
@@ -62,8 +70,11 @@ def memory_sizes(adapter):
     if adapter.ram_base != ram_base:
         raise ValueError("ram.base 0x%X does not match the %s platform (0x%X)"
                          % (adapter.ram_base, adapter.platform, ram_base))
-    return {ram_name: adapter.ram_size,
-            flash_name: adapter.flash.base + adapter.flash.size - region_base}
+    sizes = {ram_name: adapter.ram_size,
+             flash_name: adapter.flash.base + adapter.flash.size - region_base}
+    if adapter.flash.ecc:
+        sizes["bpEcc"] = adapter.flash.ecc_size
+    return sizes
 
 
 def _set_const(model_text, const, value):

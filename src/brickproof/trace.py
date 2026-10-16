@@ -257,6 +257,13 @@ class Replay:
         self.n = 0
         self.image = bytearray(pre)
 
+    def _ecc_sound(self, off, size):
+        # an operation that finished leaves the ECC of what it wrote matching (STM32L4)
+        f = self.flash
+        if getattr(f, "ecc", False) and off < f.size:
+            first, last = off // 8, (min(off + size, f.size) + 7) // 8
+            self.image[f.ecc_offset + first:f.ecc_offset + last] = bytes(last - first)
+
     def at(self, n):
         if n < self.n:
             self.n, self.image = 0, bytearray(self.pre)
@@ -264,8 +271,10 @@ class Replay:
             if op["kind"] == "erase":
                 off, size = erase_span(op, self.flash)
                 self.image[off:off + size] = bytes([0xFF]) * size
+                self._ecc_sound(off, size)
             elif op["kind"] == "mass_erase":
                 self.image[:self.flash.size] = bytes([0xFF]) * self.flash.size
+                self._ecc_sound(0, self.flash.size)
                 if getattr(self.flash, "mass_erase_ob", False) and self.flash.ob_size:
                     end = self.flash.size + self.flash.ob_size
                     self.image[self.flash.size:end] = bytes([0xFF]) * self.flash.ob_size
@@ -277,5 +286,6 @@ class Replay:
                 off, _ = locate(op["addr"], self.flash)
                 size = size_of(op, self.flash)
                 self.image[off:off + size] = op["value"].to_bytes(size, "little")
+                self._ecc_sound(off, size)
         self.n = n
         return self.image

@@ -22,17 +22,17 @@ target: ../my-firmware         # folder the file paths below are relative to
 extends: base.yaml             # optional: start from another adapter and change a few keys
 
 platform:
-  base: stm32f103              # stm32f103, stm32f411 or nrf52840
+  base: stm32f103              # stm32f103, stm32f411, stm32l476 or nrf52840
   extra: extra.repl            # optional: more Renode platform lines (peripherals your
                                # firmware needs); @ADAPTER@ is this file's folder
 
 flash:
   base: 0x08000000
   size: 0x20000                # the real size of the chip's flash
-  page: 0x400                  # STM32F1: the page size (0x400 or 0x800); nRF52840: 0x1000
+  page: 0x400                  # STM32F1: the page size (0x400 or 0x800); STM32L476: 0x800; nRF52840: 0x1000
   # sectors: [0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]
   #                            # STM32F4: every sector's size, in order. One of page or sectors.
-  write_unit: 2                # bytes a program usually writes (2 on F1, 4 on F4 and nRF52)
+  write_unit: 2                # bytes a program usually writes (2 on F1, 4 on F4 and nRF52, 8 on L4)
   write_protected:             # STM32: what the option bytes protect on the device as shipped
     - {from: 0x08000000, size: 0x4000}
   read_protected: false        # true: RDP level 1 (nRF52: APPROTECT); 2: level 2 (STM32F4), for good
@@ -119,6 +119,13 @@ The run is only worth something if the emulated chip is the chip you ship.
   RDERR on the chip; the run fails with "proprietary code read as data". It shares the nWRP
   bits with `write_protected`, so it is one or the other. `read_protected: 2` is level 2,
   after which the option bytes cannot change at all.
+- STM32L476: programs are 64-bit double words, each with its own ECC. A double word is
+  written once between erases (all zeros is the exception), as two word stores in order,
+  and anything else is refused with the chip's flag (SIZERR, PGAERR, PROGERR, and PGSERR
+  for any program while an earlier error is still flagged). An erase or program cut short
+  leaves the ECC of what it touched wrong (torn states only); a read of such a double word
+  sets ECCD and raises an NMI, which the bootloader must handle. `write_protected` takes up
+  to two areas in bank 1; bank 2's areas and PCROP are not modelled.
 - nRF52: the UICR is the chip's option bytes and part of the flash image, after the code
   area. It starts erased; `read_protected: true` sets APPROTECT, and `flash.uicr` sets any
   other word, such as REGOUT0 on a board powered from the high-voltage regulator. Stores into

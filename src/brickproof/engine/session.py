@@ -45,6 +45,8 @@ REG_PROTECTED = 0x148
 REG_PROTECTED_AT = 0x14C
 REG_PCROP_READS = 0x150         # STM32F4: data reads of proprietary-code (PCROP) sectors
 REG_PCROP_AT = 0x154
+REG_ECC_BROKEN = 0x160          # STM32L4: double words whose ECC does not match (internal)
+ECC_MAP = 0x94000000            # STM32L4: the flash model's ECC map, a byte per double word
 EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to compare flash with
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
                "W": "protected", "Q": "partial_erase"}
@@ -111,6 +113,10 @@ class FlashGeometry:
     option_bytes: bytes = b""
     wrp_unit: int = 0x1000      # how much flash one write-protection bit covers
     worn: tuple = None          # (from, to): pages whose programs no longer take (flash.worn)
+    # ECC, where the chip has it (STM32L4): every 64 bits carry their own check bits, and a
+    # program or erase cut short leaves them not matching. The image ends with a map, one
+    # byte per double word, 1 where that is so.
+    ecc: bool = False
 
     def unit_at(self, addr):
         """(first address, size) of the erase unit that holds `addr`."""
@@ -144,10 +150,18 @@ class FlashGeometry:
         return self.size + self.ob_size + self.ext_size + (EXT_STATUS_BYTES if self.ext_size else 0)
 
     @property
+    def ecc_offset(self):
+        return self.eeprom_offset + self.eeprom_size
+
+    @property
+    def ecc_size(self):
+        return self.size // 8 if self.ecc else 0
+
+    @property
     def image_size(self):
         # the external chip's two status registers follow its contents: they are
         # non-volatile, so a power cut leaves them as they were, like the flash
-        return self.eeprom_offset + self.eeprom_size
+        return self.ecc_offset + self.ecc_size
 
 
 SLOWEST_START = 6.0     # assume a slow machine until this one has been measured
@@ -590,7 +604,16 @@ class RenodeSession:
             image += self.ext_dump() + self.ext_status().to_bytes(EXT_STATUS_BYTES, "little")
         if self.flash.eeprom_size:
             image += self.ee_dump()
+        if self.flash.ecc:
+            image += self.ecc_map()
         return image
+
+    def ecc_map(self):
+        """The ECC map: all sound unless the flash model counts a broken double word, and
+        only then read back (128 KB of it takes a while)."""
+        if not self.read_word(self._ctl(REG_ECC_BROKEN)):
+            return bytes(self.flash.ecc_size)
+        return self.read_bytes(ECC_MAP, self.flash.ecc_size)
 
     def restore_flash(self, data, name="flash_restore.bin"):
         """Replace the whole flash with `data` and forget what the flash checks had seen.
@@ -604,6 +627,12 @@ class RenodeSession:
             with open(os.path.join(self.workdir, "ob_" + name), "wb") as out:
                 out.write(data[f.size:f.size + f.ob_size])
             lines.append("sysbus LoadBinary @ob_%s 0x%X" % (name, f.ob_base))
+        if f.ecc:
+            # before the resync, which counts what is broken in it
+            ecc = data[f.ecc_offset:f.ecc_offset + f.ecc_size]
+            with open(os.path.join(self.workdir, "ecc_" + name), "wb") as out:
+                out.write(ecc if len(ecc) == f.ecc_size else bytes(f.ecc_size))
+            lines.append("sysbus LoadBinary @ecc_%s 0x%X" % (name, ECC_MAP))
         self.cmd_batch(lines + [self._set(REG_RESYNC, 1)] + self._clear_checks())
         inner = f.size + f.ob_size
         if f.ext_size and len(data) > inner:
@@ -630,6 +659,12 @@ class RenodeSession:
             addr = self.ext_mismatch(expected[inner:inner + f.ext_size])
         if addr is None and f.eeprom_size and len(expected) > f.eeprom_offset:
             addr = self.ee_mismatch(expected[f.eeprom_offset:f.eeprom_offset + f.eeprom_size])
+        if addr is None and f.ecc and len(expected) > f.ecc_offset:
+            want = expected[f.ecc_offset:f.ecc_offset + f.ecc_size]
+            now = self.ecc_map()
+            for i in range(min(len(want), len(now))):
+                if want[i] != now[i]:
+                    return f.base + 8 * i          # the double word whose ECC differs
         return addr
 
     def image_mismatch(self, data, addr, name="image_expect.bin", whole=False):

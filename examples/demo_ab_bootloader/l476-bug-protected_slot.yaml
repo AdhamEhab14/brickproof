@@ -1,0 +1,9 @@
+# The correct L476 demo bootloader on a device whose application pages were
+# write-protected by mistake (a production-line setting). An emulator with plain flash
+# memory lets the update through. On the chip nothing in Slot A can be erased or programmed.
+extends: l476.yaml
+name: demo_ab_bootloader_l476_bug_protected_slot
+flash:
+  write_protected:
+    - {from: 0x08000000, size: 0x4000}      # the bootloader, as intended
+    - {from: 0x08020000, size: 0x20000}     # Slot A, by mistake

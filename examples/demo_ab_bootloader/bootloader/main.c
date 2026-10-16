@@ -63,6 +63,11 @@
  * EEPROM_FLOOR (STM32F411 only, not a bug) keeps the rollback floor in an I2C EEPROM.
  * BUG_EE_NO_INVALIDATE with it rewrites a record without clearing its old magic first.
  *
+ * On the STM32L4 (-DSTM32L4) every double word has ECC, and a program or erase cut short
+ * can leave it wrong: reading it raises an NMI. The bootloader catches that, and treats
+ * whatever it was reading as invalid. BUG_NO_ECC_NMI leaves the NMI to the default
+ * handler, which hangs.
+ *
  * HOLD_PG is not a bug: it is the other common way to write flash, with PG left set
  * over a whole run of cells. A power cut can fall between any two of them.
  *
@@ -80,8 +85,24 @@ typedef struct {
     uint32_t magic;               /* written last: a torn record has no magic */
 } meta_t;
 
-#ifdef EEPROM_FLOOR
+#if defined(EEPROM_FLOOR) || defined(STM32L4)
 static meta_t meta_copy[2];
+#endif
+
+#ifdef STM32L4
+volatile int ecc_error;
+
+#ifndef BUG_NO_ECC_NMI
+/* A read hit a double word whose ECC is wrong: the data that came back is not to be
+ * trusted. Note it for the code that did the reading, and carry on. */
+void NMI_Handler(void)
+{
+    if (FLASH_ECCR & ECCR_ECCD) {
+        FLASH_ECCR = ECCR_ECCD;
+        ecc_error = 1;
+    }
+}
+#endif
 #endif
 
 #ifdef EXT_FLASH
@@ -112,7 +133,7 @@ static const img_hdr_t *hdr(uint32_t slot)
     return (const img_hdr_t *)slot;
 }
 
-static int image_valid(uint32_t slot)
+static int image_check(uint32_t slot)
 {
     const img_hdr_t *h = hdr(slot);
     if (h->magic != IMG_MAGIC || h->size == 0 || h->size > SLOT_SIZE - IMG_OFFSET)
@@ -128,6 +149,14 @@ static int image_valid(uint32_t slot)
 #endif
 }
 
+/* Valid, and nothing read on the way hit an ECC error. */
+static int image_valid(uint32_t slot)
+{
+    ecc_clear();
+    int ok = image_check(slot);
+    return ok && !ecc_seen();
+}
+
 static int same_image(uint32_t a, uint32_t b)
 {
     return hdr(a)->version == hdr(b)->version && hdr(a)->crc == hdr(b)->crc;
@@ -137,9 +166,11 @@ static int same_image(uint32_t a, uint32_t b)
  * chips, so this is cheap and needs no erase. */
 static void consume_staging(void)
 {
-#ifdef EXT_FLASH
+#if defined(EXT_FLASH)
     staged[0] = 0;
     ext_program(EXT_STAGING, &staged[0], 4);
+#elif defined(STM32L4)
+    flash_cell(SLOT_B, 0);                /* all zeros: the one value a written cell takes */
 #else
     flash_word(SLOT_B, 0);
 #endif
@@ -155,6 +186,12 @@ static const meta_t *meta(uint32_t page)
 #elif defined(EEPROM_FLOOR)
     meta_t *m = &meta_copy[page == META_1];
     ee_read(page, m, sizeof *m);
+#elif defined(STM32L4)
+    meta_t *m = &meta_copy[page == META_1];
+    ecc_clear();
+    *m = *(const meta_t *)page;
+    if (ecc_seen())
+        return 0;                         /* a page whose erase or program was cut short */
 #else
     const meta_t *m = (const meta_t *)page;
 #endif
@@ -181,6 +218,11 @@ static void meta_store(uint32_t target, uint32_t seq, uint32_t floor)
 #endif
     ee_write(target, record, 8);
     ee_write(target + 8, &record[2], 4);
+#elif defined(STM32L4)
+    /* two double words, each programmed once: seq and floor, then the magic */
+    flash_erase(target, 1);
+    flash_cell(target, ((uint64_t)floor << 32) | seq);
+    flash_cell(target + 8, 0xFFFFFFFF00000000ull | META_MAGIC);
 #else
     flash_erase(target, 1);
     flash_word(target + 0, seq);

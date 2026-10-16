@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**A fourth chip family: the STM32L476.** Renode has no L4, so BrickProof writes its own
+platform, with a flash controller model for the flash the L4, G0, G4, WB and WL share:
+2 KB pages in two banks, 64-bit programs written once, the chip's error flags, and ECC. A
+program or erase cut short leaves double words whose ECC is wrong, and a read of one raises
+an NMI. The demo runs on it (`brickproof demo l476`), with a new bug build, `no_ecc_nmi`,
+that only torn states catch.
+
 **External flash chips over 16 MB.** `external_flash.size` goes up to 64 MB. A chip over
 16 MB has 4-byte addresses as on a W25Q256JV: 4-byte mode (B7h/E9h, ADP at power-up), the
 4-byte commands, the extended address register, and its BP3-BP0 protection table.

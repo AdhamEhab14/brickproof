@@ -1,0 +1,87 @@
+// STM32L476 base platform for BrickProof. Renode has no STM32L4 platform, so this one is
+// written out here: the core, memories, USART2 and the GPIO ports a bootloader touches, the
+// watchdog, and our flash controller (which counts operations, cuts power and enforces the
+// chip's rules, ECC included) and RCC. @MODELS@ is replaced with the models folder when
+// the engine writes the run's platform file. A target adapter can append its own lines.
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    priorityMask: 0xF0
+    systickFrequency: 4000000
+    IRQ -> cpu@0
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4f"
+    nvic: nvic
+
+// An STM32 that boots from its main flash shows that flash at address 0 as well. Same
+// memory, two addresses. Bank 2 starts half way.
+flash: Memory.MappedMemory @ {
+        sysbus 0x08000000;
+        sysbus 0x00000000
+    }
+    size: 0x100000
+
+// SRAM1. On the chip SRAM2 follows it at 0x20018000 as well as sitting at 0x10000000:
+// ram.size 0x20000 covers that alias.
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x18000
+
+sram2: Memory.MappedMemory @ sysbus 0x10000000
+    size: 0x8000
+
+usart1: UART.STM32F7_USART @ sysbus 0x40013800
+    frequency: 4000000
+    IRQ -> nvic@37
+
+usart2: UART.STM32F7_USART @ sysbus 0x40004400
+    frequency: 4000000
+    IRQ -> nvic@38
+
+usart3: UART.STM32F7_USART @ sysbus 0x40004800
+    frequency: 4000000
+    IRQ -> nvic@39
+
+gpioPortA: GPIOPort.STM32_GPIOPort @ sysbus <0x48000000, +0x400>
+    modeResetValue: 0xABFFFFFF
+    outputSpeedResetValue: 0x0C000000
+    pullUpPullDownResetValue: 0x64000000
+    numberOfAFs: 16
+
+gpioPortB: GPIOPort.STM32_GPIOPort @ sysbus <0x48000400, +0x400>
+    modeResetValue: 0xFFFFFEBF
+    pullUpPullDownResetValue: 0x00000100
+    numberOfAFs: 16
+
+gpioPortC: GPIOPort.STM32_GPIOPort @ sysbus <0x48000800, +0x400>
+    modeResetValue: 0xFFFFFFFF
+    numberOfAFs: 16
+
+iwdg: Timers.STM32_IndependentWatchdog @ sysbus 0x40003000
+    frequency: 32000
+    windowOption: true
+    defaultPrescaler: 0x4
+
+clocks: Python.PythonPeripheral @ sysbus 0x40021000
+    size: 0x400
+    initable: true
+    filename: "@MODELS@/stm32l4_rcc.py"
+
+flashctl: Python.PythonPeripheral @ sysbus 0x40022000
+    size: 0x400
+    initable: true
+    filename: "@MODELS@/stm32l4_flash.py"
+
+// Where the flash model keeps its test state (op count, cut point, fault latch).
+// Plain memory survives a firmware reset; the model's own variables do not.
+bpState: Memory.MappedMemory @ sysbus 0x90000000
+    size: 0x1000
+
+// The ECC map: one byte per flash double word, set where its ECC does not match. The engine
+// sizes it to the flash.
+bpEcc: Memory.MappedMemory @ sysbus 0x94000000
+    size: 0x20000
+
+sysbus:
+    init:
+        Tag <0x1FFF75E0, 0x1FFF75E3> "FLASHSIZE" 0x400
+        Tag <0x40007000, 0x400073FF> "PWR"

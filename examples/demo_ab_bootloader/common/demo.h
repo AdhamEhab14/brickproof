@@ -13,11 +13,19 @@ static inline void wdg_feed(void);
 #include "chip_nrf52.h"
 #elif defined(STM32F4)
 #include "chip_f411.h"
+#elif defined(STM32L4)
+#include "chip_l476.h"
 #else
 #include "chip_f103.h"
 #endif
 
 #define CELL           ((uint32_t)sizeof(cell_t))
+
+#ifndef STM32L4
+/* Only the L4's flash has ECC (chip_l476.h); elsewhere no read is ever flagged. */
+static inline void ecc_clear(void) {}
+static inline int ecc_seen(void) { return 0; }
+#endif
 
 /* An image is a 16-byte header at the slot start, then the app itself at
  * +0x200 (the vector table needs that alignment). */
@@ -33,10 +41,20 @@ typedef struct {
 
 #ifndef NRF52
 /* ---- registers both STM32s have in the same place ------------------------- */
-#define USART2_SR      REG(0x40004400u)
-#define USART2_DR      REG(0x40004404u)
-#define USART2_BRR     REG(0x40004408u)
-#define USART2_CR1     REG(0x4000440Cu)
+#ifdef STM32L4
+/* the L4's USART2 has the newer layout: ISR and TDR, UE in bit 0 */
+#define UART_SR        REG(0x4000441Cu)
+#define UART_DR        REG(0x40004428u)
+#define UART_BRR       REG(0x4000440Cu)
+#define UART_CR1       REG(0x40004400u)
+#define UART_CR1_ON    ((1u << 0) | (1u << 3))   /* UE, TE */
+#else
+#define UART_SR        REG(0x40004400u)
+#define UART_DR        REG(0x40004404u)
+#define UART_BRR       REG(0x40004408u)
+#define UART_CR1       REG(0x4000440Cu)
+#define UART_CR1_ON    ((1u << 13) | (1u << 3))  /* UE, TE */
+#endif
 #define SCB_VTOR       REG(0xE000ED08u)
 
 /* ---- independent watchdog (in the same place on both STM32s) ------------------ */

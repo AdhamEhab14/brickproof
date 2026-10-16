@@ -165,6 +165,28 @@ def stm32f4_option_bytes(flash, protected, read_protected, hardware_watchdog=Fal
     return bytes(out)
 
 
+def stm32l4_option_bytes(flash, protected, read_protected, hardware_watchdog=False, pcrop=()):
+    """The STM32L4's option bytes at 0x1FFF7800: OPTR, PCROP1SR, PCROP1ER, WRP1AR and WRP1BR,
+    each a word and its complement. Up to two write-protected areas, in bank 1."""
+    if pcrop:
+        raise AdapterError("flash.pcrop: not modelled on the STM32L4")
+    rdp = {0: 0xAA, 1: 0xBB, 2: 0xCC}[int(read_protected)]
+    optr = (0xFFEFF800 | rdp) & ~((1 << 16) if hardware_watchdog else 0)
+    areas = []
+    for _, start, size in _protected_ranges(flash, protected):
+        first, last = (start - flash.base) // flash.page, (start - flash.base + size - 1) // flash.page
+        if last >= flash.size // 2 // flash.page:
+            raise AdapterError("flash.write_protected: bank 2 is not modelled on the STM32L4")
+        areas.append(first | (last << 16) | 0xFF00FF00)
+    if len(areas) > 2:
+        raise AdapterError("flash.write_protected: an STM32L4 has two areas in bank 1")
+    areas += [0xFF00FFFF] * (2 - len(areas))
+    out = b""
+    for w in (optr, 0xFFFFFFFF, 0x00000000, *areas):
+        out += (w & 0xFFFFFFFF).to_bytes(4, "little") + (~w & 0xFFFFFFFF).to_bytes(4, "little")
+    return out
+
+
 UICR_SIZE = 0x400                 # the nRF52840's UICR registers end at REGOUT0, 0x304
 UICR_APPROTECT = 0x208
 
@@ -198,6 +220,10 @@ CHIPS = {
     "stm32f411": dict(model="stm32f4_flash.py", controller=0x40023C00, ob_base=0x1FFFC000,
                       option_bytes=stm32f4_option_bytes, wrp_unit=None, write_unit=4,
                       endurance=10000),
+    # 2 KB pages, double-word programs with ECC (the flash of the L4, G0, G4, WB and WL)
+    "stm32l476": dict(model="stm32l4_flash.py", controller=0x40022000, ob_base=0x1FFF7800,
+                      option_bytes=stm32l4_option_bytes, wrp_unit=None, write_unit=8,
+                      endurance=10000, mips=80, ecc=True),
     # the nRF52's option bytes are its UICR, and its ERASEALL erases them too
     "nrf52840": dict(model="nrf52_flash.py", controller=0x4001E000, ob_base=0x10001000,
                      option_bytes=nrf52_uicr, wrp_unit=None, write_unit=4,
@@ -482,7 +508,7 @@ def load(path, target=None):
                           page=fl.get("page"), write_unit=fl.get("write_unit", chip["write_unit"]),
                           controller=chip["controller"], model=chip["model"], ob_base=chip["ob_base"],
                           wrp_unit=chip["wrp_unit"], endurance=chip["endurance"],
-                          mass_erase_ob=chip.get("mass_erase_ob", False))
+                          mass_erase_ob=chip.get("mass_erase_ob", False), ecc=chip.get("ecc", False))
     timing = fl.get("timing", "typical")
     if timing not in TIMINGS:
         raise AdapterError("flash.timing: unknown '%s' (have: %s)" % (timing, ", ".join(TIMINGS)))
@@ -501,7 +527,7 @@ def load(path, target=None):
             raise AdapterError("flash.sectors add up to 0x%X, but flash.size is 0x%X"
                                % (sum(sizes), flash.size))
         flash.sectors = [(sum(sizes[:i]), n) for i, n in enumerate(sizes)]
-    if chip["model"] in ("stm32f1_flash.py", "nrf52_flash.py") and flash.page is None:
+    if chip["model"] in ("stm32f1_flash.py", "nrf52_flash.py", "stm32l4_flash.py") and flash.page is None:
         raise AdapterError("flash: an %s erases by page, not by sector" % base)
     if chip["model"] == "stm32f4_flash.py" and flash.sectors is None:
         raise AdapterError("flash: an %s erases by sector; list them in flash.sectors" % base)

@@ -1,0 +1,11 @@
+# The correct L476 demo written the other common way: PG is set once and left set over a
+# whole run of cells (see HOLD_PG in bootloader/main.c). A power cut can fall between
+# any two of those stores, and every one of them must recover.
+extends: l476.yaml
+name: demo_ab_bootloader_l476_hold_pg
+firmware:
+  - file: prebuilt/l476_bootloader_hold_pg.elf
+  - file: prebuilt/l476_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000
