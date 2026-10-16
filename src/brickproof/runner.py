@@ -106,9 +106,13 @@ def _fault_message(session):
     if v["refused"]:
         return ("flash rule broken: the chip refused %d program(s), first at 0x%08X, and kept "
                 "the old value. On an STM32F1 that is a cell that was not erased (PGERR), on an "
-                "STM32F4 a store that is not as wide as PSIZE says (PGPERR), on an nRF52 a store "
-                "that is not a whole aligned word or a third write to a word without an erase "
-                "(nWRITE)" % v["refused"])
+                "STM32F4 a store that is not as wide as PSIZE says (PGPERR) or does not fit in one "
+                "16-byte flash row (PGAERR), on an nRF52 a store that is not a whole aligned word "
+                "or a third write to a word without an erase (nWRITE)" % v["refused"])
+    if v.get("pcrop"):
+        return ("proprietary code read as data: %d read(s) of a PCROP sector, first at 0x%08X. "
+                "The chip only lets that code run; a data read gets RDERR, not the code"
+                % v["pcrop"])
     if v.get("protected"):
         n, at = v["protected"]
         if session.flash.external(at):

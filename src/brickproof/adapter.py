@@ -85,11 +85,11 @@ class Adapter:
         return mod.make_driver(session, self)
 
 
-def _protected_ranges(flash, protected):
-    """The write_protected entries as checked (where, start, size) tuples."""
+def _protected_ranges(flash, protected, key="write_protected"):
+    """The write_protected (or pcrop) entries as checked (where, start, size) tuples."""
     out = []
     for i, r in enumerate(protected):
-        where = "flash.write_protected[%d]" % i
+        where = "flash.%s[%d]" % (key, i)
         start, size = _need(r, "from", where), _need(r, "size", where)
         if start < flash.base or start + size > flash.base + flash.size or size <= 0:
             raise AdapterError("%s: outside the flash" % where)
@@ -97,10 +97,14 @@ def _protected_ranges(flash, protected):
     return out
 
 
-def stm32f1_option_bytes(flash, protected, read_protected, hardware_watchdog=False):
+def stm32f1_option_bytes(flash, protected, read_protected, hardware_watchdog=False, pcrop=()):
     """The 16 option bytes of an STM32F1 as the chip holds them: RDP, USER, Data0,
     Data1, WRP0..WRP3, each followed by its complement. `protected` is a list of
     {from, size} ranges to write-protect; a cleared WRP bit protects its unit."""
+    if pcrop:
+        raise AdapterError("flash.pcrop: an STM32F1 has no proprietary-code protection")
+    if read_protected == 2:
+        raise AdapterError("flash.read_protected: an STM32F1 has one level of read protection")
     unit = flash.wrp_unit
     wrp = 0xFFFFFFFF
     for where, start, size in _protected_ranges(flash, protected):
@@ -120,29 +124,50 @@ def stm32f1_option_bytes(flash, protected, read_protected, hardware_watchdog=Fal
     return bytes(out)
 
 
-def stm32f4_option_bytes(flash, protected, read_protected, hardware_watchdog=False):
+def _sectors_of(flash, ranges, key):
+    """The sector numbers whole {from, size} ranges cover."""
+    units = flash.units()
+    starts = [u for u, _ in units]
+    ends = [u + n for u, n in units]
+    out = []
+    for where, start, size in _protected_ranges(flash, ranges, key):
+        if start not in starts or start + size not in ends:
+            raise AdapterError("%s: goes by whole sectors on this chip" % where)
+        out += range(starts.index(start), ends.index(start + size) + 1)
+    return out
+
+
+def stm32f4_option_bytes(flash, protected, read_protected, hardware_watchdog=False, pcrop=()):
     """The option bytes of an STM32F4 as the chip shows them: USER and RDP in one
     halfword, the nWRP bits in another, each followed by its complement. Write
-    protection is one bit per sector, and a cleared bit protects its sector."""
-    units = flash.units()
-    nwrp = 0xFFF
-    for where, start, size in _protected_ranges(flash, protected):
-        starts = [u for u, _ in units]
-        ends = [u + n for u, n in units]
-        if start not in starts or start + size not in ends:
-            raise AdapterError("%s: write protection goes by whole sectors on this chip" % where)
-        for s in range(starts.index(start), ends.index(start + size) + 1):
+    protection is one bit per sector, and a cleared bit protects its sector. With
+    `pcrop` the sectors it names are proprietary code instead: SPRMOD set (stored
+    inverted, bit 15) and their nWRP bits set, the rest cleared. read_protected 2 is
+    level 2 (0xCC)."""
+    if pcrop and protected:
+        raise AdapterError("flash: write_protected and pcrop share the nWRP bits on this chip; "
+                           "with pcrop, the proprietary-code sectors are the protected ones")
+    if pcrop:
+        nwrp = 0
+        for s in _sectors_of(flash, pcrop, "pcrop"):
+            nwrp |= 1 << s
+        sprmod = 0x0000                 # SPRMOD = 1, stored inverted
+    else:
+        nwrp = 0xFFF
+        for s in _sectors_of(flash, protected, "write_protected"):
             nwrp &= ~(1 << s)
+        sprmod = 0x8000
+    rdp = {0: 0xAA, 1: 0x55, 2: 0xCC}[int(read_protected)]
     out = bytearray()
     user = 0xCF if hardware_watchdog else 0xEF      # WDG_SW is bit 5, cleared = hardware
-    for half in (((0x55 if read_protected else 0xAA) << 8) | user, 0xF000 | nwrp):
+    for half in ((rdp << 8) | user, 0x7000 | sprmod | nwrp):
         out += bytes([half & 0xFF, half >> 8, ~half & 0xFF, (~half >> 8) & 0xFF]) + bytes([0xFF]) * 4
     return bytes(out)
 
 
-def no_option_bytes(flash, protected, read_protected, hardware_watchdog=False):
+def no_option_bytes(flash, protected, read_protected, hardware_watchdog=False, pcrop=()):
     """A chip without STM32-style option bytes (the nRF52's UICR is not modelled)."""
-    if protected or read_protected or hardware_watchdog:
+    if protected or read_protected or hardware_watchdog or pcrop:
         raise AdapterError("flash: write_protected, read_protected and hardware_watchdog are "
                            "STM32 option bytes; this chip has none")
     return b""
@@ -476,9 +501,13 @@ def load(path, target=None):
         if not (flash.base <= start and start + size <= flash.base + flash.size and size > 0):
             raise AdapterError("flash.worn: inside the flash, with a size above 0")
         flash.worn = (start, start + size)
+    read_protected = fl.get("read_protected", False)
+    if read_protected not in (False, True, 0, 1, 2):
+        raise AdapterError("flash.read_protected: false, true (level 1) or 2")
     flash.option_bytes = chip["option_bytes"](flash, fl.get("write_protected") or [],
-                                              bool(fl.get("read_protected", False)),
-                                              bool(fl.get("hardware_watchdog", False)))
+                                              int(read_protected),
+                                              bool(fl.get("hardware_watchdog", False)),
+                                              pcrop=fl.get("pcrop") or [])
 
     ext = d.get("external_flash")
     if ext:

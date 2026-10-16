@@ -29,7 +29,7 @@ def chip(request):
     work = tempfile.mkdtemp(prefix="bp-rules-")
     s = RenodeSession(find_renode(), work, ad.flash, wd.prepare(work, ad), uart=ad.uart,
                       vector_table=ad.vector_table, mips=ad.mips, reset_cmds=ad.reset_cmds,
-                      log=None, ram=wd.MEMORIES[ad.platform]["ram"][0],
+                      log=os.environ.get("BP_RENODE_LOG"), ram=wd.MEMORIES[ad.platform]["ram"][0],
                       memory_sizes=wd.memory_sizes(ad))
     s.adapter = ad
     s.factory = bytes(s.dump_flash())

@@ -35,7 +35,9 @@ flash:
   write_unit: 2                # bytes a program usually writes (2 on F1, 4 on F4 and nRF52)
   write_protected:             # STM32: what the option bytes protect on the device as shipped
     - {from: 0x08000000, size: 0x4000}
-  read_protected: false        # RDP level 1
+  read_protected: false        # true: RDP level 1; 2: level 2 (STM32F4), for good
+  # pcrop:                     # STM32F4: sectors of proprietary code (SPRMOD), instead of
+  #   - {from: 0x08060000, size: 0x20000}   # write_protected: run only, no data reads
   hardware_watchdog: false     # WDG_SW cleared: the watchdog runs from reset, unstoppable
   timing: typical              # typical, max or none: how long erases and programs take
 
@@ -101,6 +103,11 @@ The run is only worth something if the emulated chip is the chip you ship.
 - `flash.write_protected`, `flash.read_protected`: as the device leaves the factory. A slot
   that is write-protected by mistake makes every update fail on the chip and none in a plain
   emulator.
+- `flash.pcrop` (STM32F4): sectors of proprietary code. The option bytes get SPRMOD, and
+  those sectors can be run but not read as data, erased or programmed. A data read there is
+  RDERR on the chip; the run fails with "proprietary code read as data". It shares the nWRP
+  bits with `write_protected`, so it is one or the other. `read_protected: 2` is level 2,
+  after which the option bytes cannot change at all.
 - `flash.hardware_watchdog`: true if the option bytes make the independent watchdog a
   hardware one. It then runs from reset with its default timeout (about 0.4 s on an F1,
   0.5 s on an F4), and a chip that stands still through a long erase gets reset.

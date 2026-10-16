@@ -43,6 +43,8 @@ REG_CMP_FROM = 0x140
 REG_CMP_LEN = 0x144
 REG_PROTECTED = 0x148
 REG_PROTECTED_AT = 0x14C
+REG_PCROP_READS = 0x150         # STM32F4: data reads of proprietary-code (PCROP) sectors
+REG_PCROP_AT = 0x154
 EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to compare flash with
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
                "W": "protected"}
@@ -666,15 +668,18 @@ class RenodeSession:
           refused  (count, first address): programs over cells that were not erased
           stray    first address where flash changed with no flash operation behind it
           protected  (count, first address): erases or programs in write-protected pages
+          pcrop    (count, first address): data reads of proprietary code (STM32F4 PCROP)
         Each is None when clean. A power cycle clears the fault; restore_flash the rest."""
-        fa, fpc, n, at, stray, wn, wat = self._values(self.cmd_batch(
+        fa, fpc, n, at, stray, wn, wat, pn, pat = self._values(self.cmd_batch(
             [self._get(REG_FAULT_ADDR), self._get(REG_FAULT_PC), self._get(REG_REFUSED),
              self._get(REG_REFUSED_AT), self._set(REG_AUDIT, 1), self._get(REG_AUDIT),
-             self._get(REG_PROTECTED), self._get(REG_PROTECTED_AT)]))
+             self._get(REG_PROTECTED), self._get(REG_PROTECTED_AT),
+             self._get(REG_PCROP_READS), self._get(REG_PCROP_AT)]))
         return {"fault": (fa, fpc) if fa else None,
                 "refused": (n, at) if n else None,
                 "stray": stray or None,
-                "protected": (wn, wat) if wn else None}
+                "protected": (wn, wat) if wn else None,
+                "pcrop": (pn, pat) if pn else None}
 
     def bus_fault(self):
         return self.violations()["fault"]
@@ -687,7 +692,7 @@ class RenodeSession:
 
     def _clear_checks(self):
         return [self._set(reg, 0) for reg in (REG_AUDIT, REG_REFUSED, REG_REFUSED_AT, REG_PROTECTED,
-                                             REG_PROTECTED_AT)]
+                                             REG_PROTECTED_AT, REG_PCROP_READS, REG_PCROP_AT)]
 
     # ---- the golden-run trace ---------------------------------------------
 

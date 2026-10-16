@@ -28,6 +28,11 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**STM32F4: PGAERR, PCROP and read protection level 2.** A program whose data does not fit in
+one 16-byte flash row is refused with PGAERR. `flash.pcrop` makes sectors proprietary code
+(SPRMOD): they run, but cannot be erased, programmed or read as data, and such a read fails
+the run. `read_protected: 2` is level 2, after which the option bytes cannot change.
+
 **STM32F1 option bytes checked as the chip checks them.** At reset each option byte is
 compared with its complement; where they do not match, FLASH_OBR's OPTERR is set and the
 byte loads as 0xFF (so a damaged RDP byte means read protection, a damaged WRP byte none).
