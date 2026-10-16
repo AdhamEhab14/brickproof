@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
+from brickproof import bit_errors as bit_errs
 from brickproof import content
 from brickproof.engine.session import FlashGeometry
 from brickproof.torn import KINDS as TORN_KINDS
@@ -65,6 +66,7 @@ class Adapter:
     shard: tuple = None           # (k, n): run only every nth cut, starting with the kth
     content_faults: dict = None   # damaged images the bootloader must refuse (see content.py)
     link_cuts: dict = None        # break the host's link mid-session (see runner.run_link)
+    bit_errors: dict = None       # bits flipped in a stored image while off (see bit_errors.py)
     hse: int = 8000000            # the board's crystal or external clock, in Hz
     driver_file: str = None       # a driver.py next to the adapter, or
     driver_builtin: str = None    # one that ships with BrickProof
@@ -366,6 +368,31 @@ def _parse_link(scenario):
     return out
 
 
+def _parse_bit_errors(scenario, oracle):
+    """scenario.bit_errors (see bit_errors.py): true, or a mapping. None if off."""
+    c = scenario.get("bit_errors")
+    if not c:
+        return None
+    if not oracle:
+        raise AdapterError("scenario.bit_errors: needs an oracle, which judges the result")
+    c = {} if c is True else c
+    if not isinstance(c, dict) or set(c) - bit_errs.KEYS:
+        raise AdapterError("scenario.bit_errors: true, or a mapping with %s"
+                           % ", ".join(sorted(bit_errs.KEYS)))
+    out = {"flips": c.get("flips", 1), "runs": c.get("runs", 4), "seed": c.get("seed", 0), "regions": None}
+    for key in ("flips", "runs"):
+        if not isinstance(out[key], int) or out[key] < 1:
+            raise AdapterError("scenario.bit_errors.%s: a whole number, 1 or more" % key)
+    if c.get("regions"):
+        out["regions"] = {}
+        for name, r in c["regions"].items():
+            if not (isinstance(r, list) and len(r) == 2 and all(isinstance(x, int) for x in r)
+                    and r[0] < r[1]):
+                raise AdapterError("scenario.bit_errors.regions.%s: [start, end] addresses" % name)
+            out["regions"][str(name)] = (r[0], r[1])
+    return out
+
+
 def _parse_oracle(d, target):
     """The `oracle:` section, with image paths made absolute. None if there is none."""
     o = d.get("oracle")
@@ -503,6 +530,7 @@ def load(path, target=None):
         oracle=oracle,
         content_faults=_parse_content(scenario, target, oracle),
         link_cuts=_parse_link(scenario),
+        bit_errors=_parse_bit_errors(scenario, oracle),
         plan=_parse_plan(scenario),
         torn=_parse_torn(scenario),
         torn_seed=int(scenario.get("torn_seed", 0)),

@@ -28,6 +28,11 @@ writes out Renode's nRF52840 platform itself, so a run does not download anythin
 more builds: CONFIG held at Wen over a run of words, and eight with a known bug, including a
 new one, `nwrite` (a third write to a word without an erase).
 
+**Bit errors at rest.** `scenario.bit_errors` flips seeded random bits in the flash the update
+left (each image the oracle accepts, or named regions) and powers up: the CPU must not run
+inside the damaged region, nor sit in a fault handler. The demo on all three chips and
+MCUboot on both boards never run a damaged image; the demo's `trust_header` bug runs it.
+
 **A broken link.** `scenario.link_cuts` breaks the host's UART link at points spread
 over the bytes of its session (the device keeps its power), waits, and lets the host run
 the update again; the usual verdict follows. OpenBLT (a full XCP session) and the

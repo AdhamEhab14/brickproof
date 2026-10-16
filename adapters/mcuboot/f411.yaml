@@ -62,3 +62,5 @@ scenario:
       header: [0x0, 0x20]
       body: [0x200, 0x4340]
       tlv: [0x4340, 0x43D7]              # hash and signature
+  # bits flipped in the installed v2 while the device is off: MCUboot must not run it
+  bit_errors: {runs: 4}

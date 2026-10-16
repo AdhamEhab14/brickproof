@@ -198,6 +198,16 @@ what it stages (`staged()`, which `staged_slot` has), and the adapter needs an o
 | `regions` | `{name: [start, end]}` offsets in the image to flip a bit in, for example header, body and the signature area. Default: the whole image as one region |
 | `images` | `{name: file}`: bad images made elsewhere (signed with another key, older, built for another slot), staged as they are |
 
+## Bit errors at rest
+
+`scenario.bit_errors` takes the flash the uninterrupted update left, flips `flips` bits (default
+1) at random in a region, `runs` times per region (default 4), with `seed` (default 0) so a run
+repeats, and powers up. Pass: the CPU is not executing inside that region and is not in a
+fault handler. `regions` names `{name: [start, end]}` addresses; the default is every image the
+oracle accepts, where it is installed. Name the bytes the image really uses where it has
+unused padding (the demo's header area is 0x200 bytes, of which 16 are used): a flip in bytes
+nothing reads changes nothing, and the device is right to run the image.
+
 ## A broken link
 
 `scenario.link_cuts: {points: 8, wait: 2}` (or `true` for those values) is for drivers that

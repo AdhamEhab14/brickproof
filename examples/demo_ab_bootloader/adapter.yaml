@@ -63,3 +63,10 @@ scenario:
     regions:
       header: [0x0, 0x10]                # magic, version, size, CRC
       body: [0x200, 0x338]
+  # bits flipped in the installed v2 while the device is off: it must not run it. Only the
+  # bytes the image uses (header and body); the padding between them is never read
+  bit_errors:
+    runs: 4
+    regions:
+      header: [0x08002000, 0x08002010]
+      body: [0x08002200, 0x08002338]

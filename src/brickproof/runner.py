@@ -9,6 +9,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from brickproof import __version__
+from brickproof import bit_errors as bit_errs
 from brickproof import content as contents
 from brickproof import oracle as oracles
 from brickproof import plan as plans
@@ -43,6 +44,7 @@ class CutResult:
     computed: bool = False      # powered up from the computed flash state, not cut in the emulator
     content: str = None         # a content fault: which damaged image was staged (see content.py)
     link: int = None            # a broken link: how many bytes of the host's session got through
+    bit_error: str = None       # bits flipped at rest: the region and where (see bit_errors.py)
     message: str = ""
     seconds: float = 0.0
 
@@ -330,6 +332,54 @@ def run_content(session, driver, adapter, name, image, judge):
         return res
     finally:
         res.seconds = round(time.time() - t0, 1)
+
+
+def run_bit_error(session, driver, adapter, name, image, region, judge):
+    """Boot from flash with bits flipped inside `region`. The device must not execute
+    there, nor sit in a fault handler: refusing the damaged image is the right answer."""
+    res = CutResult(cut="bits " + name, fired=True, kind="bit error", bit_error=name)
+    t0 = time.time()
+    try:
+        session.restore_flash(image)
+        session.power_cycle(settle=adapter.boot_settle)
+        session.run_for(adapter.update_time)
+        res.alive = True
+        res.message = _fault_message(session) or ""
+        if res.message:
+            return res
+        lo, hi = region
+        for pc, exc in session.sample_cpu(judge.samples, judge.interval):
+            if exc in oracles.FAULTS:
+                res.message = "the device is in the %s handler (PC 0x%08X)" % (oracles.FAULTS[exc], pc)
+                return res
+            if lo <= pc < hi:
+                res.message = "the damaged image is running (PC 0x%08X): nothing checked it" % pc
+                return res
+        res.recovered = res.passed = True
+        return res
+    except MachineHung:
+        res.message = "the device locked up (emulated CPU stopped making progress)"
+        session.restart()
+        return res
+    finally:
+        res.seconds = round(time.time() - t0, 1)
+
+
+def bit_errors(pool, adapter, golden, out, on_result=None, fail_fast=False):
+    """Bits flipped in the flash the update left behind, one test each."""
+    cfg = adapter.bit_errors
+    o = golden.oracle
+    flash = adapter.flash
+    regions = cfg["regions"]
+    if regions is None:
+        regions = {i.name: (i.addr, i.end) for i in o.images if i.name in o.accept}
+    regions = {n: r for n, r in regions.items()
+               if flash.base <= r[0] and r[1] <= flash.base + flash.size}
+    end = bytes(golden.replay.at(len(golden.ops)))
+    tasks = bit_errs.cases(end, flash.base, regions, cfg["flips"], cfg["runs"], cfg["seed"])
+    results = pool.run(lambda s, d, t: run_bit_error(s, d, adapter, t[0], t[1], t[2], o), tasks,
+                       on_result, _failed if fail_fast else None)
+    out.results += results
 
 
 def link_points(total, n):
@@ -669,6 +719,10 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
             return out
     if getattr(adapter, "link_cuts", None) and (not shard or shard[0] == 1):
         link_cuts(pool, adapter, golden, out, on_result, fail_fast)
+        if fail_fast and any(_failed(r) for r in out.results):
+            return out
+    if getattr(adapter, "bit_errors", None) and golden.oracle and (not shard or shard[0] == 1):
+        bit_errors(pool, adapter, golden, out, on_result, fail_fast)
     return out
 
 

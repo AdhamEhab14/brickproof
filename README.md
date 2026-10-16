@@ -121,6 +121,10 @@ bit flipped in each region the adapter names, such as header, body and signature
 images made elsewhere: another key, an older version) and the bootloader must refuse each
 one and keep the old image running, as the oracle sees it from outside.
 
+**Bit errors at rest** (`scenario.bit_errors`). A stored image loses a bit while the device
+is off. BrickProof flips seeded random bits in the installed image and powers up: the CPU must
+not run the damaged image, nor end in a fault handler. Staying in the bootloader is right.
+
 **A broken link** (`scenario.link_cuts`). For updates sent over a protocol, the link breaks
 part-way through the host's session while the device keeps its power: only the first N
 bytes arrive. After a pause the host starts again, and the device must take the new

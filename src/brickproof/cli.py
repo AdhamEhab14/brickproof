@@ -30,6 +30,8 @@ def _print_result(r):
         where, op = "damaged image", ""
     if r.link is not None:
         where, op = "link broken", "%d B" % r.link
+    if r.bit_error:
+        where, op = "bits flipped", ""
     status = "SKIP" if r.skipped else "PASS" if r.passed else "FAIL"
     note = r.message
     if r.passed and r.image:
@@ -152,7 +154,7 @@ def cmd_run(args):
         print("the update fails even with no power cut, so no cuts were run")
         _hint_time(out.trace, ad)
     ran = [r for r in out.results if not (r.skipped or r.baseline or r.torn or r.content)
-           and r.link is None and r.depth == 1]
+           and r.link is None and not r.bit_error and r.depth == 1]
     passed = sum(r.passed for r in ran)
     print("%d/%d cuts recovered (setup %.0fs, total %.0fs%s)" % (
         passed, len(ran), out.timings.get("setup_s", 0), out.timings.get("total_s", 0),
@@ -171,6 +173,9 @@ def cmd_run(args):
     if bad:
         print("%d/%d damaged images refused, with %s still installed and running" % (
             sum(r.passed for r in bad), len(bad), ad.content_faults["keep"]))
+    flipped = [r for r in out.results if r.bit_error]
+    if flipped:
+        print("%d/%d images damaged at rest were not run" % (sum(r.passed for r in flipped), len(flipped)))
     links = [r for r in out.results if r.link is not None]
     if links:
         print("%d/%d broken links recovered (the host's session cut off, then run again)" % (

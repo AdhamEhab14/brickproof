@@ -17,6 +17,8 @@ def group(cut):
         return "content"
     if cut.get("link") is not None:
         return "link"
+    if cut.get("bit_error"):
+        return "bits"
     if cut["torn"]:
         return "torn"
     if cut["depth"] > 1:
@@ -30,6 +32,7 @@ GROUP_TITLES = {
     "torn": "Torn states: power lost inside an erase or a program",
     "content": "Bad update content: a damaged image the bootloader must refuse",
     "link": "A broken link: the host's session cut off, then tried again",
+    "bits": "Bit errors at rest: a stored image damaged while the device was off",
 }
 
 
