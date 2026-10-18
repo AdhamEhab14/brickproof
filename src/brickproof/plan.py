@@ -14,6 +14,7 @@ for most k. That is a judgement, and the plan says where it was applied, so a re
 never claims more than was run. `every` cuts at every distinct state: exhaustive for
 a single power loss at operation boundaries.
 """
+import hashlib
 from dataclasses import dataclass, field
 
 from brickproof import trace as traces
@@ -90,6 +91,12 @@ def changes(ops, pre, flash):
             erased = bytes([0xFF]) * size
             out.append(image[off:off + size] != erased)
             image[off:off + size] = erased
+        elif op["kind"] == "partial_erase":
+            # nRF52: one step of a page erase spread over several (see trace.py)
+            off, size = traces.erase_span(op, flash)
+            after = traces.partially_erased(bytes(image[off:off + size]), op["total_us"])
+            out.append(image[off:off + size] != after)
+            image[off:off + size] = after
         elif op["kind"] == "mass_erase":
             out.append(any(b != 0xFF for b in image[:flash.size]))
             image[:flash.size] = bytes([0xFF]) * flash.size
@@ -100,6 +107,25 @@ def changes(ops, pre, flash):
             image[off:off + len(new)] = new
         else:
             out.append(False)           # refused, protected, or it wrote what was already there
+    return out
+
+
+def distinct_starts(ops, pre, flash):
+    """For each operation: does cutting just before it leave flash in a state no earlier
+    cut leaves? Only if the operation before it changed something (op 0 always counts: it
+    is the flash the update started from), and only if the result is not a state already
+    met: an update can bring flash back to what it was (a swap step undone, a page erased
+    and written again with the same bytes), and one cut covers both."""
+    changed = changes(ops, pre, flash)
+    replay = traces.Replay(pre, ops, flash)
+    seen, out = set(), []
+    for n in range(len(ops)):
+        if n and not changed[n - 1]:
+            out.append(False)
+            continue
+        d = hashlib.sha1(replay.at(n)).digest()
+        out.append(d not in seen)
+        seen.add(d)
     return out
 
 
@@ -122,10 +148,7 @@ def make(ops, pre, flash, mode="phases", per_phase=8, small=12):
     """
     if mode not in MODES:
         raise ValueError("plan mode must be one of %s, not %r" % (", ".join(MODES), mode))
-    changed = changes(ops, pre, flash)
-    # cutting before op n shows a new state only if op n-1 changed something
-    # (op 0 always does: it is the flash the update started from)
-    new_state = [n == 0 or changed[n - 1] for n in range(len(ops))]
+    new_state = distinct_starts(ops, pre, flash)
     plan = Plan(mode=mode, operations=len(ops))
     for ph in traces.phases(ops, flash):
         candidates = [n for n in range(ph.first, ph.last + 1) if new_state[n]]

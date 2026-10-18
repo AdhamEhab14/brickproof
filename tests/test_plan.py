@@ -221,3 +221,23 @@ def test_shards_together_make_exactly_the_whole_campaign():
         parts.append([r.cut for r in out.results[1:]])
     assert sorted(sum(parts, [])) == sorted(whole) and all(parts)
     assert not set(parts[0]) & set(parts[1])
+
+
+def test_a_state_met_again_is_cut_once():
+    pre = bytearray(blank())
+    pre[PAGE:PAGE + 2] = b"\x34\x12"
+    # erase the page, write the same halfword back, erase again: the flash before op 2 is
+    # the flash the update started from, and the flash before op 3 the one before op 1
+    ops = [erase(0, BASE + PAGE), prog(1, BASE + PAGE, 0x1234), erase(2, BASE + PAGE),
+           prog(3, BASE + 2 * PAGE, 0xBEEF)]
+    assert plans.distinct_starts(ops, bytes(pre), FLASH) == [True, True, False, False]
+    assert plans.make(ops, bytes(pre), FLASH, mode="every").cuts == [0, 1]
+
+
+def test_a_partial_erase_step_is_a_change():
+    pre = bytearray(blank())
+    pre[PAGE:PAGE + 4] = b"\x00\x00\x00\x00"
+    ops = [{"index": 0, "kind": "partial_erase", "addr": BASE + PAGE, "total_us": 10 ** 9},
+           prog(1, BASE + 2 * PAGE, 0xBEEF)]
+    assert plans.changes(ops, bytes(pre), FLASH) == [True, True]
+    assert plans.make(ops, bytes(pre), FLASH, mode="every").cuts == [0, 1]
