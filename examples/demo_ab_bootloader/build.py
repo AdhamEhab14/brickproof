@@ -25,12 +25,13 @@ CFLAGS = ["-mthumb", "-Os", "-g", "-Wall", "-Wextra", "-Werror",
 # per chip: file name prefix, compiler flags, linker script suffix, bugs that do not apply
 CHIPS = [
     # an F1 page erase is far shorter than the watchdog's timeout: no bug to show there
-    ("", ["-mcpu=cortex-m3"], "", ("bootloader_bug_watchdog", "bootloader_ext",
+    ("", ["-mcpu=cortex-m3"], "", ("bootloader_bug_watchdog", "bootloader_bug_boot_loop", "bootloader_ext",
                                    "bootloader_ext_bug_consume_first", "bootloader_bug_nwrite",
                                    "bootloader_ee", "bootloader_ee_bug_no_invalidate",
                                    "bootloader_bug_no_ecc_nmi")),
     # an F4 lets a half-written cell be programmed again, so resuming a copy is fine there
     ("f411_", ["-mcpu=cortex-m4", "-DSTM32F4"], "_f411", ("bootloader_bug_resume_copy",
+                                                         "bootloader_bug_boot_loop",
                                                          "bootloader_bug_nwrite",
                                                          "bootloader_bug_no_ecc_nmi")),
     # the nRF52 has no flash keys to forget, a 4 KB page erase is far shorter than any
@@ -51,6 +52,7 @@ CHIPS = [
     # timeout, the option-byte bug is F-series code, and the external memories are wired
     # up on the F411 only
     ("l476_", ["-mcpu=cortex-m4", "-DSTM32L4"], "_l476", ("bootloader_bug_self_lock",
+                                                         "bootloader_bug_boot_loop",
                                                          "bootloader_bug_watchdog",
                                                          "bootloader_bug_nwrite",
                                                          "bootloader_ext",
@@ -63,6 +65,7 @@ CHIPS = [
     # external memories are wired up on the F411 only
     ("h563_", ["-mcpu=cortex-m33", "-DSTM32H5"], "_h563",
      ("bootloader_bug_self_lock", "bootloader_bug_watchdog", "bootloader_bug_nwrite",
+      "bootloader_bug_boot_loop",
       "bootloader_ext", "bootloader_ext_bug_consume_first", "bootloader_ee",
       "bootloader_ee_bug_no_invalidate", "bootloader_bug_no_ecc_nmi",
      "bootloader_standby", "bootloader_bug_standby_ram")),
@@ -84,6 +87,7 @@ BOOTLOADERS = {
     "bootloader_bug_watchdog": ["-DBUG_WATCHDOG"],
     "bootloader_bug_early_unpg": ["-DBUG_EARLY_UNPG"],
     "bootloader_bug_nwrite": ["-DBUG_NWRITE"],
+    "bootloader_bug_boot_loop": ["-DBUG_BOOT_LOOP"],    # the nRF52840 only
     "bootloader_hold_pg": ["-DHOLD_PG"],        # not a bug: PG held over a run of cells
     # not bugs: the staged image and the rollback floor in an external SPI NOR flash chip
     "bootloader_ext": ["-DEXT_FLASH"],

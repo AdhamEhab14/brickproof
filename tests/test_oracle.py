@@ -219,3 +219,71 @@ def test_with_both_installed_the_core_must_be_in_one_of_them():
 def test_running_an_installed_image_the_scenario_does_not_accept_fails():
     v = side_by_side(accept=["program"]).judge(device_with_bootloader(NEW_IMAGE))
     assert not v.ok and v.image == "bootloader" and "accepts only program" in v.message
+
+
+class Rebooting(FakeDevice):
+    """Runs the new image, and is reset every `period` seconds of virtual time."""
+
+    def __init__(self, period=None, after=None):
+        super().__init__()
+        self.mem[SLOT - 0x08000000:SLOT - 0x08000000 + len(NEW_IMAGE)] = NEW_IMAGE
+        self.period, self.after, self.t, self.count = period, after, 0.0, 0
+
+    def run_for(self, seconds):
+        super().run_for(seconds)
+        self.t += seconds
+        if self.period:
+            self.count = int(self.t // self.period)
+        if self.after is not None and self.t >= self.after:
+            self.cpu = (0x08000004, 3)      # by then it sits in the HardFault handler
+
+    def resets(self):
+        return self.count
+
+
+def running_new(d):
+    d.cpu = (SLOT + 4, 0)
+    return d
+
+
+def test_a_device_that_keeps_resetting_is_not_recovered():
+    v = Oracle([OLD, NEW], accept=["new"], stable_for=1.0).judge(running_new(Rebooting(period=0.5)))
+    assert not v.ok and "keeps rebooting" in v.message and v.image == "new"
+
+
+def test_a_device_that_runs_steadily_passes_the_wait():
+    assert Oracle([OLD, NEW], accept=["new"], stable_for=1.0).judge(running_new(Rebooting())).ok
+
+
+def test_a_device_that_faults_during_the_wait_fails():
+    v = Oracle([OLD, NEW], accept=["new"], stable_for=1.0).judge(running_new(Rebooting(after=0.5)))
+    assert not v.ok and "1.0 s later" in v.message and "HardFault" in v.message
+
+
+def test_no_wait_without_stable_for_or_when_asked_not_to():
+    d = running_new(Rebooting(period=0.5))
+    assert Oracle([OLD, NEW], accept=["new"]).judge(d).ok
+    assert Oracle([OLD, NEW], accept=["new"], stable_for=1.0).judge(d, stable=False).ok
+
+
+def test_an_emulator_that_cannot_count_resets_still_gets_the_second_look():
+    d = running_new(Rebooting(after=0.5))
+    d.resets = lambda: None
+    assert not Oracle([OLD, NEW], accept=["new"], stable_for=1.0).judge(d).ok
+
+
+def test_stable_for_defaults_to_a_second_in_an_adapter(tmp_path):
+    (tmp_path / "a.img").write_bytes(b"x")
+    cfg = adapters._parse_oracle({"oracle": {"images": {"a": {"file": "a.img", "at": 0}},
+                                             "accept": ["a"]}}, str(tmp_path))
+    assert cfg["stable_for"] == 1.0
+    with pytest.raises(adapters.AdapterError):
+        adapters._parse_oracle({"oracle": {"images": {"a": {"file": "a.img", "at": 0}},
+                                           "accept": ["a"], "stable_for": -1}}, str(tmp_path))
+
+
+def test_side_by_side_images_keep_to_run_in():
+    o = Oracle([BOOTLOADER, PROGRAM], accept=["bootloader", "program"], run_in=(SLOT, SLOT + 0x100))
+    assert o.judge(device_with_bootloader(NEW_IMAGE, pc=SLOT + 4)).ok
+    v = o.judge(device_with_bootloader(NEW_IMAGE, pc=BOOT_AT + 8))
+    assert not v.ok and "outside" in v.message

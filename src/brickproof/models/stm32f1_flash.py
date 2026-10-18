@@ -96,6 +96,7 @@ from Antmicro.Renode.Time import TimeInterval
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
  PROTECTED, PROTECTED_AT) = range(1, 21)
+RESETS = 60                 # state word: resets since the engine last cleared it (all models)
 
 bus = None if request.IsInit else self.GetMachine().SystemBus   # no machine yet at construction
 
@@ -118,12 +119,14 @@ def ensure_state():
         self.GetMachine().MachineReset += after_reset
 
 
-def after_reset(machine, ob=OB_BASE, kr=IWDG_KR):
+def after_reset(machine, ob=OB_BASE, kr=IWDG_KR, resets=STATE + 4 * RESETS):
     # Runs after every reset of the machine, for as long as this emulator lives. With
     # WDG_SW cleared in the USER option byte the watchdog is a hardware one: it is
     # running before the first instruction, with its reset timeout of about 0.4 s.
     # The values come in as defaults because this outlives the script that defined it.
+    # Every reset is counted, so the engine can tell a device that keeps rebooting.
     b = machine.SystemBus
+    b.WriteDoubleWord(resets, (int(b.ReadDoubleWord(resets)) + 1) & 0xFFFFFFFF)
     for c in b.GetCPUs():
         c.SetHookAtMemoryAccess(None)           # a reset ends any program that was going on
     if not int(b.ReadByte(ob + 2)) & 1:

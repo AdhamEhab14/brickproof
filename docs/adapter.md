@@ -92,6 +92,7 @@ oracle:                        # which images may be installed after a cut
     old: {file: build/app_v1.img, at: 0x08004000}
     new: {file: build/app_v2.img, at: 0x08004000}
   accept: [old, new]           # or [new] if a cut must never lose the update
+  stable_for: 1.0              # seconds it must then run with no reset (0 = do not wait)
 
 scenario:
   name: update-v1-to-v2
@@ -340,6 +341,13 @@ Without an `oracle` section the verdict rests on what the firmware says about it
 the run says so. With one, a result only passes if the bytes at `at` are exactly one of the
 accepted images and the CPU is executing inside it, not in a fault handler. List every image
 that may legitimately be there, and put in `accept` the ones a cut is allowed to leave.
+
+Seen running is not enough: a device can boot its image and be reset by its watchdog half a
+second later, over and over, and every quick look finds it running. So the oracle then lets
+the device run for `stable_for` seconds more (1 by default) and fails the cut if it reset in
+that time, or if it is no longer running an accepted image at the end. Set it above the
+longest watchdog timeout the firmware uses. Resets are counted by the Renode flash models;
+on m33mu, which does not count them, only the second look is made.
 
 ## Choosing cuts
 

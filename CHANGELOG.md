@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+**Boot loops are failures.** The oracle used to look at the core four times, 20 ms apart. A
+device that boots its image and is reset by its watchdog half a second later looked
+recovered. Now the Renode flash models count every reset, and once an accepted image is
+seen running the oracle waits `oracle.stable_for` seconds (1 by default) and fails the cut
+if the device reset in that time or is no longer running it. New nRF52840 bug build
+`nrf52-bug-boot_loop`: a cut just before Slot B is consumed sends the bootloader into a
+trial boot this app cannot pass. With `stable_for: 0` that cut passed.
+
+**The planner counts states by content.** A state the update comes back to (a page erased
+and written again with the same bytes) is now cut once, so "distinct flash states" is exact.
+An nRF52 partial-erase step was taken for an operation that changes nothing, and the state
+after it was never cut; it is now.
+
+**Smaller fixes.** A cut that fires past the end of the golden run stops the run as not
+deterministic (exit 3) instead of being judged. `oracle.run_in` now also applies when images
+sit side by side. The README no longer lists low-power modes and four-byte SPI NOR
+addressing as missing.
+
 ## 0.3.0
 
 Two more chip families and a second emulator, the memories beside the chip, flash storage

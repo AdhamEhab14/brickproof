@@ -159,3 +159,14 @@ def test_a_stray_write_is_blamed_on_the_firmware_not_on_the_self_check():
     device._boot = boot_and_scribble
     results, _ = campaign(device)
     assert len(results) == 1 and "no flash operation behind it" in results[0].message
+
+
+def test_a_cut_past_the_end_of_the_golden_run_trips_the_self_check():
+    device = FakeDevice()
+    ad = SimpleNamespace(flash=device.flash, check_states=True, cut_limit=0.03, update_time=1.0,
+                         boot_settle=0.1, cuts=[])
+    golden = runner.Golden(ad, device.dump_flash())
+    assert runner.run_cut(device, FakeDriver(device), ad, None, golden).passed
+    golden.record(golden.ops[:3])         # as if the uninterrupted update had stopped there
+    with pytest.raises(runner.SelfCheckFailed, match="not the same"):
+        runner.run_cut(device, FakeDriver(device), ad, Cut(name="op-5", at_op=5), golden)

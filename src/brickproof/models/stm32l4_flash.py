@@ -82,6 +82,7 @@ from Antmicro.Renode.Time import TimeInterval
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
  PROTECTED, PROTECTED_AT, _READS, _READS_AT, ECC_READS, ECC_AT, ECC_BROKEN, ECCR) = range(1, 27)
+RESETS = 60                 # state word: resets since the engine last cleared it (all models)
 
 bus = None if request.IsInit else self.GetMachine().SystemBus   # no machine yet at construction
 
@@ -126,11 +127,13 @@ def ecc_reader(b, state=STATE, ecc_map=ECC_MAP, base=FLASH_BASE, size=FLASH_SIZE
     return seen
 
 
-def after_reset(machine):
+def after_reset(machine, resets=STATE + 4 * RESETS):
     # Runs after every reset, for as long as this emulator lives. A reset ends any program
     # that was going on; reads of broken double words are still watched; with IWDG_SW
-    # cleared the watchdog starts by itself.
+    # cleared the watchdog starts by itself. Every reset is counted, so the engine can
+    # tell a device that keeps rebooting.
     b = machine.SystemBus
+    b.WriteDoubleWord(resets, (int(b.ReadDoubleWord(resets)) + 1) & 0xFFFFFFFF)
     b.WriteDoubleWord(STATE + 4 * ECCR, 0)          # ECCR is cleared by a reset
     seen = ecc_reader(b)
 

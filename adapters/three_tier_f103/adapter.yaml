@@ -43,6 +43,10 @@ driver:
 # A cut before the SBL starts leaves the old FBL, a later one must end with the new.
 oracle:
   accept: [old_fbl, new_fbl]
+  # The Boot Manager stretches the watchdog to about 26 s, more than any wait per cut could
+  # cover, and the FBL polls its UART flat out, so a virtual second costs some 12 s here. A
+  # short wait still sees resets the firmware asks for itself.
+  stable_for: 0.25
 
 scenario:
   name: fbl-self-update

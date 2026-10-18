@@ -209,6 +209,8 @@ jobs:
             expect: 1
           - adapter: nrf52-bug-nwrite       # a third write to a word without an erase
             expect: 1
+          - adapter: nrf52-bug-boot_loop    # boots, then a watchdog reset, on every boot
+            expect: 1
           - adapter: nrf52-hold_pg
             expect: 0
             torn: true

@@ -84,6 +84,7 @@ from Antmicro.Renode.Time import TimeInterval
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
  PROTECTED, PROTECTED_AT, READS, READS_AT) = range(1, 23)
+RESETS = 60                 # state word: resets since the engine last cleared it (all models)
 UICR_COUNTS = COUNTS + FLASH_SIZE // 4      # then the UICR's words
 PARTIAL = UICR_COUNTS + 0x400               # then microseconds of partial erase, a word a page
 
@@ -108,9 +109,12 @@ def ensure_state():
         self.GetMachine().MachineReset += after_reset
 
 
-def after_reset(machine):
-    # a reset ends any programming that was going on: CONFIG is back to Ren
-    for c in machine.SystemBus.GetCPUs():
+def after_reset(machine, resets=STATE + 4 * RESETS):
+    # a reset ends any programming that was going on: CONFIG is back to Ren. Every reset
+    # is counted, so the engine can tell a device that keeps rebooting.
+    b = machine.SystemBus
+    b.WriteDoubleWord(resets, (int(b.ReadDoubleWord(resets)) + 1) & 0xFFFFFFFF)
+    for c in b.GetCPUs():
         c.SetHookAtMemoryAccess(None)
 
 
