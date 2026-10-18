@@ -1880,3 +1880,9 @@ operation changed flash, so a state met twice was cut twice and counted as two d
 states; it now dedupes by content, as the depth exploration already did. And `changes()`
 had no case for the nRF52's `partial_erase`, so it took each step for a no-op and the state
 after it was never planned for a cut.
+
+The first CI run with the wait put the Three-Tier e2e job past its hour: measured locally,
+one virtual second there costs about 12 real seconds (the FBL polls its UART flat out), so
+a cut went from 15.8 s to 28.7 s. That adapter now sets `stable_for: 0.25`. A longer wait
+would not buy anything there anyway: its Boot Manager stretches the watchdog to about 26 s,
+which no wait per cut could cover, and a short one still sees resets the firmware asks for.
