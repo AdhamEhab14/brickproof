@@ -37,12 +37,15 @@ class Verdict:
 
 
 class Oracle:
-    """images   every image that is allowed to exist on the device
-    accept   names of the ones this scenario may end up with after a cut
-    run_in   (start, end) the PC must stay within; default: the installed image itself
+    """images     every image that is allowed to exist on the device
+    accept     names of the ones this scenario may end up with after a cut
+    run_in     (start, end) the PC must stay within; default: the installed image itself
+    stable_for virtual seconds the device must then keep running without a reset. A few
+               samples a few ms apart see an image that boots and is reset by its watchdog
+               half a second later as running; this sees the loop. 0 = do not wait
     """
 
-    def __init__(self, images, accept, run_in=None, samples=4, interval=0.02):
+    def __init__(self, images, accept, run_in=None, samples=4, interval=0.02, stable_for=0.0):
         if not images:
             raise ValueError("oracle: no images")
         names = [i.name for i in images]
@@ -54,6 +57,7 @@ class Oracle:
         self.run_in = run_in
         self.samples = samples
         self.interval = interval
+        self.stable_for = stable_for
 
     def _find(self, session):
         """(approved images that are in flash, one per address; the closest miss)."""
@@ -79,7 +83,27 @@ class Oracle:
         return None, ("no approved image is installed at 0x%08X: the closest is %s, and flash "
                       "differs from it at 0x%08X" % (img.addr, img.name, diff))
 
-    def judge(self, session):
+    def judge(self, session, stable=True):
+        """The verdict. With stable (and stable_for set), an image seen running must go
+        on running, with no reset, for stable_for seconds more."""
+        v = self._look(session)
+        if not (v.ok and stable and self.stable_for > 0):
+            return v
+        count = getattr(session, "resets", None)
+        before = count() if count else None     # None: the emulator cannot count resets
+        session.run_for(self.stable_for)
+        if before is not None:
+            n = count() - before
+            if n:
+                return Verdict(False, v.image, "%s was running, then the device reset %d time(s) "
+                               "in the next %.1f s: it keeps rebooting" % (v.image, n, self.stable_for))
+        again = self._look(session)
+        if not again.ok:
+            return Verdict(False, again.image, "%s was running, but %.1f s later: %s"
+                           % (v.image, self.stable_for, again.message))
+        return again
+
+    def _look(self, session):
         found, _ = self._find(session)
         if not found:
             return Verdict(False, None, self.installed(session)[1])
@@ -114,6 +138,9 @@ class Oracle:
             if not inside:
                 return Verdict(False, None, "%s are installed but neither is running: PC 0x%08X"
                                % (names, pc))
+            if self.run_in and not self.run_in[0] <= pc < self.run_in[1]:
+                return Verdict(False, inside[0].name, "%s are installed but PC 0x%08X is outside "
+                               "0x%08X..0x%08X" % (names, pc, self.run_in[0], self.run_in[1]))
             running = inside[0]
             if running.name not in self.accept:
                 return Verdict(False, running.name, "the core is running %s; this scenario accepts "
@@ -135,4 +162,4 @@ def build(adapter, driver):
     for name, (data, addr) in (extra() if extra else {}).items():
         images.append(Image(name, bytes(data), addr))
     return Oracle(images, cfg["accept"], cfg.get("run_in"), cfg.get("samples", 4),
-                  cfg.get("interval", 0.02))
+                  cfg.get("interval", 0.02), cfg.get("stable_for", 0.0))

@@ -49,6 +49,7 @@ REG_ECC_BROKEN = 0x160          # STM32L4: double words whose ECC does not match
 ECC_MAP = 0x94000000            # STM32L4: the flash model's ECC map, a byte per double word
 STATE_PWR_FLAGS = 0x90000000 + 4 * 41     # the PWR model's SBF and WUF (models/stm32_pwr.py)
 STATE_PWR_ASLEEP = 0x90000000 + 4 * 45    # and the Standby a wake is due for
+STATE_RESETS = 0x90000000 + 4 * 60        # resets the flash model has seen since power-up
 EXPECT_BASE = 0x92000000         # bpExpect: an image for the flash model to compare flash with
 TRACE_KINDS = {"E": "erase", "M": "mass_erase", "P": "program", "P?": "program", "X": "refused",
                "W": "protected", "Q": "partial_erase"}
@@ -880,10 +881,17 @@ class RenodeSession:
                         "sysbus WriteDoubleWord 0x%X 0" % (STATE_PWR_FLAGS),
                         "sysbus WriteDoubleWord 0x%X 0" % (STATE_PWR_ASLEEP)]
                        + (["%s PowerCycle" % self._ext] if self.flash.ext_size else [])
-                       + self._reset_lines())
+                       + self._reset_lines()
+                       # the reset just made is the power-up itself, not one to count
+                       + ["sysbus WriteDoubleWord 0x%X 0" % STATE_RESETS])
         self.rx.clear()
         if settle:
             self.run_for(settle)
+
+    def resets(self):
+        """How many times the machine has reset since the last power cycle: the firmware
+        asking for one, a watchdog, a lock-up. A device that keeps counting is in a loop."""
+        return self.read_word(STATE_RESETS)
 
     def pc(self):
         for tok in self.cmd("cpu PC").split():

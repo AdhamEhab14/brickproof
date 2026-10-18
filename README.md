@@ -103,9 +103,12 @@ mode left on over a whole run of cells.
 And for an **nRF52840**, which has no flash keys at all: one register (CONFIG) says whether a
 store is a program, whether an erase is allowed, or neither. `brickproof demo nrf52` and the
 `nrf52-bug-*` builds have the mistakes that apply there (`early_unpg` becomes a store made
-with CONFIG back to read-only). It has one of its own, `nrf52-bug-nwrite`: progress kept by
+with CONFIG back to read-only). It has two of its own. `nrf52-bug-nwrite`: progress kept by
 clearing one more bit of the same word after each step. An STM32F4 takes that; the nRF52
-promises only two writes to a word between erases.
+promises only two writes to a word between erases. And `nrf52-bug-boot_loop`: a cut just
+before the install's last step sends the bootloader into a trial boot under the watchdog
+that this app cannot pass. The new image is installed and prints its banner, and half a
+second later the watchdog resets it, on every boot.
 
 And for an **STM32L476**: `brickproof demo l476`. Every 64 bits of its flash carry ECC, and an
 erase or program cut short leaves the ECC wrong, so the next read of that double word raises
@@ -183,7 +186,9 @@ endurance the datasheet promises.
 
 **An outside judge.** The verdict does not rest on what the firmware says about itself. An
 oracle checks that the bytes installed are exactly an approved image and that the CPU is
-running inside it, not in a fault handler. `runs v2` at the end of a line is its finding.
+running inside it, not in a fault handler, and that it keeps running without a reset for a
+second more: a device stuck in a boot loop is not recovered. `runs v2` at the end of a line
+is its finding.
 
 **A check on itself.** After every cut, the emulated flash is compared byte for byte with
 what the golden run predicts for that point. If they differ, the run stops.
@@ -327,9 +332,8 @@ not shipped in it: build m33mu yourself (or use the GitHub Action, which builds 
 - Flash timing uses datasheet figures (typical or slowest), not measurements, and does not
   vary with temperature, voltage or age. Wear is counted per update, not simulated.
 - An external flash chip is modelled as SPI NOR with the 25-series commands in single-line
-  mode. Quad mode, four-byte addressing and other kinds of external memory are not.
-- Not modelled: low-power modes, so the two option bits that decide whether entering one
-  resets the chip have no effect.
+  mode (four-byte addressing included), or as an I2C EEPROM. Quad and dual modes, NAND and
+  SD cards are not.
 
 ## Licence
 

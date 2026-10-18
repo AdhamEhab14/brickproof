@@ -193,8 +193,9 @@ def _verdict(session, driver, adapter, res, oracle, update_op=None):
         msg = fault
     elif res.recovered and oracle:
         # the driver's checks may have poked the device (a rollback probe stages an
-        # older image and reboots), so look once more at what it ended up as
-        v = oracle.judge(session)
+        # older image and reboots), so look once more at what it ended up as. That it
+        # keeps running was seen the first time.
+        v = oracle.judge(session, stable=False)
         res.image = v.image
         if not v.ok:
             res.recovered = False
@@ -251,7 +252,12 @@ def run_cut(session, driver, adapter, cut, golden):
         kind, addr, ops = session.cut_status()
         res.kind, res.addr = KIND_NAMES.get(kind, str(kind)), addr
         res.op_index = ops - base
-        op = golden.ops[res.op_index] if res.op_index < len(golden.ops) else None
+        if res.op_index >= len(golden.ops):
+            # the golden run ended before this operation: the update did more this time
+            raise SelfCheckFailed("cut %s: fired at operation %d, but the uninterrupted update "
+                                  "has only %d, so the update is not the same from one run to "
+                                  "the next" % (cut.name, res.op_index, len(golden.ops)))
+        op = golden.ops[res.op_index]
         if op and op["kind"] == res.kind == "program":
             res.addr = op["addr"]                          # the model never sees it; the golden run did
             _rewind_program(session, golden, res)
@@ -500,7 +506,7 @@ def content_faults(pool, adapter, driver, golden, out, on_result=None, fail_fast
         image[off:off + len(data)] = data
         tasks.append((name, bytes(image)))
     o = golden.oracle
-    judge = oracles.Oracle(o.images, [cfg["keep"]], o.run_in, o.samples, o.interval)
+    judge = oracles.Oracle(o.images, [cfg["keep"]], o.run_in, o.samples, o.interval, o.stable_for)
     results = pool.run(lambda s, d, t: run_content(s, d, adapter, t[0], t[1], judge), tasks,
                        on_result, _failed if fail_fast else None)
     out.results += results
@@ -523,13 +529,14 @@ def _recovery_trace(session, driver, adapter, image):
     return session.trace_stop()
 
 
-def run_deep(session, driver, adapter, parent, m, name, level, state, real):
+def run_deep(session, driver, adapter, parent, m, name, level, state, real, root):
     """A cut during recovery: `parent` is the recovery (its starting flash and its traced
     operations), `m` the operation of it to cut before, `state` the flash that leaves.
 
     With real=True the cut is made in the emulator and the computed state is checked
     against it. Otherwise the device is powered up from the computed state directly,
-    which is the same test (only flash survives a power cut) and much cheaper."""
+    which is the same test (only flash survives a power cut) and much cheaper. `root` is
+    the operation of the update the first cut fell before."""
     op = parent.ops[m]
     res = CutResult(cut=name, fired=True, kind=op["kind"], addr=op["addr"], op_index=m, depth=level)
     t0 = time.time()
@@ -547,8 +554,7 @@ def run_deep(session, driver, adapter, parent, m, name, level, state, real):
             parent.verify(session, m, "recovery cut %s" % name)
         else:
             session.restore_flash(state)
-        # the update operation the first cut fell before: "op-N > op-M ..."
-        _verdict(session, driver, adapter, res, parent.oracle, int(name.split(" ")[0][3:]))
+        _verdict(session, driver, adapter, res, parent.oracle, root)
         return res
     except MachineHung:
         res.message = "the device locked up (emulated CPU stopped making progress)"
@@ -592,7 +598,7 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
     parents = []
     for n in wanted:
         if n in clean and clean[n].passed:
-            parents.append(("op-%d" % n, bytes(golden.replay.at(n))))
+            parents.append(("op-%d" % n, bytes(golden.replay.at(n)), n))
 
     for level in range(2, cfg["levels"] + 1):
         if not parents:
@@ -600,7 +606,7 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
         stats["deepest"] = level
         traces_ = pool.run(lambda s, d, p: [_recovery_trace(s, d, adapter, p[1])], parents)
         tasks = []
-        for (label, image), ops in zip(parents, traces_, strict=True):
+        for (label, image, root), ops in zip(parents, traces_, strict=True):
             if not ops:
                 continue                        # this recovery writes nothing: nothing to cut
             parent = Golden(adapter, image, golden.oracle)
@@ -616,7 +622,7 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
                 if stats["states"] + len(tasks) >= cfg["max_states"]:
                     stats["capped"] = True
                     break
-                tasks.append((parent, m, "%s > op-%d" % (label, m), state, real, None))
+                tasks.append((parent, m, "%s > op-%d" % (label, m), state, real, None, root))
                 real = False
                 if torn_kinds:
                     # the half-done versions of this recovery operation, too
@@ -625,13 +631,13 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
                         if td not in seen:
                             seen.add(td)
                             tasks.append((parent, m, "%s > op-%d %s" % (label, m, t.kind),
-                                          t.image, False, t.kind))
+                                          t.image, False, t.kind, root))
             if stats["capped"]:
                 break
 
         def test(session, driver, task, level=level):
-            parent, m, name, state, real, torn_kind = task
-            r = run_deep(session, driver, adapter, parent, m, name, level, state, real)
+            parent, m, name, state, real, torn_kind, root = task
+            r = run_deep(session, driver, adapter, parent, m, name, level, state, real, root)
             if torn_kind:
                 r.torn, r.kind = torn_kind, torn_kind
             return r
@@ -642,7 +648,7 @@ def explore(pool, adapter, golden, out, on_result=None, fail_fast=False):
         if stats["capped"] or (fail_fast and any(_failed(r) for r in results)):
             return
         by_name = {r.cut: r for r in results}
-        parents = [(t[2], t[3]) for t in tasks if t[5] is None and by_name[t[2]].passed]
+        parents = [(t[2], t[3], t[6]) for t in tasks if t[5] is None and by_name[t[2]].passed]
 
 
 @dataclass

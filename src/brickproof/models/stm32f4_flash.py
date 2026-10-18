@@ -98,6 +98,7 @@ from Antmicro.Renode.Time import TimeInterval
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
  PROTECTED, PROTECTED_AT, PCROP_READS, PCROP_AT, PCROP_MASK, RDERR_FLAG) = range(1, 25)
+RESETS = 60                 # state word: resets since the engine last cleared it (all models)
 
 bus = None if request.IsInit else self.GetMachine().SystemBus   # no machine yet at construction
 
@@ -132,7 +133,7 @@ def pcrop_mask(b, ob=OB_BASE):
 
 
 def after_reset(machine, ob=OB_BASE, kr=IWDG_KR, state=STATE, slots=None, base=FLASH_BASE,
-                size=FLASH_SIZE, sectors=SECTORS):
+                size=FLASH_SIZE, sectors=SECTORS, resets=STATE + 4 * RESETS):
     # Runs after every reset of the machine, for as long as this emulator lives. With
     # WDG_SW (bit 5 of the USER byte) cleared the watchdog is a hardware one: it is
     # running before the first instruction, with its reset timeout of about 0.5 s.
@@ -140,6 +141,8 @@ def after_reset(machine, ob=OB_BASE, kr=IWDG_KR, state=STATE, slots=None, base=F
     # (a reset runs the script's init again, which drops its handle on the bus: the
     # read watcher below carries its own).
     b = machine.SystemBus
+    # every reset is counted, so the engine can tell a device that keeps rebooting
+    b.WriteDoubleWord(resets, (int(b.ReadDoubleWord(resets)) + 1) & 0xFFFFFFFF)
     mask_slot, reads_slot, at_slot, flag_slot = slots
     mask = pcrop_mask(b, ob)
     b.WriteDoubleWord(state + 4 * mask_slot, mask)

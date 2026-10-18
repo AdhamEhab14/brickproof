@@ -56,6 +56,14 @@
  *                         which lets a word be programmed again and again. The nRF52
  *                         allows two writes to a word between erases, and the third
  *                         one is outside what the chip guarantees.
+ *   BUG_BOOT_LOOP         (nRF52840 only) when a cut has left the install complete but
+ *                         Slot B not yet consumed, give the image a trial boot: start the
+ *                         watchdog with a reload register of its own, which a healthy new
+ *                         image feeds and then consumes Slot B. This app was built before
+ *                         that and feeds only the usual one, so half a second in the
+ *                         watchdog resets it, Slot B is still there, and the next boot does
+ *                         the same. Every boot prints the app's banner: only a look longer
+ *                         than one boot shows the loop.
  *
  * EXT_FLASH (STM32F411 only) is not a bug either: the new image waits in an external SPI
  * NOR flash chip, and the rollback floor is kept there too.
@@ -487,6 +495,21 @@ __attribute__((naked, noreturn)) static void switch_stack_and_go(uint32_t sp, ui
 #endif
 }
 
+#ifdef BUG_BOOT_LOOP
+#ifndef NRF52
+#error "BUG_BOOT_LOOP is written for the nRF52840 watchdog"
+#endif
+/* Start the watchdog for the image's first run. It wants RR[1] as well as RR[0] before it
+ * reloads, and cannot be stopped or changed once it runs. */
+static void trial_boot(void)
+{
+    REG(0x40010504u) = 16384u;            /* CRV: half a second of the 32.768 kHz clock */
+    REG(0x40010508u) = 3u;                /* RREN: RR[0] and RR[1] */
+    REG(0x40010000u) = 1u;                /* TASKS_START */
+    uart_puts("BL: trial boot\r\n");
+}
+#endif
+
 static void jump(uint32_t slot)
 {
     const uint32_t *vt = (const uint32_t *)(slot + IMG_OFFSET);
@@ -509,9 +532,13 @@ int main(void)
 
     if (image_valid(SLOT_B)) {
         if (image_valid(SLOT_A) && same_image(SLOT_A, SLOT_B)) {
+#ifdef BUG_BOOT_LOOP
+            trial_boot();                 /* Slot B is left for the image to consume */
+#else
             flash_unlock();               /* cut after the copy, before step 5 */
             consume_staging();
             flash_lock();
+#endif
         } else if (hdr(SLOT_B)->version >= floor) {
             install();
             floor = meta_floor();

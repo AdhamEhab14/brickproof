@@ -511,8 +511,12 @@ def _parse_oracle(d, target):
         run_in = (_need(run_in, "start", "oracle.run_in"), _need(run_in, "end", "oracle.run_in"))
         if run_in[0] >= run_in[1]:
             raise AdapterError("oracle.run_in: start must be below end")
+    stable_for = float(o.get("stable_for", 1.0))
+    if stable_for < 0:
+        raise AdapterError("oracle.stable_for: seconds, 0 or more")
     return {"images": images, "accept": accept, "run_in": run_in,
-            "samples": int(o.get("samples", 4)), "interval": float(o.get("interval", 0.02))}
+            "samples": int(o.get("samples", 4)), "interval": float(o.get("interval", 0.02)),
+            "stable_for": stable_for}
 
 
 def load(path, target=None):

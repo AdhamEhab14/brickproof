@@ -531,3 +531,9 @@ class M33muSession:
         self._dump = None
         if settle:
             self.run_for(settle)
+
+    def resets(self):
+        """m33mu does not count resets: None. The oracle then only looks again after its
+        wait (oracle.stable_for), which still sees a loop that is in its bootloader or a
+        fault handler at that moment."""
+        return None
