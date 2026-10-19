@@ -216,6 +216,7 @@ plan (every): 167 cut(s) over 167 distinct flash states (168 operations): every 
 
 | Option | What it does |
 |---|---|
+| `--full` | everything in one run: clean cuts, `--torn`, `--depth 2` and the adapter's damaged-image tests, on one emulator per core, with a long update sped up automatically (most cuts powered up from their computed state) |
 | `--plan every` / `--plan phases` | cut every distinct flash state, or sample long phases |
 | `--torn` | also boot from torn erases and programs |
 | `--depth 2` | also cut during the recovery from each first cut |
@@ -267,7 +268,7 @@ an emulator that is not installed. `run`, `trace` and `export` make the same che
 
 ```bash
 brickproof check my_adapter.yaml
-brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
+brickproof run my_adapter.yaml --full
 ```
 
 For MCUboot built with Zephyr, the adapter can be written from the build:

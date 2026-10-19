@@ -274,3 +274,10 @@ def test_tiles_name_damaged_images_and_bit_errors_for_what_they_are():
     page = reports.html_page(rep)
     assert "damaged images passed" in page and "images damaged at rest passed" in page
     assert "content cuts in a row" not in page and "bits cuts in a row" not in page
+
+
+def test_commands_quote_a_path_with_a_space():
+    rep = bad()
+    rep["adapter_file"] = r"D:\Embedded projects\a.yaml"
+    failed = next(c for c in rep["cuts"] if not c["passed"] and not c["skipped"])
+    assert reports.reproduce(rep, failed).startswith('brickproof run "%s" ' % rep["adapter_file"])

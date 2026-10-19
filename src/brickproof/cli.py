@@ -121,6 +121,13 @@ def cmd_run(args):
     ad = _load(args)
     if ad is None:
         return 2
+    if args.full and not args.cut:
+        # everything worth testing, as fast as this machine allows
+        args.torn = True
+        if args.depth is None:
+            args.depth = 2
+        if args.jobs is None:
+            args.jobs = "auto"
     if args.plan and not args.cut:
         ad.plan = dict(ad.plan or {}, mode=args.plan)
     if args.cut:
@@ -136,6 +143,8 @@ def cmd_run(args):
         ad.depth = deeper if levels > 1 else None
     if args.real_every and ad.plan:
         ad.plan = dict(ad.plan, real_every=args.real_every)
+    elif args.full and ad.plan and "real_every" not in ad.plan:
+        ad.plan = dict(ad.plan, real_every="auto")     # chosen once the update's length is known
     if args.per_phase is not None and not args.cut:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
     if args.soak:
@@ -154,6 +163,9 @@ def cmd_run(args):
         print("nothing to cut: the adapter has no scenario.cuts and no scenario.plan "
               "(or pass --plan phases)", file=sys.stderr)
         return 2
+    if not args.html:
+        # always a report to open, even when nobody asked for one
+        args.html = os.path.join("brickproof-out", "%s.html" % ad.name)
     _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html, args.sarif)
     print("BrickProof: %s, target %s" % (ad.name, ad.target), flush=True)
     if not ad.oracle:
@@ -233,7 +245,21 @@ def cmd_run(args):
                                                out.shard["cuts"], out.shard["all_cuts"]))
     if out.trace:
         _print_cost(out.trace, ad.flash)
+    _print_verdict(out, report, args.html)
     return 0 if out.passed else 1
+
+
+def _print_verdict(out, report, html):
+    """The one line to read: did it pass, where the report is, and how to see a failure again."""
+    print()
+    if out.passed:
+        print("PASS: the device recovered every time. Report: %s" % html)
+        return
+    failed = [c for c in report["cuts"] if not c["passed"] and not c["skipped"]]
+    print("FAIL: %d of %d did not recover. Report: %s" % (len(failed), len(report["cuts"]), html))
+    if failed:
+        print("the first one: %s: %s" % (failed[0]["cut"], failed[0]["message"]))
+        print("run it alone:  %s" % reports.reproduce(report, failed[0]))
 
 
 def demo_folder():
@@ -436,6 +462,11 @@ def run_options(r):
     r.add_argument("--real-every", type=int, metavar="N",
                    help="make only every Nth planned cut in the emulator and power the others "
                         "up from the computed flash state (much faster on a long update)")
+    r.add_argument("--full", action="store_true",
+                   help="everything worth testing in one run: the clean cuts, torn states, a "
+                        "second cut during each recovery and the adapter's damaged-image tests, "
+                        "on one emulator per core, with long updates sped up by powering most "
+                        "cuts up from their computed state")
     r.add_argument("--torn", action="store_true",
                    help="also boot from torn states: each cut's operation left half done")
     r.add_argument("--depth", type=_depth_arg, metavar="N",

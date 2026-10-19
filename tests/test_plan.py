@@ -241,3 +241,10 @@ def test_a_partial_erase_step_is_a_change():
            prog(1, BASE + 2 * PAGE, 0xBEEF)]
     assert plans.changes(ops, bytes(pre), FLASH) == [True, True]
     assert plans.make(ops, bytes(pre), FLASH, mode="every").cuts == [0, 1]
+
+
+def test_real_every_auto_follows_the_length_of_the_update(tmp_path):
+    assert [runner.auto_real_every(n) for n in (10, 2000, 2001, 50000, 392000)] == [1, 1, 4, 4, 10]
+    out = run(FakeDevice(), {"mode": "every", "real_every": "auto"})
+    assert not any(r.computed for r in out.results), "a 10-operation update: every cut for real"
+    assert load(tmp_path, "  plan: {mode: every, real_every: auto}\n").plan["real_every"] == "auto"

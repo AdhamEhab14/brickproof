@@ -10,6 +10,13 @@ RAM given, images that do not fit in flash, an image size that does not match an
 image's header, a UART the chip does not have, an emulator not installed. `run`, `trace` and
 `export` make the same checks first and stop in a second instead of a minute.
 
+**`brickproof run --full`.** One command instead of three: the clean cuts, torn states, a
+second cut during each recovery and the adapter's damaged-image tests, with `-j auto` and,
+on a long update, `real_every` chosen from its length (`plan.real_every: auto`). Every run
+now writes an HTML report (to `brickproof-out/<adapter name>.html` unless `--html` says
+where) and ends with one line: PASS or FAIL, where the report is, and for a failure the
+command that runs it alone, quoted when the path has a space.
+
 **MCUboot image layouts are read, not typed.** Without `image_size` and `regions`, the
 damaged-image tests take an MCUboot image's size and its header, body and TLV area from the
 image itself, so a rebuild cannot leave a stale number in an adapter.
