@@ -25,9 +25,10 @@ Run on bootloaders that are not ours, it found:
   simulator: [wolfSSL/wolfBoot#937](https://github.com/wolfSSL/wolfBoot/issues/937). Details
   and the adapter: [adapters/wolfboot_f411](adapters/wolfboot_f411).
 
-It also ran on **MCUboot**, on two boards with two upgrade modes: the STM32F411 Black Pill
-(one-sector slots, swap with scratch, 57 cuts) and the nRF52840 DK (swap with move, 156
-cuts). No failure on either.
+It also ran on **MCUboot**, on two boards with three upgrade modes: the STM32F411 Black Pill
+(one-sector slots, swap with scratch, 57 cuts; overwrite only, 14 cuts, 31 torn states and
+12 second cuts during recovery) and the nRF52840 DK (swap with move, 156 cuts). No failure
+on either.
 [adapters/mcuboot](adapters/mcuboot).
 
 And on **wolfBoot** on an STM32H563 with TrustZone, emulated by m33mu (its `stm32h5-tz` config,

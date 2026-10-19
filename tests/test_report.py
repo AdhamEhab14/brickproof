@@ -265,3 +265,12 @@ def test_sarif_for_a_clean_run_has_no_results():
 def test_cuts_in_a_row_get_their_own_rule():
     doc = reports.sarif(bad())
     assert "depth" in {r["ruleId"] for r in doc["runs"][0]["results"]}
+
+
+def test_tiles_name_damaged_images_and_bit_errors_for_what_they_are():
+    rep = good()
+    base = dict(rep["cuts"][1], torn=None, depth=1, passed=True, skipped=False)
+    rep["cuts"] += [dict(base, content="truncate-4"), dict(base, bit_error="0x08000400.3")]
+    page = reports.html_page(rep)
+    assert "damaged images passed" in page and "images damaged at rest passed" in page
+    assert "content cuts in a row" not in page and "bits cuts in a row" not in page

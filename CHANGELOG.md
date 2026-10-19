@@ -15,7 +15,12 @@ and written again with the same bytes) is now cut once, so "distinct flash state
 An nRF52 partial-erase step was taken for an operation that changes nothing, and the state
 after it was never cut; it is now.
 
-**Smaller fixes.** A cut that fires past the end of the golden run stops the run as not
+**MCUboot's overwrite-only mode** on the STM32F411 (`adapters/mcuboot/f411-overwrite.yaml`,
+with `build.py` now taking the upgrade mode): no failure in 14 cuts, 31 torn states, 12
+second cuts during recovery, 8 damaged images and 4 images with bits flipped at rest.
+
+**Smaller fixes.** The HTML report's summary called damaged images and bit errors "cuts in a
+row"; they now have their own labels. A cut that fires past the end of the golden run stops the run as not
 deterministic (exit 3) instead of being judged. `oracle.run_in` now also applies when images
 sit side by side. The README no longer lists low-power modes and four-byte SPI NOR
 addressing as missing.

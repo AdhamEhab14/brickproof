@@ -21,7 +21,11 @@ BOARDS = {
     "f411": ("blackpill_f411ce", 0x20000),          # one 128 KB sector a slot
     "nrf52840": ("nrf52840dk/nrf52840", 0x76000),   # 472 KB of 4 KB pages a slot
 }
-
+# MCUboot's upgrade modes, besides the board's default
+MODES = {
+    "default": [],
+    "overwrite": ["-DCONFIG_BOOT_UPGRADE_ONLY=y"],
+}
 
 def west(ws, *args):
     subprocess.check_call(["west"] + list(args), cwd=ws)
@@ -53,13 +57,14 @@ def image_end(data):
 def main():
     ws, out = (os.path.abspath(a) for a in sys.argv[1:3])
     board, slot_size = BOARDS[sys.argv[3] if len(sys.argv) > 3 else "f411"]
+    mode = sys.argv[4] if len(sys.argv) > 4 else "default"
     os.makedirs(out, exist_ok=True)
     build = os.path.join(out, "build")
 
     west(ws, "build", "-p", "-b", board, "bootloader/mcuboot/boot/zephyr",
          "-d", os.path.join(build, "mcuboot"), "--",
          "-DCONFIG_BOOT_SIGNATURE_TYPE_ECDSA_P256=y",
-         '-DCONFIG_BOOT_SIGNATURE_KEY_FILE="root-ec-p256.pem"')
+         '-DCONFIG_BOOT_SIGNATURE_KEY_FILE="root-ec-p256.pem"', *MODES[mode])
     shutil.copy(os.path.join(build, "mcuboot", "zephyr", "zephyr.elf"),
                 os.path.join(out, "mcuboot.elf"))
 

@@ -318,6 +318,7 @@ jobs:
           - {board: f411, shard: 3/4}
           - {board: f411, shard: 4/4}
           - {board: nrf52840, shard: 1/1}
+          - {board: f411-overwrite, shard: 1/1}
     name: mcuboot (${{ matrix.board }} ${{ matrix.shard }})
     env:
       RENODE_VERSION: "1.17.0"

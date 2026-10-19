@@ -283,7 +283,9 @@ def html_page(report):
     for name, items in groups.items():
         ran = [c for c in items if not c["skipped"]]
         bad = sum(1 for c in ran if not c["passed"])
-        label = {"baseline": "baseline", "cut": "clean cuts", "torn": "torn states"}.get(
+        label = {"baseline": "baseline", "cut": "clean cuts", "torn": "torn states",
+                 "content": "damaged images", "link": "broken links",
+                 "bits": "images damaged at rest"}.get(
             name, "after %s cuts in a row" % name.split("-")[-1])
         tiles.append("<div class='tile%s'><b>%d / %d</b>%s passed</div>" % (
             " bad" if bad else "", len(ran) - bad, len(ran), label))
