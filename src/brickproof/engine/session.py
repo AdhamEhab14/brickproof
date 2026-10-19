@@ -15,7 +15,6 @@ import re
 import shutil
 import socket
 import subprocess
-import sys
 import threading
 import time
 import weakref
@@ -185,9 +184,11 @@ def hang_limit(seconds, slowest):
 
 
 def find_renode():
+    """RENODE_PATH, else renode on PATH, else the one `brickproof setup` installed."""
     exe = os.environ.get("RENODE_PATH") or shutil.which("renode")
-    if not exe and sys.platform == "win32" and os.path.exists("D:/Tools/renode/renode.exe"):
-        exe = "D:/Tools/renode/renode.exe"
+    if not exe:
+        from brickproof import setup
+        exe = setup.installed()
     return exe
 
 

@@ -669,6 +669,17 @@ class Outcome:
         return all(r.passed or r.skipped for r in self.results) and any(r.passed for r in self.results)
 
 
+def auto_real_every(operations):
+    """real_every for an update of this many operations. A short one has every planned cut
+    made in the emulator. On a long one (MCUboot on an F411 programs byte by byte: hundreds
+    of thousands of operations) most are powered up from the computed flash state instead,
+    which is the same test, and the cuts still made in the emulator keep checking that the
+    computed states are right."""
+    if operations <= 2000:
+        return 1
+    return 4 if operations <= 50000 else 10
+
+
 def _cuts_to_run(adapter, plan):
     """The adapter's own cuts, then the planned ones it does not already list."""
     cuts = list(adapter.cuts)
@@ -726,7 +737,10 @@ def campaign(session, driver, adapter, on_result=None, fail_fast=False, baseline
 
     # With real_every N, only every Nth planned cut is made in the emulator; the others
     # start from the computed state. The real ones keep checking that those states are right.
-    every = max(1, cfg.get("real_every", 1))
+    every = cfg.get("real_every", 1)
+    if every == "auto":
+        every = auto_real_every(len(golden.ops))
+    every = max(1, every)
     cuts = _past_the_end(_cuts_to_run(adapter, out.plan), len(golden.ops))
     # A long campaign can be split over several machines: shard k of n takes every nth
     # cut. The cuts are the same list in the same order everywhere, so the shards
@@ -801,10 +815,9 @@ def find_emulator(adapter):
     return exe
 
 
-def _bring_up(adapter, exe, log, shared=None):
-    """One emulator, booted, with the update staged. Returns (session, driver, work folder).
-    `shared` is what the first driver exported, so that every worker starts an update
-    with exactly the same bytes (a driver may sign its image with a timestamp)."""
+def start_session(adapter, exe, log=None):
+    """One emulator with the firmware loaded, not yet run: (session, work folder). The
+    caller closes the session and removes the folder."""
     work = tempfile.mkdtemp(prefix="brickproof-")
     try:
         firmware = wd.prepare(work, adapter)
@@ -821,6 +834,14 @@ def _bring_up(adapter, exe, log, shared=None):
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
+    return session, work
+
+
+def _bring_up(adapter, exe, log, shared=None):
+    """One emulator, booted, with the update staged. Returns (session, driver, work folder).
+    `shared` is what the first driver exported, so that every worker starts an update
+    with exactly the same bytes (a driver may sign its image with a timestamp)."""
+    session, work = start_session(adapter, exe, log)
     try:
         session.run_for(adapter.boot_settle)
         driver = adapter.load_driver(session)

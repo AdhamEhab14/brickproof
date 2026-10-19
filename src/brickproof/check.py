@@ -286,11 +286,11 @@ def _check_emulator(ad, rep):
             rep.fail("m33mu not found (the %s is emulated by m33mu)" % ad.platform,
                      "Build m33mu (https://github.com/danielinux/m33mu) and set M33MU_PATH to it.")
         else:
+            from brickproof import setup
             rep.fail("Renode not found",
-                     "Install Renode 1.17 (https://github.com/renode/renode/releases), then tell "
-                     "BrickProof where it is.\nWindows PowerShell: [Environment]::SetEnvironmentVariable("
-                     "\"RENODE_PATH\", \"C:\\path\\to\\renode.exe\", \"User\"), then open a new "
-                     "terminal.\nLinux/macOS: export RENODE_PATH=/path/to/renode")
+                     "Run: brickproof setup\n(it downloads Renode %s for this system and checks "
+                     "it; or install it yourself and set RENODE_PATH to the renode program)"
+                     % setup.VERSION)
         return
     if ad.emulator == "renode":
         names = _uart_names(ad)

@@ -54,13 +54,8 @@ scenario:
   cut_limit: 40
   plan: {mode: phases, per_phase: 4}
   # damaged images in place of v2 (the trailer that asks for the upgrade is kept): MCUboot
-  # must refuse each and keep running v1
-  content_faults:
-    keep: v1
-    image_size: 0x43D7                   # header, body and TLVs of app_v2_staged.img
-    regions:
-      header: [0x0, 0x20]
-      body: [0x200, 0x4340]
-      tlv: [0x4340, 0x43D7]              # hash and signature
+  # must refuse each and keep running v1. The image's header, body and TLVs (hash and
+  # signature) are read from app_v2_staged.img itself
+  content_faults: {keep: v1}
   # bits flipped in the installed v2 while the device is off: MCUboot must not run it
   bit_errors: {runs: 4}

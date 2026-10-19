@@ -50,9 +50,15 @@ def where(cut):
     return "%s at 0x%08X" % (cut["kind"], cut["addr"]) if cut["addr"] else cut["kind"]
 
 
+def _quoted(path):
+    """A path as it must be typed in a shell: in double quotes when it has a space (a
+    Windows folder such as "Embedded projects"), so a pasted command works."""
+    return '"%s"' % path if " " in path else path
+
+
 def reproduce(report, cut):
     """A command that runs just this result again, where one exists."""
-    base = "brickproof run %s" % report["adapter_file"]
+    base = "brickproof run %s" % _quoted(report["adapter_file"])
     if cut["baseline"]:
         return base + " --cut 0"
     if cut["torn"]:
@@ -70,7 +76,7 @@ def export_command(report, cut):
     None where there is no single such state (the baseline, cuts in a row)."""
     if cut["baseline"] or cut["depth"] > 1 or cut["op_index"] is None or not cut["fired"]:
         return None
-    base = "brickproof export %s --cut %d" % (report["adapter_file"], cut["op_index"])
+    base = "brickproof export %s --cut %d" % (_quoted(report["adapter_file"]), cut["op_index"])
     if cut["torn"]:
         return "%s --torn %s -o op-%d-%s.bin" % (base, cut["torn"], cut["op_index"], cut["torn"])
     return "%s -o op-%d.bin" % (base, cut["op_index"])

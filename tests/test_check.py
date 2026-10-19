@@ -95,7 +95,7 @@ def test_a_stale_image_size_inherited_from_another_build(tmp_path):
     # f411.yaml's image is 0x43D7 bytes; an adapter claiming 0x43AF (another build's) is wrong
     path = write(tmp_path / "a.yaml", adapter_text(
         os.path.join(MCUBOOT, "f411.yaml"), os.path.join(MCUBOOT, "prebuilt", "f411"),
-        **{"image_size: 0x43D7": "image_size: 0x43AF"}))
+        **{"content_faults: {keep: v1}": "content_faults: {keep: v1, image_size: 0x43AF}"}))
     _, rep = run(path)
     stale = [f for f in failures(rep) if "content_faults.image_size is 0x43AF" in f.what]
     assert stale and "0x43D7 bytes" in stale[0].what and "Remove image_size" in stale[0].fix
@@ -146,3 +146,12 @@ def test_every_adapter_in_the_repository_passes(path):
     _, rep = checks.check(path, emulator=False)
     wrong = [f.what for f in failures(rep) if "not found" not in f.what]
     assert not wrong, wrong
+
+
+def test_a_report_name_from_the_adapter_stays_a_file_name():
+    from brickproof.cli import _safe_stem
+    assert _safe_stem("mcuboot_f411") == "mcuboot_f411"
+    for evil in ("../../etc/x", r"..\..\x", r"C:\Windows\x", "/abs/x", "..", ""):
+        stem = _safe_stem(evil)
+        assert stem and "/" not in stem and "\\" not in stem and ":" not in stem
+        assert not stem.startswith(".")

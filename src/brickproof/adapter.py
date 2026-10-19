@@ -334,7 +334,8 @@ def _read(path, depth=0):
 def _parse_plan(scenario):
     """scenario.plan: a mode name, or {mode, per_phase, small, real_every}. With
     real_every N only every Nth planned cut is made in the emulator; the others are
-    powered up from the computed flash state. None if absent."""
+    powered up from the computed flash state ("auto": chosen from the update's length,
+    see runner.auto_real_every). None if absent."""
     p = scenario.get("plan")
     if p is None:
         return None
@@ -350,6 +351,9 @@ def _parse_plan(scenario):
         raise AdapterError("scenario.plan.mode: use phases or every, not %r" % mode)
     out = {"mode": mode}
     for key in ("per_phase", "small", "real_every"):
+        if key == "real_every" and p.get(key) == "auto":
+            out[key] = "auto"
+            continue
         if key in p:
             if not isinstance(p[key], int) or p[key] < 0:
                 raise AdapterError("scenario.plan.%s: a whole number, 0 or more" % key)

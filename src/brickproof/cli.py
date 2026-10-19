@@ -1,4 +1,6 @@
-"""brickproof check adapter.yaml    find what is wrong with an adapter, without an emulator
+"""brickproof setup                 download the emulator for this system
+brickproof init                  write an adapter by answering a few questions
+brickproof check adapter.yaml    find what is wrong with an adapter, without an emulator
 brickproof run adapter.yaml      cut power during the update and judge each cut
 brickproof trace adapter.yaml    show what the update does to flash, uninterrupted
 brickproof export adapter.yaml   write the flash a cut leaves, to put on a real board
@@ -10,6 +12,7 @@ Exit codes: 0 every cut recovered, 1 at least one cut failed,
 import argparse
 import json
 import os
+import re
 import sys
 
 from brickproof import adapter as adapters
@@ -55,6 +58,33 @@ def _load(args):
         return None
     ad.path = args.adapter              # as typed, so a report's commands can be pasted back
     return ad
+
+
+def cmd_init(args):
+    from brickproof import init as inits
+    given = {k: v for k, v in vars(args).items()
+             if k in ("chip", "kind", "firmware", "firmware_at", "app", "app_at", "new", "slot", "out")
+             and v is not None}
+    interactive = sys.stdin.isatty() and not args.yes
+    if interactive:
+        print("BrickProof will write an adapter for your firmware. Answer a few questions "
+              "(Enter takes the [default]).")
+    try:
+        inits.run(given, interactive=interactive, probe_device=not args.no_probe)
+    except (ValueError, OSError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    return 0
+
+
+def cmd_setup(args):
+    from brickproof import setup
+    try:
+        setup.setup()
+    except (RuntimeError, OSError, ValueError) as e:
+        print("setup: %s" % e, file=sys.stderr)
+        return 3
+    return 0
 
 
 def cmd_check(args):
@@ -121,6 +151,13 @@ def cmd_run(args):
     ad = _load(args)
     if ad is None:
         return 2
+    if args.full and not args.cut:
+        # everything worth testing, as fast as this machine allows
+        args.torn = True
+        if args.depth is None:
+            args.depth = 2
+        if args.jobs is None:
+            args.jobs = "auto"
     if args.plan and not args.cut:
         ad.plan = dict(ad.plan or {}, mode=args.plan)
     if args.cut:
@@ -136,6 +173,8 @@ def cmd_run(args):
         ad.depth = deeper if levels > 1 else None
     if args.real_every and ad.plan:
         ad.plan = dict(ad.plan, real_every=args.real_every)
+    elif args.full and ad.plan and "real_every" not in ad.plan:
+        ad.plan = dict(ad.plan, real_every="auto")     # chosen once the update's length is known
     if args.per_phase is not None and not args.cut:
         ad.plan = dict(ad.plan or {"mode": "phases"}, per_phase=args.per_phase)
     if args.soak:
@@ -154,6 +193,9 @@ def cmd_run(args):
         print("nothing to cut: the adapter has no scenario.cuts and no scenario.plan "
               "(or pass --plan phases)", file=sys.stderr)
         return 2
+    if not args.html:
+        # always a report to open, even when nobody asked for one
+        args.html = os.path.join("brickproof-out", "%s.html" % _safe_stem(ad.name))
     _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html, args.sarif)
     print("BrickProof: %s, target %s" % (ad.name, ad.target), flush=True)
     if not ad.oracle:
@@ -233,7 +275,28 @@ def cmd_run(args):
                                                out.shard["cuts"], out.shard["all_cuts"]))
     if out.trace:
         _print_cost(out.trace, ad.flash)
+    _print_verdict(out, report, args.html)
     return 0 if out.passed else 1
+
+
+def _safe_stem(name):
+    """An adapter's name as one file name: whatever it says, the report stays in
+    brickproof-out (no folder separators, no '..', no drive)."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name)).strip(".-")
+    return stem[:64] or "report"
+
+
+def _print_verdict(out, report, html):
+    """The one line to read: did it pass, where the report is, and how to see a failure again."""
+    print()
+    if out.passed:
+        print("PASS: the device recovered every time. Report: %s" % html)
+        return
+    failed = [c for c in report["cuts"] if not c["passed"] and not c["skipped"]]
+    print("FAIL: %d of %d did not recover. Report: %s" % (len(failed), len(report["cuts"]), html))
+    if failed:
+        print("the first one: %s: %s" % (failed[0]["cut"], failed[0]["message"]))
+        print("run it alone:  %s" % reports.reproduce(report, failed[0]))
 
 
 def demo_folder():
@@ -354,6 +417,34 @@ def main(argv=None):
                        help="emulators to run side by side: a number, or 'auto' for one per "
                             "core but one. The results do not depend on it (default 1)")
 
+    s = sub.add_parser("setup", help="download the emulator (Renode) for this system",
+                       description="Downloads Renode's portable build for this system into "
+                                   "~/.brickproof, checks its SHA-256 and unpacks it. "
+                                   "BrickProof finds it there: nothing to set.")
+    s.set_defaults(func=cmd_setup)
+
+    i = sub.add_parser("init", help="write an adapter by answering a few questions",
+                       description="Asks which chip, which files and how the update happens, "
+                                   "boots the firmware once to learn its UART, its banners and "
+                                   "how long the update takes, and writes the adapter. Every "
+                                   "question has a flag, for scripts.")
+    i.add_argument("--chip", help="stm32f103, stm32f411, stm32l476, nrf52840 or stm32h563")
+    i.add_argument("--kind", help="staged (the bootloader installs an image waiting in flash), "
+                                  "storage (a storage library's workload) or protocol (a host "
+                                  "sends the update over the UART)")
+    i.add_argument("--firmware", help="the bootloader (or the storage workload) file")
+    i.add_argument("--firmware-at", dest="firmware_at", help="its flash address, for a .bin")
+    i.add_argument("--app", help="the app image installed now (staged)")
+    i.add_argument("--app-at", dest="app_at", help="where it is in flash (staged)")
+    i.add_argument("--new", help="the new image (staged)")
+    i.add_argument("--slot", help="where the new image waits (staged)")
+    i.add_argument("--out", help="the adapter to write (default brickproof.yaml)")
+    i.add_argument("--no-probe", action="store_true",
+                   help="do not boot the firmware to learn its UART, banners and update time")
+    i.add_argument("--yes", action="store_true",
+                   help="ask nothing: take the defaults where a flag is missing")
+    i.set_defaults(func=cmd_init)
+
     c = sub.add_parser("check", help="find what is wrong with an adapter, without an emulator",
                        description="Checks the adapter, the files it names, that the firmware "
                                    "fits the chip and that the emulator is installed, and says "
@@ -436,6 +527,11 @@ def run_options(r):
     r.add_argument("--real-every", type=int, metavar="N",
                    help="make only every Nth planned cut in the emulator and power the others "
                         "up from the computed flash state (much faster on a long update)")
+    r.add_argument("--full", action="store_true",
+                   help="everything worth testing in one run: the clean cuts, torn states, a "
+                        "second cut during each recovery and the adapter's damaged-image tests, "
+                        "on one emulator per core, with long updates sped up by powering most "
+                        "cuts up from their computed state")
     r.add_argument("--torn", action="store_true",
                    help="also boot from torn states: each cut's operation left half done")
     r.add_argument("--depth", type=_depth_arg, metavar="N",

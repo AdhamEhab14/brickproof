@@ -359,6 +359,8 @@ on m33mu, which does not count them, only the second look is made.
 - `real_every: N` makes every Nth cut in the emulator and powers the device up from the
   computed flash state for the others, which is several times faster and checked against
   the real cuts.
+  `real_every: auto` (what `--full` uses) chooses from the update's length: every cut for
+  real up to 2,000 operations, every 4th up to 50,000, every 10th beyond.
 - `--shard K/N` on the command line runs every Nth cut, starting with the Kth. Give N
   machines the same command with K from 1 to N and together they make the whole campaign.
   `.github/workflows/exhaustive.yml` does that for the Three-Tier bootloader.
