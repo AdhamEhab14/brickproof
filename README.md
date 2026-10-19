@@ -37,18 +37,19 @@ swap update): 171 cuts, 403 torn states and 323 second cuts during recovery, no 
 
 ## Quick start
 
-You need Python 3.10+ and [Renode 1.17](https://github.com/renode/renode/releases) (put
-`renode` on PATH or set `RENODE_PATH`). For an STM32H5 you need
-[m33mu](https://github.com/danielinux/m33mu) instead, commit 23960ed or later (put `m33mu` on
-PATH or set `M33MU_PATH`). No toolchain, no board, no firmware of your own: a demo comes with
-the package.
+You need Python 3.10+. No toolchain, no board, no firmware of your own: a demo comes with the
+package, and `brickproof setup` downloads the emulator ([Renode](https://renode.io) 1.17, checked
+against its published SHA-256) for Windows or Linux.
 
 ```bash
-git clone https://github.com/AdhamEhab14/brickproof
-cd brickproof
-pip install .
+pip install brickproof-fw
+brickproof setup
 brickproof demo
 ```
+
+(A Renode you installed yourself works too: put `renode` on PATH or set `RENODE_PATH`. On a
+Mac, install Renode's .dmg. For an STM32H5 you need [m33mu](https://github.com/danielinux/m33mu)
+instead, commit 23960ed or later, on PATH or in `M33MU_PATH`.)
 
 The demo is a small A/B bootloader updating its app from v1 to v2. BrickProof first checks
 that the update works when nothing interrupts it, then cuts power at every flash state the

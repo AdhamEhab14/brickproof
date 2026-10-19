@@ -1,4 +1,5 @@
-"""brickproof init                  write an adapter by answering a few questions
+"""brickproof setup                 download the emulator for this system
+brickproof init                  write an adapter by answering a few questions
 brickproof check adapter.yaml    find what is wrong with an adapter, without an emulator
 brickproof run adapter.yaml      cut power during the update and judge each cut
 brickproof trace adapter.yaml    show what the update does to flash, uninterrupted
@@ -73,6 +74,16 @@ def cmd_init(args):
     except (ValueError, OSError) as e:
         print(str(e), file=sys.stderr)
         return 2
+    return 0
+
+
+def cmd_setup(args):
+    from brickproof import setup
+    try:
+        setup.setup()
+    except (RuntimeError, OSError, ValueError) as e:
+        print("setup: %s" % e, file=sys.stderr)
+        return 3
     return 0
 
 
@@ -405,6 +416,12 @@ def main(argv=None):
         c.add_argument("-j", "--jobs", metavar="N",
                        help="emulators to run side by side: a number, or 'auto' for one per "
                             "core but one. The results do not depend on it (default 1)")
+
+    s = sub.add_parser("setup", help="download the emulator (Renode) for this system",
+                       description="Downloads Renode's portable build for this system into "
+                                   "~/.brickproof, checks its SHA-256 and unpacks it. "
+                                   "BrickProof finds it there: nothing to set.")
+    s.set_defaults(func=cmd_setup)
 
     i = sub.add_parser("init", help="write an adapter by answering a few questions",
                        description="Asks which chip, which files and how the update happens, "

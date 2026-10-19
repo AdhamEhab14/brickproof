@@ -10,6 +10,12 @@ RAM given, images that do not fit in flash, an image size that does not match an
 image's header, a UART the chip does not have, an emulator not installed. `run`, `trace` and
 `export` make the same checks first and stop in a second instead of a minute.
 
+**`brickproof setup`.** Downloads Renode 1.17's portable build for Windows or Linux into
+~/.brickproof, checks it against the SHA-256 Renode publishes, and unpacks it (refusing any
+archive member that would land outside that folder). BrickProof finds it there, so nothing
+needs installing or setting by hand; RENODE_PATH and PATH still come first. When Renode is
+missing, every command now says to run it.
+
 **`brickproof init`.** Writes the adapter from a few answers (chip, files, how the update
 happens), then boots the firmware once to learn the rest by watching: the UART it talks on,
 its banner while running and once updated (as patterns with the version left open), and how
