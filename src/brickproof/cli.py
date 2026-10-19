@@ -1,4 +1,5 @@
-"""brickproof run adapter.yaml      cut power during the update and judge each cut
+"""brickproof check adapter.yaml    find what is wrong with an adapter, without an emulator
+brickproof run adapter.yaml      cut power during the update and judge each cut
 brickproof trace adapter.yaml    show what the update does to flash, uninterrupted
 brickproof export adapter.yaml   write the flash a cut leaves, to put on a real board
 brickproof adapter-from-zephyr   write an MCUboot adapter from a Zephyr build
@@ -42,13 +43,31 @@ def _print_result(r):
 
 
 def _load(args):
-    try:
-        ad = adapters.load(args.adapter, target=args.target)
-        ad.path = args.adapter              # as typed, so a report's commands can be pasted back
-        return ad
-    except (adapters.AdapterError, OSError) as e:
-        print("adapter error: %s" % e, file=sys.stderr)
+    """The adapter, after the same checks `brickproof check` makes; None (after saying
+    what is wrong and how to fix it) if any fails, before an emulator is started."""
+    from brickproof import check as checks
+    ad, rep = checks.check(args.adapter, target=args.target)
+    if not rep.passed:
+        print("%s has a problem, so nothing was run:" % args.adapter, file=sys.stderr)
+        for line in rep.lines(only_failures=True):
+            print(line, file=sys.stderr)
+        print("(brickproof check %s shows every check)" % args.adapter, file=sys.stderr)
         return None
+    ad.path = args.adapter              # as typed, so a report's commands can be pasted back
+    return ad
+
+
+def cmd_check(args):
+    from brickproof import check as checks
+    print("checking %s" % args.adapter)
+    _ad, rep = checks.check(args.adapter, target=args.target)
+    for line in rep.lines():
+        print(line)
+    if rep.passed:
+        print("all good: brickproof run %s" % args.adapter)
+        return 0
+    print("%d problem(s) to fix" % sum(1 for f in rep.findings if not f.ok))
+    return 2
 
 
 def _make_dirs(*paths):
@@ -334,6 +353,15 @@ def main(argv=None):
         c.add_argument("-j", "--jobs", metavar="N",
                        help="emulators to run side by side: a number, or 'auto' for one per "
                             "core but one. The results do not depend on it (default 1)")
+
+    c = sub.add_parser("check", help="find what is wrong with an adapter, without an emulator",
+                       description="Checks the adapter, the files it names, that the firmware "
+                                   "fits the chip and that the emulator is installed, and says "
+                                   "how to fix what is wrong. run, trace and export make the "
+                                   "same checks first.")
+    c.add_argument("adapter", help="adapter YAML file")
+    c.add_argument("--target", help="firmware project folder (overrides the adapter's 'target')")
+    c.set_defaults(func=cmd_check)
 
     r = sub.add_parser("run", help="run an adapter's power cuts")
     common(r)

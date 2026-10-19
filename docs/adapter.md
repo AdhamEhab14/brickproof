@@ -302,9 +302,9 @@ what it stages (`staged()`, which `staged_slot` has), and the adapter needs an o
 | Key | Meaning |
 |---|---|
 | `keep` | the oracle image that must still be installed and running afterwards (required) |
-| `image_size` | bytes of the staged file that are the image. The rest, such as MCUboot's padded trailer that asks for the upgrade, is kept, so the bootloader does try the damaged image. Default: the whole file |
+| `image_size` | bytes of the staged file that are the image. The rest, such as MCUboot's padded trailer that asks for the upgrade, is kept, so the bootloader does try the damaged image. Default: read from the image's header when it is an MCUboot image, else the whole file. Leave it out for MCUboot: a rebuild changes the size |
 | `mutations` | which built-in ones to run: `truncate` (at a quarter, a half, three quarters and four bytes short), `flip` (one bit in the middle of each region), `erased`. Default all |
-| `regions` | `{name: [start, end]}` offsets in the image to flip a bit in, for example header, body and the signature area. Default: the whole image as one region |
+| `regions` | `{name: [start, end]}` offsets in the image to flip a bit in, for example header, body and the signature area. Default: an MCUboot image's header, body and TLV area (hash and signature), read from it; else the whole image as one region |
 | `images` | `{name: file}`: bad images made elsewhere (signed with another key, older, built for another slot), staged as they are |
 
 ## Worn pages
