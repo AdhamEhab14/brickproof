@@ -54,7 +54,8 @@ def installed():
     for folder, _dirs, files in os.walk(install_dir()):
         if found[2] in files:
             path = os.path.join(folder, found[2])
-            if os.access(path, os.X_OK) or sys.platform == "win32":
+            # Windows has no executable bit: there the file is enough
+            if this_system()[0] == "win32" or os.access(path, os.X_OK):
                 return path
     return None
 
@@ -140,7 +141,7 @@ def setup(say=print, fetch=download):
     path = installed()
     if not path:
         raise RuntimeError("Renode was unpacked into %s but %s is not in it" % (install_dir(), exe))
-    if sys.platform != "win32":
+    if system[0] != "win32":
         os.chmod(path, os.stat(path).st_mode | 0o111)
     say("Renode is set up: %s. BrickProof finds it there; nothing else to set." % path)
     return path

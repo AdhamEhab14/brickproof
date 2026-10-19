@@ -419,7 +419,11 @@ def run(given, interactive=True, ask=input, say=print, probe_device=True):
     say("Wrote %s. The checks:" % _rel(out, os.getcwd()))
     for line in rep.lines():
         say(line)
-    if rep.passed:
+    # an emulator not installed yet is a step to take, not a fault in the adapter
+    missing = [f for f in rep.findings if not f.ok and f.what == "Renode not found"]
+    if all(f.ok or f in missing for f in rep.findings):
+        if missing:
+            say("Next: brickproof setup          (the emulator is not installed yet)")
         say("Next: brickproof run %s --full" % _quote(_rel(out, os.getcwd())))
     return out
 
