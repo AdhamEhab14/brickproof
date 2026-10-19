@@ -22,10 +22,6 @@ jobs:
           cd ~/zp
           west config manifest.project-filter -- '-.*,+mcuboot,+hal_stm32,+hal_nordic,+cmsis,+cmsis_6'
           west update --narrow -o=--depth=1
-          cd bootloader/mcuboot
-          git fetch --depth=1 origin 4eba8087fa606db801455f14d185255bc8c49467
-          git checkout 4eba8087fa606db801455f14d185255bc8c49467
-          cd ~/zp
           pip install -r zephyr/scripts/requirements-base.txt -r bootloader/mcuboot/scripts/requirements.txt
       - name: Build overwrite-only for the F411
         env:
