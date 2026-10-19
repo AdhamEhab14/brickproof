@@ -1,4 +1,5 @@
-"""brickproof check adapter.yaml    find what is wrong with an adapter, without an emulator
+"""brickproof init                  write an adapter by answering a few questions
+brickproof check adapter.yaml    find what is wrong with an adapter, without an emulator
 brickproof run adapter.yaml      cut power during the update and judge each cut
 brickproof trace adapter.yaml    show what the update does to flash, uninterrupted
 brickproof export adapter.yaml   write the flash a cut leaves, to put on a real board
@@ -10,6 +11,7 @@ Exit codes: 0 every cut recovered, 1 at least one cut failed,
 import argparse
 import json
 import os
+import re
 import sys
 
 from brickproof import adapter as adapters
@@ -55,6 +57,23 @@ def _load(args):
         return None
     ad.path = args.adapter              # as typed, so a report's commands can be pasted back
     return ad
+
+
+def cmd_init(args):
+    from brickproof import init as inits
+    given = {k: v for k, v in vars(args).items()
+             if k in ("chip", "kind", "firmware", "firmware_at", "app", "app_at", "new", "slot", "out")
+             and v is not None}
+    interactive = sys.stdin.isatty() and not args.yes
+    if interactive:
+        print("BrickProof will write an adapter for your firmware. Answer a few questions "
+              "(Enter takes the [default]).")
+    try:
+        inits.run(given, interactive=interactive, probe_device=not args.no_probe)
+    except (ValueError, OSError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    return 0
 
 
 def cmd_check(args):
@@ -165,7 +184,7 @@ def cmd_run(args):
         return 2
     if not args.html:
         # always a report to open, even when nobody asked for one
-        args.html = os.path.join("brickproof-out", "%s.html" % ad.name)
+        args.html = os.path.join("brickproof-out", "%s.html" % _safe_stem(ad.name))
     _make_dirs(args.json, args.renode_log, args.trace, args.junit, args.html, args.sarif)
     print("BrickProof: %s, target %s" % (ad.name, ad.target), flush=True)
     if not ad.oracle:
@@ -247,6 +266,13 @@ def cmd_run(args):
         _print_cost(out.trace, ad.flash)
     _print_verdict(out, report, args.html)
     return 0 if out.passed else 1
+
+
+def _safe_stem(name):
+    """An adapter's name as one file name: whatever it says, the report stays in
+    brickproof-out (no folder separators, no '..', no drive)."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name)).strip(".-")
+    return stem[:64] or "report"
 
 
 def _print_verdict(out, report, html):
@@ -379,6 +405,28 @@ def main(argv=None):
         c.add_argument("-j", "--jobs", metavar="N",
                        help="emulators to run side by side: a number, or 'auto' for one per "
                             "core but one. The results do not depend on it (default 1)")
+
+    i = sub.add_parser("init", help="write an adapter by answering a few questions",
+                       description="Asks which chip, which files and how the update happens, "
+                                   "boots the firmware once to learn its UART, its banners and "
+                                   "how long the update takes, and writes the adapter. Every "
+                                   "question has a flag, for scripts.")
+    i.add_argument("--chip", help="stm32f103, stm32f411, stm32l476, nrf52840 or stm32h563")
+    i.add_argument("--kind", help="staged (the bootloader installs an image waiting in flash), "
+                                  "storage (a storage library's workload) or protocol (a host "
+                                  "sends the update over the UART)")
+    i.add_argument("--firmware", help="the bootloader (or the storage workload) file")
+    i.add_argument("--firmware-at", dest="firmware_at", help="its flash address, for a .bin")
+    i.add_argument("--app", help="the app image installed now (staged)")
+    i.add_argument("--app-at", dest="app_at", help="where it is in flash (staged)")
+    i.add_argument("--new", help="the new image (staged)")
+    i.add_argument("--slot", help="where the new image waits (staged)")
+    i.add_argument("--out", help="the adapter to write (default brickproof.yaml)")
+    i.add_argument("--no-probe", action="store_true",
+                   help="do not boot the firmware to learn its UART, banners and update time")
+    i.add_argument("--yes", action="store_true",
+                   help="ask nothing: take the defaults where a flag is missing")
+    i.set_defaults(func=cmd_init)
 
     c = sub.add_parser("check", help="find what is wrong with an adapter, without an emulator",
                        description="Checks the adapter, the files it names, that the firmware "

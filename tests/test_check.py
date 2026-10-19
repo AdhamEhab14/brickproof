@@ -146,3 +146,12 @@ def test_every_adapter_in_the_repository_passes(path):
     _, rep = checks.check(path, emulator=False)
     wrong = [f.what for f in failures(rep) if "not found" not in f.what]
     assert not wrong, wrong
+
+
+def test_a_report_name_from_the_adapter_stays_a_file_name():
+    from brickproof.cli import _safe_stem
+    assert _safe_stem("mcuboot_f411") == "mcuboot_f411"
+    for evil in ("../../etc/x", r"..\..\x", r"C:\Windows\x", "/abs/x", "..", ""):
+        stem = _safe_stem(evil)
+        assert stem and "/" not in stem and "\\" not in stem and ":" not in stem
+        assert not stem.startswith(".")

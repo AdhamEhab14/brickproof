@@ -815,10 +815,9 @@ def find_emulator(adapter):
     return exe
 
 
-def _bring_up(adapter, exe, log, shared=None):
-    """One emulator, booted, with the update staged. Returns (session, driver, work folder).
-    `shared` is what the first driver exported, so that every worker starts an update
-    with exactly the same bytes (a driver may sign its image with a timestamp)."""
+def start_session(adapter, exe, log=None):
+    """One emulator with the firmware loaded, not yet run: (session, work folder). The
+    caller closes the session and removes the folder."""
     work = tempfile.mkdtemp(prefix="brickproof-")
     try:
         firmware = wd.prepare(work, adapter)
@@ -835,6 +834,14 @@ def _bring_up(adapter, exe, log, shared=None):
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
+    return session, work
+
+
+def _bring_up(adapter, exe, log, shared=None):
+    """One emulator, booted, with the update staged. Returns (session, driver, work folder).
+    `shared` is what the first driver exported, so that every worker starts an update
+    with exactly the same bytes (a driver may sign its image with a timestamp)."""
+    session, work = start_session(adapter, exe, log)
     try:
         session.run_for(adapter.boot_settle)
         driver = adapter.load_driver(session)

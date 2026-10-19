@@ -10,6 +10,13 @@ RAM given, images that do not fit in flash, an image size that does not match an
 image's header, a UART the chip does not have, an emulator not installed. `run`, `trace` and
 `export` make the same checks first and stop in a second instead of a minute.
 
+**`brickproof init`.** Writes the adapter from a few answers (chip, files, how the update
+happens), then boots the firmware once to learn the rest by watching: the UART it talks on,
+its banner while running and once updated (as patterns with the version left open), and how
+long the update takes. It reads ELF load addresses and an MCUboot image's real size, writes an
+approved copy of a padded image, makes a driver.py skeleton for a protocol update, and runs
+the checks on what it wrote. Every question has a flag, for scripts.
+
 **`brickproof run --full`.** One command instead of three: the clean cuts, torn states, a
 second cut during each recovery and the adapter's damaged-image tests, with `-j auto` and,
 on a long update, `real_every` chosen from its length (`plan.real_every: auto`). Every run
