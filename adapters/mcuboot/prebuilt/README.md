@@ -37,5 +37,5 @@ compiler as above (GitHub Actions run 39271573096):
 python adapters/mcuboot/build.py <zephyr workspace> adapters/mcuboot/prebuilt/f411-overwrite f411 overwrite
 ```
 
-Its images are 40 bytes shorter than `f411/`'s (v2 is 0x43AF bytes), so its adapter
-gives its own image layout for the damaged-image tests.
+Its images are 40 bytes shorter than `f411/`'s (v2 is 0x43AF bytes). The damaged-image
+tests read each image's layout from its header, so no adapter states a size.
