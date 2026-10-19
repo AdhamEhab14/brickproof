@@ -95,7 +95,7 @@ def test_a_stale_image_size_inherited_from_another_build(tmp_path):
     # f411.yaml's image is 0x43D7 bytes; an adapter claiming 0x43AF (another build's) is wrong
     path = write(tmp_path / "a.yaml", adapter_text(
         os.path.join(MCUBOOT, "f411.yaml"), os.path.join(MCUBOOT, "prebuilt", "f411"),
-        **{"image_size: 0x43D7": "image_size: 0x43AF"}))
+        **{"content_faults: {keep: v1}": "content_faults: {keep: v1, image_size: 0x43AF}"}))
     _, rep = run(path)
     stale = [f for f in failures(rep) if "content_faults.image_size is 0x43AF" in f.what]
     assert stale and "0x43D7 bytes" in stale[0].what and "Remove image_size" in stale[0].fix
