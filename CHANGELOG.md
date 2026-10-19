@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+**`brickproof check`.** Reads an adapter and every file it names, without an emulator, and
+says what to fix: the adapter not where it was said to be (with the files of that name it
+found), an adapter it extends not in its folder, YAML that does not parse (with the line),
+firmware not built yet, firmware outside the chip's flash, a stack that starts outside the
+RAM given, images that do not fit in flash, an image size that does not match an MCUboot
+image's header, a UART the chip does not have, an emulator not installed. `run`, `trace` and
+`export` make the same checks first and stop in a second instead of a minute.
+
+**MCUboot image layouts are read, not typed.** Without `image_size` and `regions`, the
+damaged-image tests take an MCUboot image's size and its header, body and TLV area from the
+image itself, so a rebuild cannot leave a stale number in an adapter.
+
 **Boot loops are failures.** The oracle used to look at the core four times, 20 ms apart. A
 device that boots its image and is reset by its watchdog half a second later looked
 recovered. Now the Renode flash models count every reset, and once an accepted image is

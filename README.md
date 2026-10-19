@@ -259,7 +259,13 @@ is started over a protocol (UART, CAN, UDS), add a small `driver.py`, like the o
 Three-Tier bootloader in [adapters/three_tier_f103](adapters/three_tier_f103). Every key is explained in
 [docs/adapter.md](docs/adapter.md).
 
+`brickproof check` reads the adapter and every file it names without starting an emulator,
+and says what to fix: a file that is not built yet, firmware that does not fit the chip's
+flash or RAM, a UART the chip does not have, an image size that does not match the image,
+an emulator that is not installed. `run`, `trace` and `export` make the same checks first.
+
 ```bash
+brickproof check my_adapter.yaml
 brickproof run my_adapter.yaml --torn --depth 2 -j auto --html report.html
 ```
 
