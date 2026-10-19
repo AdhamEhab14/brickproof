@@ -128,11 +128,23 @@ def _check_file(rep, label, path, hint):
     return False
 
 
-def _ranges(ad):
-    """Where firmware may legitimately put bytes: flash (with its alias at 0 on an
-    STM32) and RAM."""
+def _memories(ad):
+    """The flash an image can be stored in: the chip's own, and an external flash chip or
+    an EEPROM beside it (no address on the bus: the adapter's name for their bytes)."""
     f = ad.flash
-    out = [(f.base, f.base + f.size, "flash"), (ad.ram_base, ad.ram_base + ad.ram_size, "RAM")]
+    out = [(f.base, f.base + f.size, "flash")]
+    if f.ext_base is not None and f.ext_size:
+        out.append((f.ext_base, f.ext_base + f.ext_size, "external flash"))
+    if f.eeprom_base is not None and f.eeprom_size:
+        out.append((f.eeprom_base, f.eeprom_base + f.eeprom_size, "EEPROM"))
+    return out
+
+
+def _ranges(ad):
+    """Where firmware may legitimately put bytes: the memories above (internal flash with
+    its alias at 0 on an STM32) and RAM."""
+    f = ad.flash
+    out = _memories(ad) + [(ad.ram_base, ad.ram_base + ad.ram_size, "RAM")]
     if f.base == 0x08000000:
         out.append((0, f.size, "flash"))
     return out
@@ -193,13 +205,14 @@ def _fits(ad, rep, label, path, addr, made_by_driver=False):
     if not _check_file(rep, label, path, "Build it first, or fix the path in the adapter."):
         return None
     data = open(path, "rb").read()
-    f = ad.flash
-    if not (f.base <= addr and addr + len(data) <= f.base + f.size):
-        rep.fail("%s (%d bytes at 0x%08X) does not fit in flash (0x%08X..0x%08X)"
-                 % (label, len(data), addr, f.base, f.base + f.size),
+    where = [m for m in _memories(ad) if m[0] <= addr and addr + len(data) <= m[1]]
+    if not where:
+        rep.fail("%s (%d bytes at 0x%08X) does not fit in %s" % (
+                     label, len(data), addr, " or ".join("%s (0x%08X..0x%08X)" % (n, lo, hi)
+                                                         for lo, hi, n in _memories(ad))),
                  "Check the address against the partition layout.")
         return None
-    rep.ok("%s fits in flash at 0x%08X (%d bytes)" % (label, addr, len(data)))
+    rep.ok("%s fits in %s at 0x%08X (%d bytes)" % (label, where[0][2], addr, len(data)))
     return data
 
 

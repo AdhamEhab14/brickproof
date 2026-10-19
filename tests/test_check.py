@@ -130,3 +130,19 @@ def test_a_uart_the_chip_does_not_have(tmp_path):
     _, rep = checks.check(path)
     (f,) = failures(rep)
     assert "no 'usart9'" in f.what and "usart2" in f.fix
+
+
+ALL_ADAPTERS = sorted(
+    [os.path.join(DEMO, f) for f in os.listdir(DEMO) if f.endswith(".yaml") and f[0] != "_"]
+    + [os.path.join(ROOT, "adapters", d, f) for d in os.listdir(os.path.join(ROOT, "adapters"))
+       if os.path.isdir(os.path.join(ROOT, "adapters", d))
+       for f in os.listdir(os.path.join(ROOT, "adapters", d)) if f.endswith(".yaml")])
+
+
+@pytest.mark.parametrize("path", ALL_ADAPTERS, ids=lambda p: os.path.relpath(p, ROOT))
+def test_every_adapter_in_the_repository_passes(path):
+    # firmware that is built elsewhere (OpenBLT, Three-Tier, wolfBoot) may be missing here:
+    # that is the only failure allowed
+    _, rep = checks.check(path, emulator=False)
+    wrong = [f.what for f in failures(rep) if "not found" not in f.what]
+    assert not wrong, wrong
