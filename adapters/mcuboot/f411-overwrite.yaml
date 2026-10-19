@@ -1,0 +1,17 @@
+# MCUboot in overwrite-only mode on the STM32F411 Black Pill: v2 is copied over slot 0 with
+# no copy of v1 kept anywhere. After a cut, MCUboot must finish the copy, so v2 is the only
+# image a cut may leave.
+extends: f411.yaml
+name: mcuboot_f411_overwrite
+target: prebuilt/f411-overwrite
+scenario:
+  name: overwrite-only-v1-to-v2
+  # this build's v2 is 0x43AF bytes (header 0x200, body to 0x4318, then the TLVs), not the
+  # swap-scratch build's 0x43D7: the content faults must use its own layout
+  content_faults:
+    keep: v1
+    image_size: 0x43AF
+    regions:
+      header: [0x0, 0x20]
+      body: [0x200, 0x4318]
+      tlv: [0x4318, 0x43AF]

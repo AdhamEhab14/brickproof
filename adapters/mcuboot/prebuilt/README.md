@@ -28,3 +28,14 @@ python adapters/mcuboot/build.py <zephyr workspace> adapters/mcuboot/prebuilt/nr
 ```
 
 then delete the `build/` folder it leaves and strip `mcuboot.elf` the same way.
+
+`f411-overwrite/` is the same board with MCUboot's overwrite-only upgrade
+(`CONFIG_BOOT_UPGRADE_ONLY=y`), built on 2026-10-19 with the same MCUboot, Zephyr and
+compiler as above (GitHub Actions run 39271573096):
+
+```bash
+python adapters/mcuboot/build.py <zephyr workspace> adapters/mcuboot/prebuilt/f411-overwrite f411 overwrite
+```
+
+Its images are 40 bytes shorter than `f411/`'s (v2 is 0x43AF bytes), so its adapter
+gives its own image layout for the damaged-image tests.
