@@ -30,7 +30,11 @@ class FakeDevice:
     """lands_after   a program cut stops after its halfword is written, like Renode
     no_recovery     after a cut the firmware forgets the pending update (a brick)
     fault_at        bus fault when the update reaches this operation
-    hang_on_boot    the CPU locks up on the boot after a cut
+    hang_on_boot    the CPU locks up on the boot after a cut: after any cut (True) or after
+                    a cut at one of these operations. Like firmware in Renode it does so on
+                    every run, a fresh emulator or not
+    stall_at_boot   the emulator itself stops, once, on this boot (1 = the first): what a
+                    healthy device on a stalled Renode looks like
     nondeterministic  the second and later runs write a different halfword
     retry_limit     gives up on the update after two attempts that did not finish
     verify          refuse a staged image that is not exactly the new one (and keep the old);
@@ -39,12 +43,13 @@ class FakeDevice:
 
     def __init__(self, lands_after=True, no_recovery=False, fault_at=None, hang_on_boot=False,
                  nondeterministic=False, refuse=False, stray=False, retry_limit=False,
-                 verify=False):
+                 verify=False, stall_at_boot=None):
         self.flash = FlashGeometry(base=BASE, size=4 * PAGE, page=PAGE)
         self.mem = bytearray(staged_flash())
         self.opt = dict(lands_after=lands_after, no_recovery=no_recovery, fault_at=fault_at,
                         hang_on_boot=hang_on_boot, nondeterministic=nondeterministic,
-                        refuse=refuse, stray=stray, retry_limit=retry_limit, verify=verify)
+                        refuse=refuse, stray=stray, retry_limit=retry_limit, verify=verify,
+                        stall_at_boot=stall_at_boot)
         self.opcount = 0
         self.cutpoint = NEVER
         self.cut_page = NEVER
@@ -58,6 +63,8 @@ class FakeDevice:
         self.runs = 0                   # how many updates were started
         self.restarts = 0
         self.was_cut = False
+        self.cut_at = None              # the operation the last cut fired at
+        self.boots = 0
         self.boot_pending = False
         self.cpu = (SLOT + 4, 0)        # running inside the slot, in thread mode
 
@@ -90,7 +97,11 @@ class FakeDevice:
     def _boot(self):
         """Run from reset until the update is done, a cut fires, or something breaks."""
         self.boot_pending = False
-        if self.opt["hang_on_boot"] and self.was_cut:
+        self.boots += 1
+        if self.boots == self.opt["stall_at_boot"]:
+            raise MachineHung("fake emulator stall")
+        hang = self.opt["hang_on_boot"]
+        if self.was_cut and (hang is True or (hang and self.cut_at in hang)):
             raise MachineHung("fake lock-up")
         pending = self._half(MARKER) not in (0x0000, 0xFFFF)
         if not pending or (self.opt["no_recovery"] and self.was_cut):
@@ -110,6 +121,7 @@ class FakeDevice:
                 if kind == "program" and self.opt["lands_after"]:
                     self._put(addr, op[2])
                 self.halted = self.was_cut = True
+                self.cut_at = self.opcount
                 return
             self.opcount += 1
             if kind == "erase":
@@ -208,7 +220,6 @@ class FakeDevice:
         self.restarts += 1
         self.halted = False
         self.boot_pending = False
-        self.opt["hang_on_boot"] = False        # a fresh emulator
 
 
 class FakeDriver:
