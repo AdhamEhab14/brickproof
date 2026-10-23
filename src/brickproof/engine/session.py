@@ -179,7 +179,9 @@ def hang_limit(seconds, slowest):
     pace: in a long run of byte-wide flash programs (MCUboot on the F411, about 390,000
     of them) a healthy emulator was measured taking 27 times its usual time for a second
     of emulated time, at random places, more often in a second run in the same process.
-    Twenty times, and a fixed ceiling, called that a lock-up."""
+    Twenty times, and a fixed ceiling, called that a lock-up. Even fifty is not enough
+    for the rarest stalls (a slice of 450 to 565 s where 20 s is usual, on CI), so the
+    runner also repeats a hung run before it calls the device locked up."""
     return max(30.0, 50 * seconds * slowest)
 
 
@@ -317,9 +319,9 @@ class RenodeSession:
         # By default Renode will not let virtual time get ahead of host time: when it is
         # ahead, the CPU thread sleeps until the host catches up. Host time only counts
         # while emulation runs, and the flash models skip a whole sector erase (a second
-        # or more) at once, so a fresh emulator is often "ahead" and sleeps. Once on a CI
-        # runner it slept 430 s inside a one-second slice, idle, and was called locked up.
-        # Nothing here needs real-time pacing; virtual time is all that is measured.
+        # or more) at once, so a fresh emulator is often "ahead" and sleeps: on CI every
+        # first update spent two one-second slices asleep. Nothing here needs real-time
+        # pacing; virtual time is all that is measured.
         self.cmd("emulation SetGlobalAdvanceImmediately true")
         if os.path.exists(os.path.join(self.workdir, "models", "nrf52_power.py")):
             self.cmd("include @models/nrf52_power.py")        # System OFF (see the file)

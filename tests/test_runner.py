@@ -99,11 +99,38 @@ def test_flash_rule_violations_fail_the_baseline(option, text):
 
 
 def test_a_lock_up_is_a_failed_cut_and_the_emulator_is_restarted():
-    device = FakeDevice(hang_on_boot=True)
+    device = FakeDevice(hang_on_boot={2})
     results, _ = campaign(device, cuts=[Cut(name="a", at_op=2), Cut(name="b", at_op=3)])
     assert not results[1].passed and "locked up" in results[1].message
-    assert device.restarts == 1
+    assert results[1].hung
+    assert device.restarts == 2, "the cut is run twice, each time on a fresh emulator"
     assert results[2].passed, "the run carries on after the restart"
+
+
+def test_a_device_that_locks_up_every_time_is_still_caught():
+    results, _ = campaign(FakeDevice(hang_on_boot=True), cuts=[Cut(name="a", at_op=2)],
+                          fail_fast=True)
+    assert not results[1].passed and results[1].hung
+    assert "locked up" in results[1].message
+
+
+def test_an_emulator_that_stalls_once_is_not_a_locked_up_device():
+    # what CI saw: a healthy baseline whose emulator stopped answering once, called
+    # locked up, while the same update passed on every other runner
+    device = FakeDevice(stall_at_boot=1)
+    results, trace = campaign(device, cuts=[Cut(name="a", at_op=2)])
+    base = results[0]
+    assert base.passed and not base.hung and base.message == ""
+    assert len(trace) == UPDATE_OPS, "the golden run comes from the second, whole run"
+    assert device.restarts == 1
+    assert results[1].passed
+
+
+def test_a_cut_whose_emulator_stalls_once_is_judged_on_its_second_run():
+    device = FakeDevice(stall_at_boot=3)     # the baseline's boot, the cut's, then its reboot
+    results, _ = campaign(device, cuts=[Cut(name="a", at_op=2)])
+    assert results[1].passed and results[1].fired and not results[1].hung
+    assert device.restarts == 1
 
 
 def test_an_update_that_differs_between_runs_trips_the_self_check():

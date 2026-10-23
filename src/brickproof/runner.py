@@ -1,5 +1,6 @@
 """Run an adapter's cut list: for each cut, start the update from the same flash
 image, pull the plug, power back up and ask whether the device recovered."""
+import functools
 import hashlib
 import os
 import random
@@ -47,6 +48,7 @@ class CutResult:
     content: str = None         # a content fault: which damaged image was staged (see content.py)
     link: int = None            # a broken link: how many bytes of the host's session got through
     bit_error: str = None       # bits flipped at rest: the region and where (see bit_errors.py)
+    hung: bool = False          # the emulator stopped making progress, on two runs in a row
     message: str = ""
     seconds: float = 0.0
 
@@ -204,6 +206,23 @@ def _verdict(session, driver, adapter, res, oracle, update_op=None):
     res.passed = res.recovered
 
 
+def _hang_confirmed(run):
+    """Repeat a run that hung, on the fresh emulator the hang left, before it is
+    reported. Renode replays a run exactly, so firmware that locks up does it again;
+    an emulator that stalled by itself does not (on CI about one F411 MCUboot update in
+    twenty had one slice at 25 times its usual time), and the second run is the result."""
+    @functools.wraps(run)
+    def once_more(*args, **kw):
+        first = run(*args, **kw)
+        if not first.hung:
+            return first
+        res = run(*args, **kw)
+        res.seconds = round(res.seconds + first.seconds, 1)
+        return res
+    return once_more
+
+
+@_hang_confirmed
 def run_cut(session, driver, adapter, cut, golden):
     """One cut, or with cut=None the baseline: the same update left to finish.
     The baseline records the golden run; cuts use it to say where they landed and to
@@ -273,6 +292,7 @@ def run_cut(session, driver, adapter, cut, golden):
         _verdict(session, driver, adapter, res, golden.oracle, res.op_index)
         return res
     except MachineHung:
+        res.hung = True
         # a locked-up CPU leaves Renode unusable; start a fresh one for the next cut
         res.message = ("the device locked up (emulated CPU stopped making progress)"
                        if res.fired or res.baseline else "the emulator hung before the cut fired")
@@ -282,6 +302,7 @@ def run_cut(session, driver, adapter, cut, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+@_hang_confirmed
 def run_torn(session, driver, adapter, state, golden):
     """Boot the device from one torn state and judge it. Nothing is cut here: the
     state is the golden run replayed to just before an operation, with that operation
@@ -294,6 +315,7 @@ def run_torn(session, driver, adapter, state, golden):
         _verdict(session, driver, adapter, res, golden.oracle, state.op_index)
         return res
     except MachineHung:
+        res.hung = True
         res.message = "the device locked up (emulated CPU stopped making progress)"
         session.restart()
         return res
@@ -301,6 +323,7 @@ def run_torn(session, driver, adapter, state, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+@_hang_confirmed
 def run_computed(session, driver, adapter, cut, golden):
     """A clean cut without running the update up to it: power the device up from the
     flash the golden run predicts just before that operation. It is the same test,
@@ -315,6 +338,7 @@ def run_computed(session, driver, adapter, cut, golden):
         _verdict(session, driver, adapter, res, golden.oracle, cut.at_op)
         return res
     except MachineHung:
+        res.hung = True
         res.message = "the device locked up (emulated CPU stopped making progress)"
         session.restart()
         return res
@@ -322,6 +346,7 @@ def run_computed(session, driver, adapter, cut, golden):
         res.seconds = round(time.time() - t0, 1)
 
 
+@_hang_confirmed
 def run_content(session, driver, adapter, name, image, judge):
     """One damaged image, staged in place of the update, and the update left to run. Not a
     power cut: the device must refuse the image and keep the one `judge` accepts, which the
@@ -349,6 +374,7 @@ def run_content(session, driver, adapter, name, image, judge):
         res.recovered = res.passed = v.ok
         return res
     except MachineHung:
+        res.hung = True
         res.message = "the device locked up (emulated CPU stopped making progress)"
         session.restart()
         return res
@@ -356,6 +382,7 @@ def run_content(session, driver, adapter, name, image, judge):
         res.seconds = round(time.time() - t0, 1)
 
 
+@_hang_confirmed
 def run_bit_error(session, driver, adapter, name, image, region, judge):
     """Boot from flash with bits flipped inside `region`. The device must not execute
     there, nor sit in a fault handler: refusing the damaged image is the right answer."""
@@ -380,6 +407,7 @@ def run_bit_error(session, driver, adapter, name, image, region, judge):
         res.recovered = res.passed = True
         return res
     except MachineHung:
+        res.hung = True
         res.message = "the device locked up (emulated CPU stopped making progress)"
         session.restart()
         return res
@@ -444,6 +472,7 @@ def link_points(total, n):
     return sorted(p for p in picks if 0 < p < total)
 
 
+@_hang_confirmed
 def run_link(session, driver, adapter, n, golden):
     """The link breaks after the host has sent n bytes of the update; the device keeps its
     power. After `wait` seconds the cable is back, the host runs the whole update again,
@@ -469,6 +498,7 @@ def run_link(session, driver, adapter, n, golden):
         _verdict(session, driver, adapter, res, golden.oracle, None)
         return res
     except MachineHung:
+        res.hung = True
         res.message = "the device locked up (emulated CPU stopped making progress)"
         session.restart()
         return res
@@ -529,6 +559,7 @@ def _recovery_trace(session, driver, adapter, image):
     return session.trace_stop()
 
 
+@_hang_confirmed
 def run_deep(session, driver, adapter, parent, m, name, level, state, real, root):
     """A cut during recovery: `parent` is the recovery (its starting flash and its traced
     operations), `m` the operation of it to cut before, `state` the flash that leaves.
@@ -557,6 +588,7 @@ def run_deep(session, driver, adapter, parent, m, name, level, state, real, root
         _verdict(session, driver, adapter, res, parent.oracle, root)
         return res
     except MachineHung:
+        res.hung = True
         res.message = "the device locked up (emulated CPU stopped making progress)"
         session.restart()
         return res
