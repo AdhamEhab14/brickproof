@@ -314,6 +314,13 @@ class RenodeSession:
         if self.flash.eeprom_size:
             self.cmd("include @models/BpI2cEeprom.cs", timeout=120)
         self.cmd("machine LoadPlatformDescription @platform.repl")
+        # By default Renode will not let virtual time get ahead of host time: when it is
+        # ahead, the CPU thread sleeps until the host catches up. Host time only counts
+        # while emulation runs, and the flash models skip a whole sector erase (a second
+        # or more) at once, so a fresh emulator is often "ahead" and sleeps. Once on a CI
+        # runner it slept 430 s inside a one-second slice, idle, and was called locked up.
+        # Nothing here needs real-time pacing; virtual time is all that is measured.
+        self.cmd("emulation SetGlobalAdvanceImmediately true")
         if os.path.exists(os.path.join(self.workdir, "models", "nrf52_power.py")):
             self.cmd("include @models/nrf52_power.py")        # System OFF (see the file)
         self._check_memory_sizes()
