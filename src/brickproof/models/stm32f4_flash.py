@@ -94,6 +94,7 @@ ROW = 16                    # bytes of one flash row: a program must fit in one
 
 from System import Array, Byte, Convert
 from Antmicro.Renode.Time import TimeInterval
+from Antmicro.Renode.Core import EmulationManager
 
 (OPCOUNT, CUTPOINT, CUT_HIT, CUT_KIND, CUT_ADDR, CUT_PAGE, FAULT_ADDR, FAULT_PC,
  TRACE, PENDING, AUDIT, REFUSED, REFUSED_AT, LAST, _RESYNC, COMPARE, CMP_FROM, CMP_LEN,
@@ -182,8 +183,18 @@ def log(text):
         f.close()
 
 
+def wake_clock():
+    # Renode's clock can miss the CPU thread starting at the beginning of a RunFor, and
+    # then wait out a 10 ms timeout each time the CPU stops early, which it does over and
+    # over while flash is programmed: a one-second slice once took 450 s. Telling the
+    # clock the CPU is active again ends that, and costs nothing when it was not waiting.
+    EmulationManager.Instance.CurrentEmulation.MasterTimeSource.ReportHandleActive()
+    bus.Machine.LocalTimeSource.ReportHandleActive()
+
+
 def spend(us):
     # the chip is busy for this long and the CPU, which runs from flash, waits
+    wake_clock()
     if us:
         for c in bus.GetCPUs():
             c.SkipTime(TimeInterval.FromMicroseconds(us))
@@ -307,6 +318,7 @@ def listen(on):
         c.SetHookAtMemoryAccess(on_access if on else None)
         if on:
             c.RequestTranslationBlockRestart()
+    wake_clock()
 
 
 def on_access(pc, operation, virtual, addr, width, value):

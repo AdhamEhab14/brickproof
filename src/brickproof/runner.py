@@ -209,8 +209,9 @@ def _verdict(session, driver, adapter, res, oracle, update_op=None):
 def _hang_confirmed(run):
     """Repeat a run that hung, on the fresh emulator the hang left, before it is
     reported. Renode replays a run exactly, so firmware that locks up does it again;
-    an emulator that stalled by itself does not (on CI about one F411 MCUboot update in
-    twenty had one slice at 25 times its usual time), and the second run is the result."""
+    an emulator that stalled by itself does not, and the second run is the result. The
+    stall seen on CI (Renode's clock missing a wake-up) is now prevented in the flash
+    models; this stays for any other emulator trouble, which must not pass as a lock-up."""
     @functools.wraps(run)
     def once_more(*args, **kw):
         first = run(*args, **kw)
