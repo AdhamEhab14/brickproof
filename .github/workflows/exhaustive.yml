@@ -38,6 +38,8 @@ jobs:
     name: shard ${{ matrix.shard }}
     env:
       RENODE_VERSION: "1.17.0"
+      ARM_TOOLCHAIN: "13.2.rel1"     # the same GCC as Ubuntu's gcc-arm-none-eabi
+      ARM_TOOLCHAIN_SHA256: "6cd1bbc1d9ae57312bcd169ae283153a9572bd6a8e4eeae2fedfbc33b115fdbb"
     steps:
       - uses: actions/checkout@v4
 
@@ -48,8 +50,31 @@ jobs:
           ref: v2.0.0          # pinned: the adapter is written for this release
           path: target
 
-      - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
+      # Arm's own toolchain, cached like Renode. apt pulled 588 MB of it from the Ubuntu
+      # mirror on every run, and a slow mirror took 51 minutes and timed the job out.
+      # cmake and ninja come with the runner image.
+      - name: Cache the ARM toolchain
+        id: arm-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/arm-gnu-toolchain
+          key: arm-gnu-toolchain-${{ env.ARM_TOOLCHAIN }}-linux
+
+      - name: Install the ARM toolchain
+        if: steps.arm-cache.outputs.cache-hit != 'true'
+        run: |
+          f=arm-gnu-toolchain-${ARM_TOOLCHAIN}-x86_64-arm-none-eabi.tar.xz
+          curl -sSfL --retry 3 -o /tmp/$f https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_TOOLCHAIN}/binrel/$f
+          echo "${ARM_TOOLCHAIN_SHA256}  /tmp/$f" | sha256sum -c -
+          mkdir -p ~/arm-gnu-toolchain
+          tar xJf /tmp/$f -C ~/arm-gnu-toolchain --strip-components=1
+
+      - name: Put the toolchain on PATH
+        run: |
+          echo "$HOME/arm-gnu-toolchain/bin" >> "$GITHUB_PATH"
+          "$HOME/arm-gnu-toolchain/bin/arm-none-eabi-gcc" --version | head -1
+          cmake --version | head -1
+          ninja --version
 
       - name: Cache Renode
         id: renode-cache
