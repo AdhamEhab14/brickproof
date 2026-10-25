@@ -11,6 +11,7 @@
 # storage - Zephyr's flash stores (NVS, littlefs, ZMS) under the storage workload.
 # e2e   - builds the Three-Tier bootloader (the first real target), then cuts power
 #         during its FBL self-update in Renode and checks it recovers each time.
+# parity - every campaign's results against tests/parity/baseline.json (docs/features.md).
 name: CI
 
 on:
@@ -632,3 +633,26 @@ jobs:
         with:
           name: brickproof-results
           path: brickproof-out/
+
+  # every campaign above, against the committed baseline (docs/features.md): a change that
+  # is not meant to change results must leave every verdict, coverage figure and cut the
+  # same. A change that is meant to updates tests/parity/baseline.json in the same PR.
+  parity:
+    needs: [demo, demo-m33mu, mcuboot, storage, action, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Every report of this run
+        uses: actions/download-artifact@v4
+        with:
+          path: reports
+
+      - name: Compare with the baseline
+        run: python tools/parity.py compare tests/parity/baseline.json reports
