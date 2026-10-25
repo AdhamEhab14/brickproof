@@ -18,7 +18,7 @@ scenarios:
   # the correct build: every clean cut, every torn state, a second cut
   - {id: demo-adapter, adapter: examples/demo_ab_bootloader/adapter.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 12.4}
   - {id: demo-bug-consume_first, adapter: examples/demo_ab_bootloader/bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.3}
-  - {id: demo-bug-trust_header, adapter: examples/demo_ab_bootloader/bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 6.6}
+  - {id: demo-bug-trust_header, adapter: examples/demo_ab_bootloader/bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.1}
   - {id: demo-bug-naive_floor, adapter: examples/demo_ab_bootloader/bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 2.4}
   - {id: demo-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
   - {id: demo-bug-no_erase, adapter: examples/demo_ab_bootloader/bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
@@ -40,7 +40,7 @@ scenarios:
   - {id: demo-bug-standby_ram, adapter: examples/demo_ab_bootloader/bug-standby_ram.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
   - {id: demo-f411, adapter: examples/demo_ab_bootloader/f411.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 9.1}
   - {id: demo-f411-bug-consume_first, adapter: examples/demo_ab_bootloader/f411-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
-  - {id: demo-f411-bug-trust_header, adapter: examples/demo_ab_bootloader/f411-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 11.6}
+  - {id: demo-f411-bug-trust_header, adapter: examples/demo_ab_bootloader/f411-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.5}
   - {id: demo-f411-bug-naive_floor, adapter: examples/demo_ab_bootloader/f411-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
   - {id: demo-f411-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/f411-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
   # not refused on an F4: the cells end up as old AND new
@@ -68,7 +68,7 @@ scenarios:
   # passes every clean cut; only torn states catch it
   - {id: demo-l476-bug-no_ecc_nmi, adapter: examples/demo_ab_bootloader/l476-bug-no_ecc_nmi.yaml, args: "--fail-fast --torn", expect: 1, minutes: 1.1}
   - {id: demo-l476-bug-consume_first, adapter: examples/demo_ab_bootloader/l476-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.9}
-  - {id: demo-l476-bug-trust_header, adapter: examples/demo_ab_bootloader/l476-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 5.2}
+  - {id: demo-l476-bug-trust_header, adapter: examples/demo_ab_bootloader/l476-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.3}
   - {id: demo-l476-bug-naive_floor, adapter: examples/demo_ab_bootloader/l476-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.5}
   - {id: demo-l476-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/l476-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.7}
   # a double word programmed twice: refused (PROGERR)
@@ -81,7 +81,7 @@ scenarios:
   - {id: demo-l476-hold_pg, adapter: examples/demo_ab_bootloader/l476-hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 6.7}
   - {id: demo-nrf52, adapter: examples/demo_ab_bootloader/nrf52.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 7.4}
   - {id: demo-nrf52-bug-consume_first, adapter: examples/demo_ab_bootloader/nrf52-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.9}
-  - {id: demo-nrf52-bug-trust_header, adapter: examples/demo_ab_bootloader/nrf52-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 4.3}
+  - {id: demo-nrf52-bug-trust_header, adapter: examples/demo_ab_bootloader/nrf52-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.8}
   - {id: demo-nrf52-bug-naive_floor, adapter: examples/demo_ab_bootloader/nrf52-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
   - {id: demo-nrf52-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/nrf52-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
   - {id: demo-nrf52-bug-no_erase, adapter: examples/demo_ab_bootloader/nrf52-bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}

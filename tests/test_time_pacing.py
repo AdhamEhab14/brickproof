@@ -14,6 +14,8 @@ import subprocess
 import sys
 import threading
 
+import pytest
+
 from brickproof.engine import session as S
 from brickproof.engine.session import FlashGeometry, RenodeSession
 
@@ -23,6 +25,7 @@ PACING_OFF = "emulation SetGlobalAdvanceImmediately true"
 
 class FakeMonitor:
     """Renode's monitor as the session sees it, on the port the session chose."""
+    cpsr = 0x01000000          # what `cpu CPSR` prints: Thumb state, as on any Cortex-M
 
     def __init__(self, port, sent):
         self.sent = sent
@@ -53,8 +56,16 @@ class FakeMonitor:
                     # the UART the session connects to next
                     uart = socket.create_server(("127.0.0.1", int(m.group(1))))
                     threading.Thread(target=uart.accept, daemon=True).start()
-                reads = text.count("ReadDoubleWord")
-                conn.sendall(line + b"\n" + b"0x00000000\n" * reads + b"(target) ")
+                # one value per read, in the order asked
+                values = b""
+                for part in text.split(";"):
+                    if "ReadDoubleWord" in part:
+                        values += b"0x00000000\n"
+                    elif part.strip() == "cpu CPSR":
+                        values += b"0x%08X\n" % FakeMonitor.cpsr
+                    elif part.strip() == "cpu PC":
+                        values += b"0x08000100\n"
+                conn.sendall(line + b"\n" + values + b"(target) ")
 
 
 def fake_renode(monkeypatch):
@@ -111,5 +122,23 @@ def test_a_restarted_emulator_runs_without_real_time_pacing_too(monkeypatch, tmp
         s.restart()
         assert len(started) == 2
         assert PACING_OFF in started[1]
+    finally:
+        s.close()
+
+
+def test_a_core_out_of_thumb_state_is_locked_up_at_once(monkeypatch, tmp_path):
+    # Renode can leave a Cortex-M running with its T bit clear after a jump through an
+    # erased vector; on the chip that is a fault and a dead device, whatever the pace
+    fake_renode(monkeypatch)
+    s = Quick("renode", str(tmp_path), FLASH, [])
+    try:
+        s.run_for(0.5)                              # Thumb state: runs on
+        slowest = s._slowest
+        monkeypatch.setattr(FakeMonitor, "cpsr", 0x00000000)
+        with pytest.raises(S.MachineHung, match="Thumb"):
+            s.run_for(0.5)
+        assert s._slowest == slowest, "a slice spent there does not teach the pace"
+        with pytest.raises(S.MachineHung, match="Thumb"):
+            s.sample_cpu()
     finally:
         s.close()

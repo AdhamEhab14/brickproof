@@ -1,5 +1,5 @@
 {
-  "source": "CI run 40115285524 on main a3f3854 (2026-10-24)",
+  "source": "CI run 40223762267 on thumb-state (2026-10-26): run 40115285524's results, the three STM32 trust_header cuts now 'locked up'",
   "scenarios": {
     "adapters/mcuboot/f411-overwrite.yaml | shard 1/1 | plan phases": {
       "passed": true,
@@ -2857,7 +2857,7 @@
         ["op-13", true, "program", 134225930, 13, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
         ["op-14", true, "program", 134225932, 14, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
         ["op-15", true, "program", 134225934, 15, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
-        ["op-16", true, "program", 134226432, 16, false, false, false, false, false, false, null, null, 1, false, null, null, null, "flash changed at 0x08000018 with no flash operation behind it (a store with PG clear or the controller locked). The chip ignores such a write"]
+        ["op-16", true, "program", 134226432, 16, false, false, false, false, false, false, null, null, 1, false, null, null, null, "the device locked up (emulated CPU stopped making progress)"]
       ]
     },
     "examples/demo_ab_bootloader/f411-bug-consume_first.yaml | plan every": {
@@ -3153,7 +3153,7 @@
         ["op-6", true, "program", 134348804, 6, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
         ["op-7", true, "program", 134348808, 7, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
         ["op-8", true, "program", 134348812, 8, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
-        ["op-9", true, "program", 134349312, 9, false, false, false, false, false, false, null, null, 1, false, null, null, null, "flash changed at 0x08000018 with no flash operation behind it (a store with PG clear or the controller locked). The chip ignores such a write"]
+        ["op-9", true, "program", 134349312, 9, false, false, false, false, false, false, null, null, 1, false, null, null, null, "the device locked up (emulated CPU stopped making progress)"]
       ]
     },
     "examples/demo_ab_bootloader/f411-bug-watchdog.yaml": {
@@ -6888,7 +6888,7 @@
         ["op-3", true, "erase", 134348800, 3, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
         ["op-4", true, "program", 134348800, 4, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
         ["op-5", true, "program", 134348808, 5, true, true, true, false, false, false, "v2", null, 1, false, null, null, null, ""],
-        ["op-6", true, "program", 134349312, 6, false, false, false, false, false, false, null, null, 1, false, null, null, null, "flash changed at 0x08000018 with no flash operation behind it (a store with PG clear or the controller locked). The chip ignores such a write"]
+        ["op-6", true, "program", 134349312, 6, false, false, false, false, false, false, null, null, 1, false, null, null, null, "the device locked up (emulated CPU stopped making progress)"]
       ]
     },
     "examples/demo_ab_bootloader/l476-hold_pg.yaml | plan every | torn": {
