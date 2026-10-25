@@ -8,10 +8,11 @@ import pytest
 
 from brickproof import check as checks
 from brickproof import init as inits
+from demo_paths import FIRMWARE
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MCUBOOT_F411 = os.path.join(ROOT, "adapters", "mcuboot", "prebuilt", "f411")
-DEMO = os.path.join(ROOT, "examples", "demo_ab_bootloader", "prebuilt")
+DEMO = os.path.join(FIRMWARE, "prebuilt")
 
 
 @pytest.fixture

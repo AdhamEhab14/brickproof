@@ -1,0 +1,14 @@
+# The F411 demo pausing its install once in Standby, as a device on a supercap does to let it
+# recharge (see STANDBY_PAUSE in firmware/bootloader/main.c). Standby loses RAM and ends in a reset;
+# the bootloader knows it has paused from PWR's SBF and finishes the install. Every cut must
+# recover, the Standby included.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_standby
+firmware:
+  - file: prebuilt/f411_bootloader_standby.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000
+low_power:
+  wake_after: 0.2                    # the wake source: an RTC alarm 200 ms later

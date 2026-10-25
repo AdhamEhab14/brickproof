@@ -5,6 +5,6 @@ __pycache__
 brickproof-out
 dist
 build
-examples/demo_ab_bootloader/build
+examples/demo_ab_bootloader/firmware/build
 .pytest_cache
 .ruff_cache

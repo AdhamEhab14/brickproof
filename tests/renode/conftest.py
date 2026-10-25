@@ -11,6 +11,13 @@ from brickproof.engine.session import RenodeSession, find_renode
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEMO = os.path.join(ROOT, "examples", "demo_ab_bootloader")
+CHIPS = ("f411", "l476", "nrf52", "h563")
+
+
+def demo_adapter(file):
+    """A demo adapter by file name, in its chip's folder."""
+    chip = next((c for c in CHIPS if file.startswith(c)), "f103")
+    return os.path.join(DEMO, chip, file)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -26,7 +33,7 @@ def pytest_collection_modifyitems(config, items):
 def chip(request):
     """A booted emulator for the demo adapter the test module names in ADAPTER, changed
     by the module's ADJUST(adapter) if it has one."""
-    ad = adapters.load(os.path.join(DEMO, request.module.ADAPTER))
+    ad = adapters.load(demo_adapter(request.module.ADAPTER))
     adjust = getattr(request.module, "ADJUST", None)
     if adjust:
         adjust(ad)

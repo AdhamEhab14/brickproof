@@ -1,0 +1,14 @@
+# The nRF52840 demo with a retry limit (see BUG_RETRY_LIMIT in firmware/bootloader/main.c): after
+# two interrupted install attempts it gives up on the update. It survives any single
+# power cut. Only a second cut, during the recovery from a first one, shows the bug,
+# so this one needs depth 2 to be caught.
+extends: nrf52.yaml
+name: demo_ab_bootloader_nrf52_bug_retry_limit
+firmware:
+  - file: prebuilt/nrf52_bootloader_bug_retry_limit.elf
+  - file: prebuilt/nrf52_app_v1.img
+    addr: 0x10000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x4000
+scenario:
+  depth: 2

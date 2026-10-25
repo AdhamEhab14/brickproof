@@ -1,0 +1,14 @@
+# The F411 demo feeding the hardware watchdog but leaving it at its reset timeout
+# (see BUG_WATCHDOG in firmware/bootloader/main.c). The chip stands still for the second a
+# 128 KB sector erase takes, the watchdog resets it half way, and the next boot starts
+# the same erase again. With flash operations that take no time this cannot be seen.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_bug_watchdog
+flash:
+  hardware_watchdog: true
+firmware:
+  - file: prebuilt/f411_bootloader_bug_watchdog.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000

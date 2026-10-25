@@ -5,6 +5,7 @@ import pytest
 from brickproof import adapter as adapters
 from brickproof.engine import workdir as wd
 from brickproof.engine.session import FlashGeometry
+from demo_paths import demo_adapter
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 THREE_TIER = os.path.join(REPO, "adapters", "three_tier_f103", "adapter.yaml")
@@ -68,7 +69,7 @@ def test_prepare_names_the_missing_firmware(tmp_path):
 
 
 def test_platform_gets_the_chips_real_memory_sizes(tmp_path):
-    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
+    ad = adapters.load(demo_adapter("adapter"))
     assert wd.memory_sizes(ad) == {"sram": 0x5000, "flash": 0x20000}
     wd.prepare(str(tmp_path), ad)
     repl = (tmp_path / "platform.repl").read_text()
@@ -86,7 +87,7 @@ def test_ram_base_must_match_the_platform():
 
 
 def test_every_hole_in_the_address_space_gets_a_guard(tmp_path):
-    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
+    ad = adapters.load(demo_adapter("adapter"))
     assert wd.holes(ad) == [("ramGuard", 0x20005000, 0x22000000 - 0x20005000),
                             ("flashGuard", 0x08020000, 0x1FFF0000 - 0x08020000),
                             ("aliasGuard", 0x20000, 0x08000000 - 0x20000)]
@@ -101,7 +102,7 @@ def test_every_hole_in_the_address_space_gets_a_guard(tmp_path):
 
 
 def test_the_flash_model_gets_a_shadow_as_big_as_the_flash(tmp_path):
-    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "adapter.yaml"))
+    ad = adapters.load(demo_adapter("adapter"))
     wd.prepare(str(tmp_path), ad)
     repl = (tmp_path / "platform.repl").read_text()
     # room for the flash and, after it, the option bytes
@@ -118,7 +119,7 @@ def test_the_flash_model_gets_a_shadow_as_big_as_the_flash(tmp_path):
 
 
 def test_an_external_flash_chip_is_put_on_its_bus_with_its_chip_select(tmp_path):
-    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "f411-ext.yaml"))
+    ad = adapters.load(demo_adapter("f411-ext"))
     wd.prepare(str(tmp_path), ad)
     repl = (tmp_path / "platform.repl").read_text()
     assert "extflash: SPI.BpSpiNor @ spi1\n    size: 0x100000\n    address: 0xA0000000\n" in repl
@@ -130,7 +131,7 @@ def test_an_external_flash_chip_is_put_on_its_bus_with_its_chip_select(tmp_path)
 
 
 def test_without_an_external_flash_chip_nothing_of_it_is_there(tmp_path):
-    ad = adapters.load(os.path.join(REPO, "examples", "demo_ab_bootloader", "f411.yaml"))
+    ad = adapters.load(demo_adapter("f411"))
     wd.prepare(str(tmp_path), ad)
     assert "extflash" not in (tmp_path / "platform.repl").read_text()
     assert not (tmp_path / "models" / "BpSpiNor.cs").exists()

@@ -34,7 +34,7 @@ def test_every_scenario_is_well_formed():
 
 def test_every_demo_adapter_is_run():
     demo = {os.path.relpath(p, ROOT).replace(os.sep, "/")
-            for p in glob.glob(os.path.join(ROOT, "examples", "demo_ab_bootloader", "*.yaml"))}
+            for p in glob.glob(os.path.join(ROOT, "examples", "demo_ab_bootloader", "*", "*.yaml"))}
     assert demo - {s["adapter"] for s in ALL} == set()
 
 
@@ -49,7 +49,7 @@ def test_every_campaign_in_the_parity_baseline_is_still_run():
         base = json.load(f)["scenarios"]
     run = {s["adapter"] for s in ALL}
     run.add("adapters/three_tier_f103/adapter.yaml")             # the e2e job
-    run.add("examples/demo_ab_bootloader/adapter.yaml")          # the action job
+    run.add("examples/demo_ab_bootloader/f103/adapter.yaml")     # the action job
     assert {k.split(" | ")[0] for k in base} - run == set()
 
 

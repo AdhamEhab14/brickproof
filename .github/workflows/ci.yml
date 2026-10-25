@@ -64,7 +64,7 @@ jobs:
       - name: Unit tests
         run: python -m pytest -v
       - name: Demo firmware builds from source
-        run: python examples/demo_ab_bootloader/build.py
+        run: python examples/demo_ab_bootloader/firmware/build.py
 
   compat:
     runs-on: ubuntu-latest
@@ -204,11 +204,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: renode, adapter: adapter, args: --plan phases --per-phase 1 --torn -j 3, expect: 0,
+          - {name: renode, adapter: f103/adapter, args: --plan phases --per-phase 1 --torn -j 3, expect: 0,
              artifact: reports-action-renode}
           # m33mu built and cached by the action itself. The scenarios run this campaign
           # too, so its report stays out of the parity check (not reports-*)
-          - {name: m33mu, adapter: h563-bug-consume_first, args: --fail-fast, expect: 1,
+          - {name: m33mu, adapter: h563/h563-bug-consume_first, args: --fail-fast, expect: 1,
              artifact: action-m33mu}
     name: action (${{ matrix.name }})
     steps:

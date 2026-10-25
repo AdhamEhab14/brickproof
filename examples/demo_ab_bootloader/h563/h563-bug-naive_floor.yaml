@@ -1,0 +1,10 @@
+# The H563 demo with a known bug put back (see BUG_NAIVE_FLOOR in firmware/bootloader/main.c).
+# BrickProof should fail at least one cut.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_bug_naive_floor
+firmware:
+  - file: prebuilt/h563_bootloader_bug_naive_floor.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000

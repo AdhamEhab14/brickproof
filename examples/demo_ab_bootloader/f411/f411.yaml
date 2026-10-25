@@ -1,0 +1,75 @@
+# The same demo on an STM32F411: sectors of 16 to 128 KB, word programming, v1 -> v2.
+# The chip differs from the F103 in everything a power cut touches: an erase wipes a
+# whole sector, a program can clear bits but is never refused, and the chip rewrites
+# its own option bytes. Runs from the committed firmware/prebuilt/ files:
+#
+#   brickproof demo f411
+#
+# The f411-bug-*.yaml files next to this one swap in a bootloader with a known bug.
+
+name: demo_ab_bootloader_f411
+target: ../firmware
+
+platform:
+  base: stm32f411
+
+flash:
+  base: 0x08000000
+  size: 0x80000          # 512 KB
+  sectors: [0x4000, 0x4000, 0x4000, 0x4000, 0x10000, 0x20000, 0x20000, 0x20000]
+  write_unit: 4
+  write_protected:                   # as shipped: the bootloader's own sector is locked
+    - {from: 0x08000000, size: 0x4000}
+
+ram:
+  size: 0x20000        # 128 KB. Not optional: extra emulated RAM hides stack faults
+
+# the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
+firmware:
+  - file: prebuilt/f411_bootloader.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000
+
+uart: usart2
+boot_settle: 0.3
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x08040000
+    image: prebuilt/f411_app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    boot_timeout: 5                  # a recovery erases 128 KB again, and that alone is a second
+    rollback:
+      image: prebuilt/f411_app_v1.img
+      forbidden: "APP v1"
+
+# Judged from outside the firmware: the bytes in Slot A must be exactly one of
+# these images, and the core must be running inside it, not in a fault handler.
+oracle:
+  images:
+    v1: {file: prebuilt/f411_app_v1.img, at: 0x08020000}
+    v2: {file: prebuilt/f411_app_v2.img, at: 0x08020000}
+  accept: [v2]                       # a cut must not lose the update: only the new one will do
+
+scenario:
+  name: update-v1-to-v2
+  cut_limit: 4                       # virtual seconds; the two sector erases take 1.25 s
+  update_time: 3
+  plan: every                        # cut at every distinct flash state the update goes through
+  # damaged images in place of v2: the bootloader must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]                # magic, version, size, CRC
+      body: [0x200, 0x348]
+  # bits flipped in the installed v2 while the device is off: it must not run it. Only the
+  # bytes the image uses (header and body); the padding between them is never read
+  bit_errors:
+    runs: 4
+    regions:
+      header: [0x08020000, 0x08020010]
+      body: [0x08020200, 0x08020348]

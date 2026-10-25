@@ -10,9 +10,9 @@ from brickproof import adapter as adapters
 from brickproof import runner
 from brickproof.engine import m33mu as m33mu_engine
 from brickproof.engine.session import CUT_ERASE, CUT_PROGRAM, FlashGeometry
+from demo_paths import demo_adapter
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEMO = os.path.join(REPO, "examples", "demo_ab_bootloader")
 
 H563 = """
 name: h5
@@ -46,7 +46,7 @@ def test_an_m33mu_chip_loads_with_its_own_geometry(tmp_path):
 
 
 def test_renode_chips_keep_renode(tmp_path):
-    ad = adapters.load(os.path.join(DEMO, "f411.yaml"))
+    ad = adapters.load(demo_adapter("f411"))
     assert ad.emulator == "renode" and ad.optbytes == {}
 
 
@@ -93,7 +93,7 @@ def test_option_bytes_and_write_protection_cannot_both_set_one(tmp_path):
 
 def test_option_bytes_are_for_m33mu_chips_only(tmp_path):
     p = tmp_path / "a.yaml"
-    p.write_text(open(os.path.join(DEMO, "f411.yaml")).read() + "option_bytes: {WRPSG1: 0}\n")
+    p.write_text(open(demo_adapter("f411")).read() + "option_bytes: {WRPSG1: 0}\n")
     with pytest.raises(adapters.AdapterError, match="only for chips m33mu emulates"):
         adapters.load(str(p))
 
@@ -208,7 +208,7 @@ needs_m33mu = pytest.mark.skipif(_m33mu() is None, reason="no m33mu with the har
 
 @needs_m33mu
 def test_the_h563_demo_recovers_from_cuts():
-    ad = adapters.load(os.path.join(DEMO, "h563.yaml"))
+    ad = adapters.load(demo_adapter("h563"))
     ad.plan = None
     ad.cuts = [adapters.Cut(name="op-%d" % n, at_op=n) for n in (0, 2, 10, 24, 25)]
     out = runner.run(ad)
@@ -224,7 +224,7 @@ def test_the_h563_demo_recovers_from_cuts():
 
 @needs_m33mu
 def test_the_h563_demo_catches_a_bug():
-    ad = adapters.load(os.path.join(DEMO, "h563-bug-consume_first.yaml"))
+    ad = adapters.load(demo_adapter("h563-bug-consume_first"))
     ad.plan = None
     ad.cuts = [adapters.Cut(name="op-3", at_op=3)]     # Slot B consumed, Slot A erased
     out = runner.run(ad)

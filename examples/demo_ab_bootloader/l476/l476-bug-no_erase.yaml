@@ -1,0 +1,13 @@
+# The L476 demo copying the new image over the old one without erasing first
+# (see BUG_NO_ERASE in firmware/bootloader/main.c). On an L4 a double word is programmed once
+# between erases: a program over one that is not erased is refused (PROGERR), and every
+# program after it too until the flag is cleared. Renode's plain memory would just store
+# the new value. BrickProof should fail the baseline.
+extends: l476.yaml
+name: demo_ab_bootloader_l476_bug_no_erase
+firmware:
+  - file: prebuilt/l476_bootloader_bug_no_erase.elf
+  - file: prebuilt/l476_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000
