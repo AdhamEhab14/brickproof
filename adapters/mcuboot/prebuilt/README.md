@@ -39,3 +39,7 @@ python adapters/mcuboot/build.py <zephyr workspace> adapters/mcuboot/prebuilt/f4
 
 Its images are 40 bytes shorter than `f411/`'s (v2 is 0x43AF bytes). The damaged-image
 tests read each image's layout from its header, so no adapter states a size.
+
+`SHA256SUMS` in each folder lists the files and their SHA-256; `tests/test_prebuilt.py` checks
+them. After a rebuild, update it in the same commit:
+`sha256sum $(ls | grep -v SHA256SUMS) > SHA256SUMS` in that folder.

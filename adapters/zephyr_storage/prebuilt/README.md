@@ -24,3 +24,7 @@ loaded bytes unchanged). Build again with
 `python adapters/zephyr_storage/build.py <zephyr workspace> adapters/zephyr_storage/prebuilt/nrf52840`
 (the workspace needs the `littlefs` and `hal_nordic` modules), then delete the `build/`
 folder it leaves and strip the ELF files the same way.
+
+`SHA256SUMS` in each folder lists the files and their SHA-256; `tests/test_prebuilt.py` checks
+them. After a rebuild, update it in the same commit:
+`sha256sum $(ls | grep -v SHA256SUMS) > SHA256SUMS` in that folder.

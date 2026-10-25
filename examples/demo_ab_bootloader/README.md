@@ -32,4 +32,4 @@ PATH, or in `M33MU_PATH`.
 | `firmware/common/chip_*.h` | what differs between the chips: flash map, erase, program, option bytes, UART |
 | `f103/` | how BrickProof runs each build on the F103: `adapter.yaml`, `bug-*.yaml` and the other variants |
 | `f411/`, `l476/`, `nrf52/`, `h563/` | the same on the F411, the L476, the nRF52840 and the H563 |
-| `firmware/` | the source above, `prebuilt/` (the built firmware, so no toolchain is needed) and `build.py`, which rebuilds it (needs `arm-none-eabi-gcc`) |
+| `firmware/` | the source above, `prebuilt/` (the built firmware, so no toolchain is needed, with its `SHA256SUMS`) and `build.py`, which rebuilds it (needs `arm-none-eabi-gcc`; `--prebuilt` refreshes `prebuilt/` and its checksums) |
