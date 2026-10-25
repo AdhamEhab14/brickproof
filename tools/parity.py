@@ -10,7 +10,7 @@ and compares a set of reports against a committed baseline:
 `compare` exits 1 if a scenario is missing or any result differs. A failure message that
 changed on a cut that fails either way is only a warning: firmware that jumps into erased
 flash can be stopped by more than one check, and which one comes first can depend on the
-emulator (docs/decisions.md, 2026-10-25).
+emulator (docs/decisions/0092).
 
 A deliberate change of results (a new chip rule, a rebuilt target) updates the baseline in
 the same pull request, so the diff shows exactly what moved.

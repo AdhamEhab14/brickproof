@@ -45,4 +45,4 @@ bricked the device or let an old image back in. They are the demo's first three 
 v2.0.0 fixes all three. Its self-update has since been cut at every one of its 12,109
 distinct flash states (`.github/workflows/exhaustive.yml`, 20 machines, 2026-10-12), with no
 failure. Built with Arm's toolchain, as CI now does, the same update has 11,897 distinct
-states (`docs/decisions.md`, 2026-10-25).
+states ([docs/decisions/0092](../../docs/decisions/0092-a-parity-check-before-restructuring.md)).

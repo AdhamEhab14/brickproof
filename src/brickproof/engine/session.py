@@ -445,7 +445,7 @@ class RenodeSession:
     # crawling slice passes the wall-clock hang limit, depends on the machine, so the same
     # cut gave "locked up" on one runner and something else 20 minutes later on another.
     # Every slice of emulated time reads the T bit as well, in the same monitor line, and
-    # a core without it is locked up at once (docs/decisions.md, 2026-10-26).
+    # a core without it is locked up at once (docs/decisions/0094).
     CHECK_STATE = "cpu CPSR"
     THUMB = 1 << 24
 

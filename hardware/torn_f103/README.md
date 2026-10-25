@@ -2,7 +2,7 @@
 
 The firmware that measured what an STM32F103 leaves in flash when a page erase or a halfword
 program is cut short. The `erase-early` and `erase-late` shapes in `src/brickproof/torn.py`
-come from its results (`docs/decisions.md`, 2026-10-14).
+come from its results ([docs/decisions/0059](../../docs/decisions/0059-torn-erases-measured.md)).
 
 It starts an erase (or a program), resets the chip a counted number of CPU cycles later
 (DWT, 125 ns at the reset clock), reads back what is left and prints it. It sweeps the delay
