@@ -3,8 +3,8 @@
 Every feature BrickProof has, and the check that shows it still works. A restructuring is
 done when every row still has its proof and the parity check passes (see the end).
 
-**Proof** names a CI campaign (the adapter in `examples/demo_ab_bootloader/` or
-`adapters/` and how it is run), a unit test file in `tests/`, or a Renode test in
+**Proof** names a CI campaign (a scenario in `tests/scenarios.yaml`: the adapter in
+`examples/demo_ab_bootloader/` or `adapters/` and how it is run), a unit test file in `tests/`, or a Renode test in
 `tests/renode/` (CI job `model-rules`). **Unit only** means the logic is tested against a
 simulated device but no CI job runs it end to end in an emulator. **Not in CI** means
 nothing automatic checks it today.
@@ -17,7 +17,7 @@ nothing automatic checks it today.
 | STM32F411 (Renode): sectors, PSIZE, AND programming, OPTCR, PCROP, RDP level 2 | demo `f411` and its 19 other builds; `tests/renode/test_f4_rules.py`, `test_option_bytes.py` |
 | STM32L476 (Renode): 2 KB pages, 64-bit programs, ECC and the NMI | demo `l476` and its 12 other builds; `tests/renode/test_l4_rules.py`, `test_stm32l4.py` |
 | nRF52840 (Renode): NVMC CONFIG, two writes per word, UICR, ERASEALL, partial erase, ACL | demo `nrf52` and its 10 other builds; `tests/renode/test_nrf52_rules.py`, `test_nrf52_flash.py` |
-| STM32H563 (m33mu): 128-bit programs, WRPSG, bank swap | demo `h563` and its 11 other builds (CI job `demo-m33mu`); `test_m33mu.py` |
+| STM32H563 (m33mu): 128-bit programs, WRPSG, bank swap | demo `h563` and its 11 other builds (scenarios on m33mu); `test_m33mu.py` |
 | RCC models: timers and SysTick follow the firmware's clock setup, `clock.hse` | every STM32 demo on Renode; MCUboot `f411` (25 MHz crystal) |
 | Real flash and RAM sizes, memory guard over address holes | `bug-pop_after_switch` on every chip; `test_workdir.py` |
 | Flash timing `typical` / `max` / `none` | demo `f411-watchdog` (a one-second erase); `test_trace.py` (costs). `max` and `none`: unit only |
@@ -34,7 +34,7 @@ nothing automatic checks it today.
 |---|---|
 | Baseline (the update with no cut) and the golden trace | every campaign |
 | Clean cuts at every distinct flash state (`plan: every`) | every demo campaign; `test_plan.py` |
-| Sampled phases (`plan: phases`, `per_phase`, `small`) | e2e (Three-Tier), MCUboot, `action`; `test_plan.py` |
+| Sampled phases (`plan: phases`, `per_phase`, `small`) | e2e (Three-Tier), MCUboot, `action (renode)`; `test_plan.py` |
 | Computed cuts checked against real ones (`real_every`, `auto`) | MCUboot (`--real-every 4`); `test_plan.py` |
 | Program cuts rewound to land before their operation | `test_runner.py` |
 | Self-check of the emulated flash against the golden run (exit 3) | every campaign; `test_runner.py` |
@@ -68,7 +68,7 @@ nothing automatic checks it today.
 | Feature | Proof |
 |---|---|
 | `builtin: staged_slot` | every demo campaign, MCUboot |
-| `builtin: storage` (key-value store or file system workload) | `storage` jobs: NVS, littlefs (pass), ZMS, settings on FCB (must fail); `test_storage.py` |
+| `builtin: storage` (key-value store or file system workload) | scenarios `storage-*`: NVS, littlefs (pass), ZMS, settings on FCB (must fail); `test_storage.py` |
 | `file: driver.py` (protocol updates, `export_state` / `import_state`, `judging`) | e2e (Three-Tier); OpenBLT and wolfBoot adapters (not in CI) |
 
 ## Commands
@@ -100,7 +100,7 @@ nothing automatic checks it today.
 | Feature | Proof |
 |---|---|
 | PyPI package `brickproof-fw`, the demo inside it | `package` (wheel and sdist, installed clean) |
-| GitHub Action (`action.yml`), m33mu built and cached by it | `action`, `demo-m33mu` |
+| GitHub Action (`action.yml`), m33mu built and cached by it | `action (renode)`, `action (m33mu)` |
 | Docker image | `docker` |
 | Release workflow (`release.yml`) | run on a tag |
 | Exhaustive run over many machines (`exhaustive.yml`) | run by hand |
@@ -110,8 +110,8 @@ nothing automatic checks it today.
 | Target | Proof |
 |---|---|
 | Three-Tier bootloader (F103), built from source | e2e |
-| MCUboot F411 swap-scratch, F411 overwrite-only, nRF52840 swap-move | `mcuboot` jobs |
-| Zephyr NVS, littlefs, ZMS, settings on FCB | `storage` jobs |
+| MCUboot F411 swap-scratch, F411 overwrite-only, nRF52840 swap-move | scenarios `mcuboot-*` |
+| Zephyr NVS, littlefs, ZMS, settings on FCB | scenarios `storage-*` |
 | OpenBLT (F103) | Not in CI (firmware built by hand) |
 | wolfBoot F411, wolfBoot H563 | Not in CI (firmware built by hand) |
 | Torn-write measurement kit and fit (`hardware/torn_f103`, `tools/torn_fit.py`) | `test_torn_fit.py` |
