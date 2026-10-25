@@ -2066,3 +2066,10 @@ monitor line as its `RunFor`, at no extra round trip, and a core without the T b
 locked up at once, before the slice's pace is learned. Healthy firmware reads 0x01000000 or
 0x81000000 on every chip here. The cut now ends "locked up" every time, in about 3.5
 minutes, and its result is the parity baseline's. The 41 Renode rule tests pass.
+
+The same check changed three results, as it should. The F103, F411 and L476
+`trust_header` demos had also been crawling with T clear, for 290 to 550 s, until an
+exception frame landed in the vector table and was caught as a stray write. They are now
+"locked up", the right name for a dead device, in about 2.5 minutes each instead of 6 to 12;
+the parity baseline is updated with exactly those three messages, and their minutes in
+`tests/scenarios.yaml` with the new times.
