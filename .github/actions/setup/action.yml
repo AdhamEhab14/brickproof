@@ -1,0 +1,104 @@
+# What every CI job needs before it can run BrickProof, in one place: Python with
+# BrickProof installed, and the emulators and the toolchain it asks for, each downloaded or
+# built once and then taken from the Actions cache. (The public action, action.yml at the
+# top, installs the emulators its own way for other people's repositories; the m33mu
+# commit must be the same in both, which tests/test_ci.py checks.)
+name: Set up BrickProof for CI
+description: Python, BrickProof, and the cached emulators and toolchain a job needs
+
+inputs:
+  python-version:
+    default: "3.12"
+  install:
+    description: what pip installs
+    default: -e .[dev]
+  renode:
+    description: install Renode ("true" or "false")
+    default: "false"
+  m33mu:
+    description: build m33mu ("true" or "false")
+    default: "false"
+  arm-toolchain:
+    description: install Arm's GNU toolchain ("true" or "false")
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: pyproject.toml
+
+    - name: Install BrickProof
+      shell: bash
+      run: pip install ${{ inputs.install }}
+
+    - name: Cache Renode
+      id: renode-cache
+      if: inputs.renode == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/renode
+        key: renode-1.17.0-linux
+
+    - name: Install Renode
+      if: inputs.renode == 'true' && steps.renode-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/renode
+        curl -sSfL --retry 3 https://github.com/renode/renode/releases/download/v1.17.0/renode-1.17.0.linux-portable.tar.gz \
+          | tar xz -C ~/renode --strip-components=1
+
+    - name: Cache m33mu
+      id: m33mu-cache
+      if: inputs.m33mu == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/m33mu-bin
+        key: m33mu-23960ed50ea186c52dd7799ab1435752c257f4fc-Linux
+
+    - name: Build m33mu
+      if: inputs.m33mu == 'true' && steps.m33mu-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libelf-dev
+        git clone --filter=blob:none https://github.com/danielinux/m33mu.git /tmp/m33mu
+        git -C /tmp/m33mu checkout --quiet 23960ed50ea186c52dd7799ab1435752c257f4fc
+        cmake -S /tmp/m33mu -B /tmp/m33mu/build -DM33MU_BUILD_TESTS=OFF \
+          -DM33MU_ENABLE_CAPSTONE=OFF -DM33MU_ENABLE_TPM_LIBTPMS=OFF -DM33MU_ENABLE_WOLFSSL=OFF \
+          -DM33MU_ENABLE_LIBDW=OFF -DM33MU_ENABLE_RUST_PLUGINS=OFF
+        cmake --build /tmp/m33mu/build -j"$(nproc)" --target m33mu
+        mkdir -p ~/m33mu-bin && cp /tmp/m33mu/build/m33mu ~/m33mu-bin/
+
+    # Arm's own GNU toolchain (the same GCC as Ubuntu's gcc-arm-none-eabi), one 179 MB file
+    # checked against Arm's SHA-256. From apt it was 588 MB on every run, and a slow mirror
+    # once took 51 minutes. cmake and ninja come with the runner image.
+    - name: Cache the Arm toolchain
+      id: arm-cache
+      if: inputs.arm-toolchain == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/arm-gnu-toolchain
+        key: arm-gnu-toolchain-13.2.rel1-linux
+
+    - name: Install the Arm toolchain
+      if: inputs.arm-toolchain == 'true' && steps.arm-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        f=arm-gnu-toolchain-13.2.rel1-x86_64-arm-none-eabi.tar.xz
+        curl -sSfL --retry 3 -o /tmp/$f https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/$f
+        echo "6cd1bbc1d9ae57312bcd169ae283153a9572bd6a8e4eeae2fedfbc33b115fdbb  /tmp/$f" | sha256sum -c -
+        mkdir -p ~/arm-gnu-toolchain
+        tar xJf /tmp/$f -C ~/arm-gnu-toolchain --strip-components=1
+
+    - name: Tell the job where they are
+      shell: bash
+      run: |
+        if [ "${{ inputs.renode }}" = true ]; then echo "RENODE_PATH=$HOME/renode/renode" >> "$GITHUB_ENV"; fi
+        if [ "${{ inputs.m33mu }}" = true ]; then echo "M33MU_PATH=$HOME/m33mu-bin/m33mu" >> "$GITHUB_ENV"; fi
+        if [ "${{ inputs.arm-toolchain }}" = true ]; then
+          echo "$HOME/arm-gnu-toolchain/bin" >> "$GITHUB_PATH"
+          "$HOME/arm-gnu-toolchain/bin/arm-none-eabi-gcc" --version | head -1
+        fi
