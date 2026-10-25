@@ -17,7 +17,7 @@ builds are in [examples/demo_ab_bootloader](../examples/demo_ab_bootloader).
 | File | When |
 |---|---|
 | `README.md` | always: what is updated and what a cut must leave, **Running it** (how to get the firmware and the command), **What it found** |
-| one or more adapter YAML files | always: see [docs/adapter.md](../docs/adapter.md) |
+| one or more adapter YAML files | always: see [docs/reference/adapter.md](../docs/reference/adapter.md) |
 | `driver.py` | when the update is started by a host over a protocol |
 | `build.py`, `app/` | when the firmware under test is built here (a test app, a workload) |
 | `prebuilt/` | when CI runs the target from committed files: the binaries, a `README.md` saying how they were built (commits, compiler, date) and a `SHA256SUMS` that `tests/test_prebuilt.py` checks |

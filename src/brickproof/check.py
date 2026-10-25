@@ -319,7 +319,7 @@ def check(path, target=None, emulator=True):
     try:
         ad = adapters.load(path, target=target)
     except adapters.AdapterError as e:
-        rep.fail("adapter: %s" % e, "See docs/adapter.md for every key and what it means.")
+        rep.fail("adapter: %s" % e, "See docs/reference/adapter.md for every key and what it means.")
         return None, rep
     except OSError as e:
         rep.fail("adapter: %s" % e)

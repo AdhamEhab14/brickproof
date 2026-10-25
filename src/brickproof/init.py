@@ -170,7 +170,7 @@ def last_line(text):
 def adapter_text(a):
     """The adapter, with a comment on each part, from what init found out (a dict)."""
     chip = CHIPS[a["chip"]]
-    out = ["# Written by `brickproof init`. Every key is explained in BrickProof's docs/adapter.md.",
+    out = ["# Written by `brickproof init`. Every key: BrickProof's docs/reference/adapter.md.",
            "# Check it with `brickproof check %s`, run it with `brickproof run %s --full`."
            % (a["file"], a["file"]), "",
            "name: %s" % a["name"],

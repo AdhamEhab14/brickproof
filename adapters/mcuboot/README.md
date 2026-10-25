@@ -80,4 +80,7 @@ rest): after every cut MCUboot finished the move on the next boot and v2 ran fro
 
 The F411 run found a problem in BrickProof instead: Renode does not run at an even pace over
 that many byte-wide programs, and the hang limit called a slow but healthy emulator locked
-up. That is fixed (see docs/decisions.md, 2026-10-13).
+up. The hang limit was widened then
+([docs/decisions/0056](../../docs/decisions/0056-a-slow-emulator-is-not-a-dead-device.md)), and
+the cause was found later: Renode's clock missing a wake-up
+([0090](../../docs/decisions/0090-the-stall-was-renode-s-clock-missing-a-wake-up.md)).
