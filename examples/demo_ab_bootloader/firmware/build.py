@@ -3,11 +3,12 @@ and two app images. The files of each chip but the F103 get a prefix: f411_, l47
 and nrf52_.
 
 Needs arm-none-eabi-gcc on PATH. Output goes to build/. Pass --prebuilt to also
-refresh the committed copies in prebuilt/, which is what users without a
+refresh the committed copies in prebuilt/ (and their SHA256SUMS), which is what users without a
 toolchain run.
 
     python build.py [--prebuilt]
 """
+import hashlib
 import os
 import shutil
 import struct
@@ -156,4 +157,10 @@ if __name__ == "__main__":
         os.makedirs(dst, exist_ok=True)
         for name in outputs():
             shutil.copyfile(os.path.join(HERE, "build", name), os.path.join(dst, name))
+        # what tests/test_prebuilt.py checks the committed files against
+        files = sorted(f for f in os.listdir(dst) if f != "SHA256SUMS")
+        with open(os.path.join(dst, "SHA256SUMS"), "w", newline="\n") as f:
+            for name in files:
+                with open(os.path.join(dst, name), "rb") as b:
+                    f.write("%s  %s\n" % (hashlib.sha256(b.read()).hexdigest(), name))
     print("built into", os.path.join(HERE, "build"))
