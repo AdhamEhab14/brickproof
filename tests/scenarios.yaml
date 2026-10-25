@@ -16,102 +16,102 @@ scenarios:
   # The demo bootloader on the Renode chips: each correct build must survive every cut it is
   # given, and each bug build must be caught (exit code 1, not 0 or 3).
   # the correct build: every clean cut, every torn state, a second cut
-  - {id: demo-adapter, adapter: examples/demo_ab_bootloader/adapter.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 12.4}
-  - {id: demo-bug-consume_first, adapter: examples/demo_ab_bootloader/bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.3}
-  - {id: demo-bug-trust_header, adapter: examples/demo_ab_bootloader/bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.1}
-  - {id: demo-bug-naive_floor, adapter: examples/demo_ab_bootloader/bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 2.4}
-  - {id: demo-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
-  - {id: demo-bug-no_erase, adapter: examples/demo_ab_bootloader/bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
-  - {id: demo-bug-no_unlock, adapter: examples/demo_ab_bootloader/bug-no_unlock.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
+  - {id: demo-adapter, adapter: examples/demo_ab_bootloader/f103/adapter.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 12.4}
+  - {id: demo-bug-consume_first, adapter: examples/demo_ab_bootloader/f103/bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.3}
+  - {id: demo-bug-trust_header, adapter: examples/demo_ab_bootloader/f103/bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.1}
+  - {id: demo-bug-naive_floor, adapter: examples/demo_ab_bootloader/f103/bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 2.4}
+  - {id: demo-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/f103/bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
+  - {id: demo-bug-no_erase, adapter: examples/demo_ab_bootloader/f103/bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
+  - {id: demo-bug-no_unlock, adapter: examples/demo_ab_bootloader/f103/bug-no_unlock.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
   # passes every clean cut; only torn states catch it
-  - {id: demo-bug-resume_copy, adapter: examples/demo_ab_bootloader/bug-resume_copy.yaml, args: "--fail-fast", expect: 1, minutes: 2.1}
+  - {id: demo-bug-resume_copy, adapter: examples/demo_ab_bootloader/f103/bug-resume_copy.yaml, args: "--fail-fast", expect: 1, minutes: 2.1}
   # passes any single cut; only two in a row catch it
-  - {id: demo-bug-retry_limit, adapter: examples/demo_ab_bootloader/bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 3.1}
-  - {id: demo-bug-protected_slot, adapter: examples/demo_ab_bootloader/bug-protected_slot.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
-  - {id: demo-bug-self_lock, adapter: examples/demo_ab_bootloader/bug-self_lock.yaml, args: "--fail-fast", expect: 1, minutes: 3.7}
+  - {id: demo-bug-retry_limit, adapter: examples/demo_ab_bootloader/f103/bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 3.1}
+  - {id: demo-bug-protected_slot, adapter: examples/demo_ab_bootloader/f103/bug-protected_slot.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
+  - {id: demo-bug-self_lock, adapter: examples/demo_ab_bootloader/f103/bug-self_lock.yaml, args: "--fail-fast", expect: 1, minutes: 3.7}
   # the correct build under a hardware watchdog
-  - {id: demo-watchdog, adapter: examples/demo_ab_bootloader/watchdog.yaml, args: "-j 3", expect: 0, minutes: 3.2}
+  - {id: demo-watchdog, adapter: examples/demo_ab_bootloader/f103/watchdog.yaml, args: "-j 3", expect: 0, minutes: 3.2}
   # PG held over runs of cells: cuts between the stores
-  - {id: demo-hold_pg, adapter: examples/demo_ab_bootloader/hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 10.1}
-  - {id: demo-bug-early_unpg, adapter: examples/demo_ab_bootloader/bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
+  - {id: demo-hold_pg, adapter: examples/demo_ab_bootloader/f103/hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 10.1}
+  - {id: demo-bug-early_unpg, adapter: examples/demo_ab_bootloader/f103/bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
   # an install paused once in Standby: RAM lost, back by a reset
-  - {id: demo-standby, adapter: examples/demo_ab_bootloader/standby.yaml, args: "-j 3 --torn", expect: 0, minutes: 13.4}
+  - {id: demo-standby, adapter: examples/demo_ab_bootloader/f103/standby.yaml, args: "-j 3 --torn", expect: 0, minutes: 13.4}
   # "already paused" kept in RAM: pauses for ever
-  - {id: demo-bug-standby_ram, adapter: examples/demo_ab_bootloader/bug-standby_ram.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
-  - {id: demo-f411, adapter: examples/demo_ab_bootloader/f411.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 9.1}
-  - {id: demo-f411-bug-consume_first, adapter: examples/demo_ab_bootloader/f411-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
-  - {id: demo-f411-bug-trust_header, adapter: examples/demo_ab_bootloader/f411-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.5}
-  - {id: demo-f411-bug-naive_floor, adapter: examples/demo_ab_bootloader/f411-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
-  - {id: demo-f411-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/f411-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
+  - {id: demo-bug-standby_ram, adapter: examples/demo_ab_bootloader/f103/bug-standby_ram.yaml, args: "--fail-fast", expect: 1, minutes: 0.2}
+  - {id: demo-f411, adapter: examples/demo_ab_bootloader/f411/f411.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 9.1}
+  - {id: demo-f411-bug-consume_first, adapter: examples/demo_ab_bootloader/f411/f411-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
+  - {id: demo-f411-bug-trust_header, adapter: examples/demo_ab_bootloader/f411/f411-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.5}
+  - {id: demo-f411-bug-naive_floor, adapter: examples/demo_ab_bootloader/f411/f411-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
+  - {id: demo-f411-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/f411/f411-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
   # not refused on an F4: the cells end up as old AND new
-  - {id: demo-f411-bug-no_erase, adapter: examples/demo_ab_bootloader/f411-bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.3}
-  - {id: demo-f411-bug-no_unlock, adapter: examples/demo_ab_bootloader/f411-bug-no_unlock.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
-  - {id: demo-f411-bug-retry_limit, adapter: examples/demo_ab_bootloader/f411-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
-  - {id: demo-f411-bug-protected_slot, adapter: examples/demo_ab_bootloader/f411-bug-protected_slot.yaml, args: "--fail-fast", expect: 1, minutes: 0.5}
-  - {id: demo-f411-bug-self_lock, adapter: examples/demo_ab_bootloader/f411-bug-self_lock.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
+  - {id: demo-f411-bug-no_erase, adapter: examples/demo_ab_bootloader/f411/f411-bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.3}
+  - {id: demo-f411-bug-no_unlock, adapter: examples/demo_ab_bootloader/f411/f411-bug-no_unlock.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
+  - {id: demo-f411-bug-retry_limit, adapter: examples/demo_ab_bootloader/f411/f411-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
+  - {id: demo-f411-bug-protected_slot, adapter: examples/demo_ab_bootloader/f411/f411-bug-protected_slot.yaml, args: "--fail-fast", expect: 1, minutes: 0.5}
+  - {id: demo-f411-bug-self_lock, adapter: examples/demo_ab_bootloader/f411/f411-bug-self_lock.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
   # a one-second erase under a half-second watchdog, done right
-  - {id: demo-f411-watchdog, adapter: examples/demo_ab_bootloader/f411-watchdog.yaml, args: "-j 3", expect: 0, minutes: 3.3}
+  - {id: demo-f411-watchdog, adapter: examples/demo_ab_bootloader/f411/f411-watchdog.yaml, args: "-j 3", expect: 0, minutes: 3.3}
   # and done wrong: reset in the middle of every erase
-  - {id: demo-f411-bug-watchdog, adapter: examples/demo_ab_bootloader/f411-bug-watchdog.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
-  - {id: demo-f411-hold_pg, adapter: examples/demo_ab_bootloader/f411-hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 8.5}
-  - {id: demo-f411-bug-early_unpg, adapter: examples/demo_ab_bootloader/f411-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.5}
-  - {id: demo-f411-standby, adapter: examples/demo_ab_bootloader/f411-standby.yaml, args: "-j 3 --torn", expect: 0, minutes: 10.5}
-  - {id: demo-f411-bug-standby_ram, adapter: examples/demo_ab_bootloader/f411-bug-standby_ram.yaml, args: "--fail-fast", expect: 1, minutes: 0.5}
+  - {id: demo-f411-bug-watchdog, adapter: examples/demo_ab_bootloader/f411/f411-bug-watchdog.yaml, args: "--fail-fast", expect: 1, minutes: 0.4}
+  - {id: demo-f411-hold_pg, adapter: examples/demo_ab_bootloader/f411/f411-hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 8.5}
+  - {id: demo-f411-bug-early_unpg, adapter: examples/demo_ab_bootloader/f411/f411-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.5}
+  - {id: demo-f411-standby, adapter: examples/demo_ab_bootloader/f411/f411-standby.yaml, args: "-j 3 --torn", expect: 0, minutes: 10.5}
+  - {id: demo-f411-bug-standby_ram, adapter: examples/demo_ab_bootloader/f411/f411-bug-standby_ram.yaml, args: "--fail-fast", expect: 1, minutes: 0.5}
   # staged image and rollback floor in an external SPI NOR chip
-  - {id: demo-f411-ext, adapter: examples/demo_ab_bootloader/f411-ext.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 9.8}
-  - {id: demo-f411-ext-bug-consume_first, adapter: examples/demo_ab_bootloader/f411-ext-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
+  - {id: demo-f411-ext, adapter: examples/demo_ab_bootloader/f411/f411-ext.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 9.8}
+  - {id: demo-f411-ext-bug-consume_first, adapter: examples/demo_ab_bootloader/f411/f411-ext-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
   # rollback floor in an I2C EEPROM
-  - {id: demo-f411-ee, adapter: examples/demo_ab_bootloader/f411-ee.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 8.6}
+  - {id: demo-f411-ee, adapter: examples/demo_ab_bootloader/f411/f411-ee.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 8.6}
   # passes every clean cut; only torn writes catch it
-  - {id: demo-f411-ee-bug-no_invalidate, adapter: examples/demo_ab_bootloader/f411-ee-bug-no_invalidate.yaml, args: "--fail-fast --torn", expect: 1, minutes: 2.4}
-  - {id: demo-l476, adapter: examples/demo_ab_bootloader/l476.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 7.3}
+  - {id: demo-f411-ee-bug-no_invalidate, adapter: examples/demo_ab_bootloader/f411/f411-ee-bug-no_invalidate.yaml, args: "--fail-fast --torn", expect: 1, minutes: 2.4}
+  - {id: demo-l476, adapter: examples/demo_ab_bootloader/l476/l476.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 7.3}
   # passes every clean cut; only torn states catch it
-  - {id: demo-l476-bug-no_ecc_nmi, adapter: examples/demo_ab_bootloader/l476-bug-no_ecc_nmi.yaml, args: "--fail-fast --torn", expect: 1, minutes: 1.1}
-  - {id: demo-l476-bug-consume_first, adapter: examples/demo_ab_bootloader/l476-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.9}
-  - {id: demo-l476-bug-trust_header, adapter: examples/demo_ab_bootloader/l476-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.3}
-  - {id: demo-l476-bug-naive_floor, adapter: examples/demo_ab_bootloader/l476-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.5}
-  - {id: demo-l476-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/l476-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.7}
+  - {id: demo-l476-bug-no_ecc_nmi, adapter: examples/demo_ab_bootloader/l476/l476-bug-no_ecc_nmi.yaml, args: "--fail-fast --torn", expect: 1, minutes: 1.1}
+  - {id: demo-l476-bug-consume_first, adapter: examples/demo_ab_bootloader/l476/l476-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.9}
+  - {id: demo-l476-bug-trust_header, adapter: examples/demo_ab_bootloader/l476/l476-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.3}
+  - {id: demo-l476-bug-naive_floor, adapter: examples/demo_ab_bootloader/l476/l476-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.5}
+  - {id: demo-l476-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/l476/l476-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.7}
   # a double word programmed twice: refused (PROGERR)
-  - {id: demo-l476-bug-no_erase, adapter: examples/demo_ab_bootloader/l476-bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
-  - {id: demo-l476-bug-no_unlock, adapter: examples/demo_ab_bootloader/l476-bug-no_unlock.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
-  - {id: demo-l476-bug-early_unpg, adapter: examples/demo_ab_bootloader/l476-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
-  - {id: demo-l476-bug-protected_slot, adapter: examples/demo_ab_bootloader/l476-bug-protected_slot.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
-  - {id: demo-l476-bug-resume_copy, adapter: examples/demo_ab_bootloader/l476-bug-resume_copy.yaml, args: "--fail-fast", expect: 1, minutes: 1.2}
-  - {id: demo-l476-bug-retry_limit, adapter: examples/demo_ab_bootloader/l476-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 1.6}
-  - {id: demo-l476-hold_pg, adapter: examples/demo_ab_bootloader/l476-hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 6.7}
-  - {id: demo-nrf52, adapter: examples/demo_ab_bootloader/nrf52.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 7.4}
-  - {id: demo-nrf52-bug-consume_first, adapter: examples/demo_ab_bootloader/nrf52-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.9}
-  - {id: demo-nrf52-bug-trust_header, adapter: examples/demo_ab_bootloader/nrf52-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.8}
-  - {id: demo-nrf52-bug-naive_floor, adapter: examples/demo_ab_bootloader/nrf52-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
-  - {id: demo-nrf52-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/nrf52-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
-  - {id: demo-nrf52-bug-no_erase, adapter: examples/demo_ab_bootloader/nrf52-bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
-  - {id: demo-nrf52-bug-retry_limit, adapter: examples/demo_ab_bootloader/nrf52-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 2.5}
+  - {id: demo-l476-bug-no_erase, adapter: examples/demo_ab_bootloader/l476/l476-bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
+  - {id: demo-l476-bug-no_unlock, adapter: examples/demo_ab_bootloader/l476/l476-bug-no_unlock.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
+  - {id: demo-l476-bug-early_unpg, adapter: examples/demo_ab_bootloader/l476/l476-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
+  - {id: demo-l476-bug-protected_slot, adapter: examples/demo_ab_bootloader/l476/l476-bug-protected_slot.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
+  - {id: demo-l476-bug-resume_copy, adapter: examples/demo_ab_bootloader/l476/l476-bug-resume_copy.yaml, args: "--fail-fast", expect: 1, minutes: 1.2}
+  - {id: demo-l476-bug-retry_limit, adapter: examples/demo_ab_bootloader/l476/l476-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 1.6}
+  - {id: demo-l476-hold_pg, adapter: examples/demo_ab_bootloader/l476/l476-hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 6.7}
+  - {id: demo-nrf52, adapter: examples/demo_ab_bootloader/nrf52/nrf52.yaml, args: "-j 3 --torn --depth 2", expect: 0, minutes: 7.4}
+  - {id: demo-nrf52-bug-consume_first, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-consume_first.yaml, args: "--fail-fast", expect: 1, minutes: 0.9}
+  - {id: demo-nrf52-bug-trust_header, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-trust_header.yaml, args: "--fail-fast", expect: 1, minutes: 2.8}
+  - {id: demo-nrf52-bug-naive_floor, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, minutes: 1.9}
+  - {id: demo-nrf52-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
+  - {id: demo-nrf52-bug-no_erase, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-no_erase.yaml, args: "--fail-fast", expect: 1, minutes: 0.6}
+  - {id: demo-nrf52-bug-retry_limit, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, minutes: 2.5}
   # stores made with CONFIG back to read-only
-  - {id: demo-nrf52-bug-early_unpg, adapter: examples/demo_ab_bootloader/nrf52-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.7}
+  - {id: demo-nrf52-bug-early_unpg, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, minutes: 0.7}
   # a third write to a word without an erase
-  - {id: demo-nrf52-bug-nwrite, adapter: examples/demo_ab_bootloader/nrf52-bug-nwrite.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
+  - {id: demo-nrf52-bug-nwrite, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-nwrite.yaml, args: "--fail-fast", expect: 1, minutes: 0.8}
   # boots, then a watchdog reset, on every boot
-  - {id: demo-nrf52-bug-boot_loop, adapter: examples/demo_ab_bootloader/nrf52-bug-boot_loop.yaml, args: "--fail-fast", expect: 1, minutes: 2.2}
-  - {id: demo-nrf52-hold_pg, adapter: examples/demo_ab_bootloader/nrf52-hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 6.2}
+  - {id: demo-nrf52-bug-boot_loop, adapter: examples/demo_ab_bootloader/nrf52/nrf52-bug-boot_loop.yaml, args: "--fail-fast", expect: 1, minutes: 2.2}
+  - {id: demo-nrf52-hold_pg, adapter: examples/demo_ab_bootloader/nrf52/nrf52-hold_pg.yaml, args: "-j 3 --torn", expect: 0, minutes: 6.2}
 
   # The demo on the STM32H563, emulated by m33mu.
-  - {id: demo-h563, adapter: examples/demo_ab_bootloader/h563.yaml, args: "-j 3 --torn --depth 2", expect: 0, emulator: m33mu, minutes: 7.1}
-  - {id: demo-h563-hold_pg, adapter: examples/demo_ab_bootloader/h563-hold_pg.yaml, args: "-j 3 --torn", expect: 0, emulator: m33mu, minutes: 5.2}
-  - {id: demo-h563-bug-consume_first, adapter: examples/demo_ab_bootloader/h563-bug-consume_first.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.4}
-  - {id: demo-h563-bug-trust_header, adapter: examples/demo_ab_bootloader/h563-bug-trust_header.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.5}
-  - {id: demo-h563-bug-naive_floor, adapter: examples/demo_ab_bootloader/h563-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 2.7}
+  - {id: demo-h563, adapter: examples/demo_ab_bootloader/h563/h563.yaml, args: "-j 3 --torn --depth 2", expect: 0, emulator: m33mu, minutes: 7.1}
+  - {id: demo-h563-hold_pg, adapter: examples/demo_ab_bootloader/h563/h563-hold_pg.yaml, args: "-j 3 --torn", expect: 0, emulator: m33mu, minutes: 5.2}
+  - {id: demo-h563-bug-consume_first, adapter: examples/demo_ab_bootloader/h563/h563-bug-consume_first.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.4}
+  - {id: demo-h563-bug-trust_header, adapter: examples/demo_ab_bootloader/h563/h563-bug-trust_header.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.5}
+  - {id: demo-h563-bug-naive_floor, adapter: examples/demo_ab_bootloader/h563/h563-bug-naive_floor.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 2.7}
   # the core locks up on every boot
-  - {id: demo-h563-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/h563-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
+  - {id: demo-h563-bug-pop_after_switch, adapter: examples/demo_ab_bootloader/h563/h563-bug-pop_after_switch.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
   # a 128-bit word programmed twice: refused
-  - {id: demo-h563-bug-no_erase, adapter: examples/demo_ab_bootloader/h563-bug-no_erase.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
-  - {id: demo-h563-bug-no_unlock, adapter: examples/demo_ab_bootloader/h563-bug-no_unlock.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
-  - {id: demo-h563-bug-early_unpg, adapter: examples/demo_ab_bootloader/h563-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.2}
+  - {id: demo-h563-bug-no_erase, adapter: examples/demo_ab_bootloader/h563/h563-bug-no_erase.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
+  - {id: demo-h563-bug-no_unlock, adapter: examples/demo_ab_bootloader/h563/h563-bug-no_unlock.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
+  - {id: demo-h563-bug-early_unpg, adapter: examples/demo_ab_bootloader/h563/h563-bug-early_unpg.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.2}
   # WRPSG protects the app slot by mistake
-  - {id: demo-h563-bug-protected_slot, adapter: examples/demo_ab_bootloader/h563-bug-protected_slot.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
+  - {id: demo-h563-bug-protected_slot, adapter: examples/demo_ab_bootloader/h563/h563-bug-protected_slot.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 0.1}
   # only torn states catch it (torn: true in it)
-  - {id: demo-h563-bug-resume_copy, adapter: examples/demo_ab_bootloader/h563-bug-resume_copy.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 3.0}
+  - {id: demo-h563-bug-resume_copy, adapter: examples/demo_ab_bootloader/h563/h563-bug-resume_copy.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 3.0}
   # only two cuts in a row catch it (depth 2 in it)
-  - {id: demo-h563-bug-retry_limit, adapter: examples/demo_ab_bootloader/h563-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 1.8}
+  - {id: demo-h563-bug-retry_limit, adapter: examples/demo_ab_bootloader/h563/h563-bug-retry_limit.yaml, args: "--fail-fast", expect: 1, emulator: m33mu, minutes: 1.8}
 
   # MCUboot from its prebuilt files. A full F411 campaign takes over an hour (392,000 byte
   # programs), so CI cuts the phase edges and one sample inside each long phase, powers three

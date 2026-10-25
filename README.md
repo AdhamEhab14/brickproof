@@ -198,7 +198,7 @@ what the golden run predicts for that point. If they differ, the run stops.
 To see what an update does to flash, and what a run would cut, without cutting anything:
 
 ```bash
-brickproof trace examples/demo_ab_bootloader/adapter.yaml
+brickproof trace examples/demo_ab_bootloader/f103/adapter.yaml
 ```
 
 ```
@@ -328,7 +328,7 @@ not shipped in it: build m33mu yourself (or use the GitHub Action, which builds 
 | `src/brickproof/report.py`, `regulations.py` | JUnit and HTML reports, and the regulation map |
 | `src/brickproof/export.py` | A cut's flash as files for a real board |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |
-| `examples/demo_ab_bootloader/` | The demo firmware, its source, prebuilt files and adapters |
+| `examples/demo_ab_bootloader/` | The demo: its adapters in one folder per chip (`f103/`, `f411/`, `l476/`, `nrf52/`, `h563/`), and in `firmware/` its source, prebuilt files and build script |
 | `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot on the F411 and the H563, MCUboot) |
 | `hardware/torn_f103/`, `tools/torn_fit.py` | The firmware that measured torn writes on a real STM32F103, its results, and the tool that turns them into `torn.py`'s numbers |
 | `docs/decisions.md` | Why things are the way they are, with the measurements behind them |

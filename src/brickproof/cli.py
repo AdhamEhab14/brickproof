@@ -306,16 +306,26 @@ def demo_folder():
 
 
 def demo_builds():
-    """The demo's adapters: 'adapter' is the correct bootloader, the rest have a known bug."""
-    names = sorted(f[:-5] for f in os.listdir(demo_folder()) if f.endswith(".yaml") and f[0] != "_")
-    return ["adapter"] + [n for n in names if n != "adapter"]
+    """The demo's adapters, one folder per chip, by name: {name: path}. 'adapter' (the
+    correct bootloader on the F103) comes first."""
+    root = demo_folder()
+    builds = {}
+    for chip in sorted(os.listdir(root)):
+        folder = os.path.join(root, chip)
+        if not os.path.isdir(folder) or chip == "firmware":
+            continue
+        for f in sorted(os.listdir(folder)):
+            if f.endswith(".yaml") and f[0] != "_":
+                builds[f[:-5]] = os.path.join(folder, f)
+    first = {"adapter": builds.pop("adapter")} if "adapter" in builds else {}
+    return {**first, **dict(sorted(builds.items()))}
 
 
 def cmd_demo(args):
     builds = demo_builds()
     if args.list:
-        for name in builds:
-            with open(os.path.join(demo_folder(), name + ".yaml")) as f:
+        for name, path in builds.items():
+            with open(path) as f:
                 first = f.readline().lstrip("# ").strip()
             print("%-22s %s" % (name, first))
         return 0
@@ -323,7 +333,7 @@ def cmd_demo(args):
     if name not in builds:
         print("no demo build called %r (try: brickproof demo --list)" % args.name, file=sys.stderr)
         return 2
-    args.adapter = os.path.join(demo_folder(), name + ".yaml")
+    args.adapter = builds[name]
     return cmd_run(args)
 
 

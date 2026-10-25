@@ -1,0 +1,11 @@
+# The correct nRF52840 demo written the other common way: CONFIG is set to Wen once and
+# left there over a whole run of words (see HOLD_PG in firmware/bootloader/main.c). A power cut
+# can fall between any two of those stores, and every one of them must recover.
+extends: nrf52.yaml
+name: demo_ab_bootloader_nrf52_hold_pg
+firmware:
+  - file: prebuilt/nrf52_bootloader_hold_pg.elf
+  - file: prebuilt/nrf52_app_v1.img
+    addr: 0x10000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x4000

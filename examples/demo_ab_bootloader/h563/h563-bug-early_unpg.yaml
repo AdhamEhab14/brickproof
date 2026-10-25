@@ -1,0 +1,11 @@
+# The H563 demo storing every second cell after PG has been cleared again
+# (see BUG_EARLY_UNPG in firmware/bootloader/main.c). Plain emulator memory takes those stores.
+# The chip ignores them. BrickProof should fail the baseline.
+extends: h563.yaml
+name: demo_ab_bootloader_h563_bug_early_unpg
+firmware:
+  - file: prebuilt/h563_bootloader_bug_early_unpg.elf
+  - file: prebuilt/h563_app_v1.img
+    addr: 0x0C010000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0C008000

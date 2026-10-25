@@ -1,0 +1,12 @@
+# The F411 demo keeping "already paused" in a RAM variable start-up leaves alone (see
+# BUG_STANDBY_RAM in firmware/bootloader/main.c). Standby loses RAM, so every wake pauses again, for
+# ever. A plain emulator keeps RAM through Standby and lets it through. BrickProof should fail
+# the baseline.
+extends: f411-standby.yaml
+name: demo_ab_bootloader_f411_bug_standby_ram
+firmware:
+  - file: prebuilt/f411_bootloader_bug_standby_ram.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000

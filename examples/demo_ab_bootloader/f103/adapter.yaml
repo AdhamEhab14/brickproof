@@ -1,0 +1,72 @@
+# BrickProof demo: a small A/B bootloader on an STM32F103RB, updating v1 -> v2.
+# Runs from the committed firmware/prebuilt/ files, no toolchain needed:
+#
+#   brickproof run examples/demo_ab_bootloader/f103/adapter.yaml
+#
+# The bug-*.yaml files next to this one swap in a bootloader with a known bug.
+
+name: demo_ab_bootloader
+target: ../firmware
+
+platform:
+  base: stm32f103
+
+flash:
+  base: 0x08000000
+  size: 0x20000          # 128 KB
+  page: 0x400            # 1 KB
+  write_unit: 2
+  write_protected:                   # as shipped: the bootloader's own 8 KB are locked
+    - {from: 0x08000000, size: 0x2000}
+
+ram:
+  size: 0x5000         # 20 KB. Not optional: extra emulated RAM hides stack faults
+
+# the device as shipped: bootloader, v1 in Slot A, rollback floor at 1
+firmware:
+  - file: prebuilt/bootloader.elf
+  - file: prebuilt/app_v1.img
+    addr: 0x08002000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x0801E000
+
+uart: usart2
+boot_settle: 0.3
+
+driver:
+  builtin: staged_slot
+  options:
+    slot: 0x08010000
+    image: prebuilt/app_v2.img
+    alive: "APP v[0-9]"
+    expect: "APP v2"                 # recovering is not enough: the update must not be lost
+    rollback:
+      image: prebuilt/app_v1.img
+      forbidden: "APP v1"
+
+# Judged from outside the firmware: the bytes in Slot A must be exactly one of
+# these images, and the core must be running inside it, not in a fault handler.
+oracle:
+  images:
+    v1: {file: prebuilt/app_v1.img, at: 0x08002000}
+    v2: {file: prebuilt/app_v2.img, at: 0x08002000}
+  accept: [v2]                       # a cut must not lose the update: only the new one will do
+
+scenario:
+  name: update-v1-to-v2
+  cut_limit: 1                       # virtual seconds; the whole install takes far less
+  update_time: 0.5
+  plan: every                        # cut at every distinct flash state the update goes through
+  # damaged images in place of v2: the bootloader must refuse each and keep running v1
+  content_faults:
+    keep: v1
+    regions:
+      header: [0x0, 0x10]                # magic, version, size, CRC
+      body: [0x200, 0x338]
+  # bits flipped in the installed v2 while the device is off: it must not run it. Only the
+  # bytes the image uses (header and body); the padding between them is never read
+  bit_errors:
+    runs: 4
+    regions:
+      header: [0x08002000, 0x08002010]
+      body: [0x08002200, 0x08002338]

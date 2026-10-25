@@ -45,7 +45,7 @@ brickproof = "src/brickproof"
 [tool.setuptools.package-data]
 # the flash/RCC models run inside Renode, so they ship as data, not modules
 brickproof = ["models/*.py", "models/*.cs", "platforms/*.repl"]
-"brickproof.demo" = ["*.yaml", "prebuilt/*", "README.md"]
+"brickproof.demo" = ["*/*.yaml", "firmware/prebuilt/*", "README.md"]
 
 [tool.ruff]
 line-length = 110

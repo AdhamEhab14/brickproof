@@ -1,0 +1,12 @@
+# The F411 demo copying the new image over the old one without erasing first
+# (see BUG_NO_ERASE in firmware/bootloader/main.c). An F4 does not refuse that: each cell ends
+# up as the old value AND the new one, which is neither image. Renode's plain memory
+# would just store the new value. BrickProof should fail the baseline.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_bug_no_erase
+firmware:
+  - file: prebuilt/f411_bootloader_bug_no_erase.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000

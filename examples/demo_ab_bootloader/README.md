@@ -27,13 +27,9 @@ PATH, or in `M33MU_PATH`.
 
 | File | What |
 |---|---|
-| `bootloader/main.c` | the bootloader; each `BUG_...` option puts back one known mistake |
-| `app/main.c` | the app |
-| `common/chip_f103.h`, `common/chip_f411.h`, `common/chip_l476.h`, `common/chip_nrf52.h`, `common/chip_h563.h` | what differs between the chips: flash map, erase, program, option bytes, UART |
-| `adapter.yaml`, `bug-*.yaml` | how BrickProof runs each build on the F103 |
-| `f411.yaml`, `f411-bug-*.yaml` | the same on the F411 |
-| `l476.yaml`, `l476-bug-*.yaml` | on the L476 |
-| `nrf52.yaml`, `nrf52-bug-*.yaml` | on the nRF52840 |
-| `h563.yaml`, `h563-bug-*.yaml` | and on the H563 |
-| `prebuilt/` | the built firmware, so no toolchain is needed |
-| `build.py` | rebuilds `prebuilt/` (needs `arm-none-eabi-gcc`) |
+| `firmware/bootloader/main.c` | the bootloader; each `BUG_...` option puts back one known mistake |
+| `firmware/app/main.c` | the app |
+| `firmware/common/chip_*.h` | what differs between the chips: flash map, erase, program, option bytes, UART |
+| `f103/` | how BrickProof runs each build on the F103: `adapter.yaml`, `bug-*.yaml` and the other variants |
+| `f411/`, `l476/`, `nrf52/`, `h563/` | the same on the F411, the L476, the nRF52840 and the H563 |
+| `firmware/` | the source above, `prebuilt/` (the built firmware, so no toolchain is needed) and `build.py`, which rebuilds it (needs `arm-none-eabi-gcc`) |

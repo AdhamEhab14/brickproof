@@ -1,0 +1,11 @@
+# The F411 demo storing every second cell after PG has been cleared again
+# (see BUG_EARLY_UNPG in firmware/bootloader/main.c). Plain emulator memory takes those stores.
+# The chip ignores them. BrickProof should fail the baseline.
+extends: f411.yaml
+name: demo_ab_bootloader_f411_bug_early_unpg
+firmware:
+  - file: prebuilt/f411_bootloader_bug_early_unpg.elf
+  - file: prebuilt/f411_app_v1.img
+    addr: 0x08020000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x08004000

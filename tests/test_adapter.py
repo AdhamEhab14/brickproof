@@ -4,6 +4,7 @@ import textwrap
 import pytest
 
 from brickproof import adapter as adapters
+from demo_paths import FIRMWARE, all_demo_adapters, demo_adapter
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 THREE_TIER = os.path.join(REPO, "adapters", "three_tier_f103", "adapter.yaml")
@@ -102,9 +103,6 @@ def test_flash_size_must_be_whole_pages(tmp_path):
         adapters.load(write(tmp_path, **{"0x10000": "0x10100"}))
 
 
-DEMO = os.path.join(REPO, "examples", "demo_ab_bootloader")
-
-
 def test_at_ops_expands_to_one_cut_per_operation(tmp_path):
     ad = adapters.load(write(tmp_path, "- at_ops: {from: 3, to: 9, step: 3}\n"))
     assert [(c.name, c.at_op, c.group) for c in ad.cuts] == [("op-3", 3, 0), ("op-6", 6, 0), ("op-9", 9, 0)]
@@ -122,9 +120,9 @@ def test_driver_needs_exactly_one_of_file_or_builtin(tmp_path):
 
 
 def test_demo_uses_the_builtin_driver():
-    ad = adapters.load(os.path.join(DEMO, "adapter.yaml"))
+    ad = adapters.load(demo_adapter("adapter"))
     assert ad.driver_builtin == "staged_slot" and ad.driver_file is None
-    assert ad.target == DEMO
+    assert ad.target == FIRMWARE
     assert all(os.path.exists(f) for f, _ in ad.firmware), "prebuilt files are committed"
 
 
@@ -132,8 +130,8 @@ def test_demo_uses_the_builtin_driver():
                                  "no_erase", "no_unlock", "resume_copy",
                                  "retry_limit", "self_lock"])
 def test_bug_variants_extend_the_demo(bug):
-    base = adapters.load(os.path.join(DEMO, "adapter.yaml"))
-    ad = adapters.load(os.path.join(DEMO, "bug-%s.yaml" % bug))
+    base = adapters.load(demo_adapter("adapter"))
+    ad = adapters.load(demo_adapter("bug-%s" % bug))
     assert ad.firmware[0][0].endswith("bootloader_bug_%s.elf" % bug)
     assert ad.driver_options == base.driver_options      # merged from the parent
     assert ad.plan == base.plan == {"mode": "every"}
@@ -197,9 +195,9 @@ def test_bad_write_protection_is_rejected(tmp_path, ranges, text):
 
 
 def test_the_demo_ships_with_its_bootloader_locked_and_one_variant_unlocked():
-    wrp0 = adapters.load(os.path.join(DEMO, "adapter.yaml")).flash.option_bytes[8]
+    wrp0 = adapters.load(demo_adapter("adapter")).flash.option_bytes[8]
     assert wrp0 == 0xFC
-    unlocked = adapters.load(os.path.join(DEMO, "bug-self_lock.yaml")).flash.option_bytes[8]
+    unlocked = adapters.load(demo_adapter("bug-self_lock")).flash.option_bytes[8]
     assert unlocked == 0xFF
 
 
@@ -266,10 +264,10 @@ def test_sectors_must_add_up_and_fit_the_chip(tmp_path):
 
 
 def test_the_f411_demo_and_its_bug_builds_load():
-    names = [n for n in os.listdir(DEMO) if n.startswith("f411") and n.endswith(".yaml")]
+    names = [p for p in all_demo_adapters() if os.path.basename(os.path.dirname(p)) == "f411"]
     assert len(names) == 20
     for n in names:
-        ad = adapters.load(os.path.join(DEMO, n))
+        ad = adapters.load(n)
         assert ad.platform == "stm32f411" and ad.flash.sectors
         for path, _ in ad.firmware:
             assert os.path.exists(path), path
@@ -295,7 +293,7 @@ def test_a_hardware_watchdog_clears_wdg_sw_in_the_user_byte(tmp_path):
 def test_the_watchdog_demos_ship_with_a_hardware_watchdog():
     demos = (("watchdog.yaml", 0x01), ("f411-watchdog.yaml", 0x20), ("f411-bug-watchdog.yaml", 0x20))
     for name, bit in demos:
-        ad = adapters.load(os.path.join(DEMO, name))
+        ad = adapters.load(demo_adapter(name[:-5]))
         user = ad.flash.option_bytes[2 if bit == 1 else 0]
         assert not user & bit, name
 

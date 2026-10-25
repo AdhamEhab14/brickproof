@@ -1,0 +1,13 @@
+# The nRF52840 demo giving an interrupted install a trial boot that this app cannot pass
+# (see BUG_BOOT_LOOP in firmware/bootloader/main.c). The image is complete and the app prints its
+# banner, but the watchdog resets it half a second later, on every boot. Only cuts after
+# the install's last copy and before Slot B is consumed reach that path, and they fail
+# because the device keeps resetting (oracle.stable_for).
+extends: nrf52.yaml
+name: demo_ab_bootloader_nrf52_bug_boot_loop
+firmware:
+  - file: prebuilt/nrf52_bootloader_bug_boot_loop.elf
+  - file: prebuilt/nrf52_app_v1.img
+    addr: 0x10000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x4000

@@ -1,0 +1,11 @@
+# The nRF52840 demo storing every second word after CONFIG is back to Ren (read only)
+# (see BUG_EARLY_UNPG in firmware/bootloader/main.c). Plain emulator memory takes those stores.
+# The chip ignores them. BrickProof should fail the baseline.
+extends: nrf52.yaml
+name: demo_ab_bootloader_nrf52_bug_early_unpg
+firmware:
+  - file: prebuilt/nrf52_bootloader_bug_early_unpg.elf
+  - file: prebuilt/nrf52_app_v1.img
+    addr: 0x10000
+  - file: prebuilt/meta_floor1.bin
+    addr: 0x4000

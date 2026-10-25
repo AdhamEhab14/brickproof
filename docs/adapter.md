@@ -4,7 +4,7 @@ An adapter is one YAML file that tells BrickProof about your device: which chip,
 into its flash, how an update is started, and what counts as recovered. Everything below is
 what `brickproof run` reads. Two complete examples are in the repository:
 
-- [examples/demo_ab_bootloader/adapter.yaml](../examples/demo_ab_bootloader/adapter.yaml): a
+- [examples/demo_ab_bootloader/f103/adapter.yaml](../examples/demo_ab_bootloader/f103/adapter.yaml): a
   bootloader that applies a staged image on the next boot. No code needed, only YAML.
 - [adapters/three_tier_f103](../adapters/three_tier_f103): an update driven over a UART
   protocol, with a small `driver.py`.

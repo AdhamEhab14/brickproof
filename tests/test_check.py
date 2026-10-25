@@ -8,9 +8,9 @@ from brickproof import check as checks
 from brickproof import content as contents
 from brickproof import images
 from brickproof.engine.session import find_renode
+from demo_paths import FIRMWARE, all_demo_adapters, demo_adapter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEMO = os.path.join(ROOT, "examples", "demo_ab_bootloader")
 MCUBOOT = os.path.join(ROOT, "adapters", "mcuboot")
 
 
@@ -41,7 +41,7 @@ def run(path):
 
 
 def test_the_bundled_demo_passes():
-    ad, rep = run(os.path.join(DEMO, "adapter.yaml"))
+    ad, rep = run(demo_adapter("adapter"))
     assert ad is not None and rep.passed, rep.lines()
 
 
@@ -76,7 +76,7 @@ def test_broken_yaml_says_where(tmp_path):
 
 def test_ram_smaller_than_the_firmware_expects(tmp_path):
     path = write(tmp_path / "a.yaml", adapter_text(
-        os.path.join(DEMO, "adapter.yaml"), DEMO,
+        demo_adapter("adapter"), FIRMWARE,
         **{"  size: 0x5000 ": "  size: 0x4000 "}))
     _, rep = run(path)
     (f,) = failures(rep)
@@ -86,7 +86,7 @@ def test_ram_smaller_than_the_firmware_expects(tmp_path):
 
 def test_firmware_that_is_not_built_yet(tmp_path):
     path = write(tmp_path / "a.yaml", adapter_text(
-        os.path.join(DEMO, "adapter.yaml"), str(tmp_path / "nowhere")))
+        demo_adapter("adapter"), str(tmp_path / "nowhere")))
     _, rep = run(path)
     assert any("firmware not found" in f.what and "--target" in f.fix for f in failures(rep))
 
@@ -116,7 +116,7 @@ def test_the_image_layout_is_read_from_an_mcuboot_image():
 
 
 def test_elf_segments_are_read_at_their_load_addresses():
-    data = open(os.path.join(DEMO, "prebuilt", "bootloader.elf"), "rb").read()
+    data = open(os.path.join(FIRMWARE, "prebuilt", "bootloader.elf"), "rb").read()
     segs = images.elf_segments(data)
     assert segs and min(s.addr for s in segs) == 0x08000000
     sp, reset = images.first_words(segs, 0x08000000)
@@ -126,14 +126,14 @@ def test_elf_segments_are_read_at_their_load_addresses():
 @pytest.mark.skipif(not find_renode(), reason="needs Renode to read the platform's UARTs")
 def test_a_uart_the_chip_does_not_have(tmp_path):
     path = write(tmp_path / "a.yaml", adapter_text(
-        os.path.join(DEMO, "adapter.yaml"), DEMO, **{"uart: usart2": "uart: usart9"}))
+        demo_adapter("adapter"), FIRMWARE, **{"uart: usart2": "uart: usart9"}))
     _, rep = checks.check(path)
     (f,) = failures(rep)
     assert "no 'usart9'" in f.what and "usart2" in f.fix
 
 
 ALL_ADAPTERS = sorted(
-    [os.path.join(DEMO, f) for f in os.listdir(DEMO) if f.endswith(".yaml") and f[0] != "_"]
+    all_demo_adapters()
     + [os.path.join(ROOT, "adapters", d, f) for d in os.listdir(os.path.join(ROOT, "adapters"))
        if os.path.isdir(os.path.join(ROOT, "adapters", d))
        for f in os.listdir(os.path.join(ROOT, "adapters", d)) if f.endswith(".yaml")])
