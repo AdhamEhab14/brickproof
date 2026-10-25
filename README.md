@@ -332,6 +332,7 @@ not shipped in it: build m33mu yourself (or use the GitHub Action, which builds 
 | `adapters/` | Adapters for real projects (Three-Tier bootloader, OpenBLT, wolfBoot on the F411 and the H563, MCUboot) |
 | `hardware/torn_f103/`, `tools/torn_fit.py` | The firmware that measured torn writes on a real STM32F103, its results, and the tool that turns them into `torn.py`'s numbers |
 | `docs/decisions.md` | Why things are the way they are, with the measurements behind them |
+| `docs/features.md`, `tools/parity.py` | Every feature and the check that proves it; the parity check that keeps every result the same through a change |
 
 ## Limits
 
