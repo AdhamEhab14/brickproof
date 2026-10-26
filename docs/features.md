@@ -78,6 +78,7 @@ nothing automatic checks it today.
 | `brickproof setup` (download Renode, checked against its SHA-256) | `test_setup.py`. Unit only |
 | `brickproof init` (questions, then one probe boot) | `test_init.py`. The probe boot: not in CI |
 | `brickproof check` | `test_check.py`; `run` makes the same checks before every CI campaign |
+| Unknown adapter keys refused, with the nearest real key (`adapter_keys.py`) | `test_adapter_keys.py`, which also checks that the adapter reference documents every key |
 | `brickproof run` | every CI campaign |
 | `brickproof demo`, `demo --list` | `docker`, `package` |
 | `brickproof trace` | `test_trace.py`. The command itself: not in CI |

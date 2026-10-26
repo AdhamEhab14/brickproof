@@ -13,6 +13,10 @@ Start from the one that is closer to your update, then run `brickproof trace my_
 It does one update with no cuts and prints every flash operation in phases. If that passes,
 the adapter is right and `brickproof run` can start cutting.
 
+Every key BrickProof knows is below. A key it does not know (a typo such as `boot_setle`)
+would be ignored, so `brickproof check` and `brickproof run` refuse the adapter and name the
+nearest key there is.
+
 ## The whole file
 
 ```yaml
@@ -93,13 +97,20 @@ oracle:                        # which images may be installed after a cut
     new: {file: build/app_v2.img, at: 0x08004000}
   accept: [old, new]           # or [new] if a cut must never lose the update
   stable_for: 1.0              # seconds it must then run with no reset (0 = do not wait)
+  # run_in: {start: 0x08004000, end: 0x08010000}   # where the PC must stay (default: the
+  #                            # installed image itself)
+  # samples: 4                 # looks at the CPU per verdict,
+  # interval: 0.02             # this many virtual seconds apart
 
 scenario:
   name: update-v1-to-v2
   update_time: 6               # virtual seconds an uninterrupted update needs
   cut_limit: 30                # virtual seconds to wait for a cut to fire
+  # check_states: true         # compare flash with the golden run after every cut (false
+  #                            # only for an update that is not the same from run to run)
   plan: phases                 # or every, or {mode, per_phase, small, real_every}
   torn: true                   # or a list of shapes; same as --torn
+  # torn_seed: 0               # the seed of the torn shapes drawn at random
   depth: 2                     # or {levels, mode, per_phase, small, max_states, torn}
   cuts:                        # optional hand-picked cuts, instead of or beside a plan
     - {at_op: 12}
