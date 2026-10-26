@@ -325,6 +325,9 @@ def check(path, target=None, emulator=True):
         rep.fail("adapter: %s" % e)
         return None, rep
     rep.ok("adapter reads: %s, %s" % (ad.name, ad.platform))
+    for where, _key, near in ad.unknown_keys:
+        rep.fail("%s: not a key BrickProof knows, so it would be ignored" % where,
+                 ("Did you mean '%s'?" % near) if near else "See docs/reference/adapter.md for every key.")
     _check_firmware(ad, rep)
     _check_images(ad, rep)
     if emulator:

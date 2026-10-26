@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
+from brickproof import adapter_keys
 from brickproof import bit_errors as bit_errs
 from brickproof import content
 from brickproof.engine.session import FlashGeometry
@@ -76,6 +77,8 @@ class Adapter:
     cuts: list = field(default_factory=list)
     emulator: str = "renode"      # renode, or m33mu (see CHIPS)
     optbytes: dict = field(default_factory=dict)   # m33mu: option bytes as shipped, by name
+    # keys the adapter has that BrickProof does not know: [(path, key, nearest known key)]
+    unknown_keys: list = field(default_factory=list)
 
     def load_driver(self, session):
         """Import the driver module and return its driver object for this session."""
@@ -528,8 +531,15 @@ def load(path, target=None):
 
     `extends: other.yaml` starts from another adapter and changes only what this
     file says. Relative paths resolve against this file's folder, so keep the two
-    side by side.
+    side by side. Keys BrickProof does not know are kept in `unknown_keys`
+    (adapter_keys.py); `check`, and `run` before it starts, fail on them.
     """
+    ad = _load(path, target)
+    ad.unknown_keys = adapter_keys.unknown(_read(os.path.abspath(path)))
+    return ad
+
+
+def _load(path, target=None):
     path = os.path.abspath(path)
     folder = os.path.dirname(path)
     d = _read(path)
