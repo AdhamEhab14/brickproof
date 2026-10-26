@@ -36,7 +36,7 @@ Changelog = "https://github.com/AdhamEhab14/brickproof/blob/main/CHANGELOG.md"
 [tool.setuptools]
 # The demo is a package too, so that `pip install brickproof-fw` brings it along and
 # `brickproof demo` runs with nothing else to fetch. It lives in examples/ in the repo.
-packages = ["brickproof", "brickproof.campaign", "brickproof.engine", "brickproof.drivers", "brickproof.demo"]
+packages = ["brickproof", "brickproof.campaign", "brickproof.engine", "brickproof.engine.renode", "brickproof.drivers", "brickproof.demo"]
 
 [tool.setuptools.package-dir]
 brickproof = "src/brickproof"
