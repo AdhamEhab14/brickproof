@@ -1,6 +1,49 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+**A slow emulator is never called locked up.** Three causes of a false "the device locked up"
+are fixed. Renode's clock could miss a wake-up at the start of a slice and then wait out
+10 ms every time a flash model stopped the CPU early, so a one-second slice of a long update
+took 450 s or more; the flash models now wake it. After a jump through an erased vector,
+Renode could leave a Cortex-M running with its Thumb bit clear, crawling hundreds of times
+slower, so whether that was called locked up depended on the machine; a core out of Thumb
+state is now locked up at once, the same on every machine, and in minutes instead of up to
+twenty. And a run that hangs is repeated once on a fresh emulator before it is reported:
+firmware that locks up does it again, an emulator that stalled does not.
+
+**`brickproof run --quick`.** A first look in a minute or two: one cut at each edge between
+the update's phases and one inside each long phase, nothing else (22 cuts in 32 s on the
+demo). In a terminal, each cut is now followed by how many are left and roughly how long
+they will take, and a failure ends with the command that exports its flash for a real board
+next to the one that runs it again.
+
+**Unknown adapter keys are refused.** A key BrickProof does not know (`boot_setle`,
+`write_units`) used to be ignored in silence, so the run used the default. `check`, and
+`run` before it starts, now name it with the nearest real key ("Did you mean
+'boot_settle'?").
+
+**A guide for each kind of update.** Five steps each, from firmware to a full run, for
+MCUboot, a bootloader that installs a staged image, an update sent over the UART, and a
+flash storage library (`docs/guide/`).
+
+**The project, reorganised.** The README is the short version, with getting started,
+guides and reference in `docs/` and every design decision as a numbered record in
+`docs/decisions/`. The demo's adapters are in one folder per chip
+(`examples/demo_ab_bootloader/f103/`, `f411/`, `l476/`, `nrf52/`, `h563/`) and its firmware
+in `firmware/`; demo names are unchanged (`brickproof demo f411-bug-no_erase`), but a path to
+a demo adapter gains its chip folder. `adapters/README.md` lists every target and what it
+found, and committed firmware carries a `SHA256SUMS` that the tests check. In the code, the
+runner and the Renode session are split into one module per part (`brickproof.runner` and
+`brickproof.engine.session` still export every name they had), and the flash models share
+their common helpers. `CONTRIBUTING.md` has the recipes for changes, and `tools/dev.py` the
+commands.
+
+**CI that says something.** About 20 jobs instead of 90, from a list of every campaign and
+the result it must give (`tests/scenarios.yaml`), with one required check. A parity check
+compares every result with a recorded baseline, so a change that should not change results
+is shown not to. The quick start a new user follows runs on every change, `setup`
+included. The ARM toolchain is cached, so a slow package mirror no longer times a job out.
 
 **`brickproof check`.** Reads an adapter and every file it names, without an emulator, and
 says what to fix: the adapter not where it was said to be (with the files of that name it
