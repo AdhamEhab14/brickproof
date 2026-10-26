@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import time
 
 from brickproof import adapter as adapters
 from brickproof import export as exports
@@ -21,6 +22,33 @@ from brickproof import report as reports
 from brickproof import runner
 from brickproof import torn as torns
 from brickproof import trace as traces
+
+
+# How far a run is through its planned cuts, for the line under each result in a terminal.
+_progress = {"total": 0, "done": 0, "t0": 0.0, "shown": False}
+
+
+def _progress_line(r):
+    """'cut 12 of 173, about 3 min left' after a clean cut, in an interactive terminal only:
+    a log file or CI keeps one line per result, as before."""
+    if not _progress["total"] or not sys.stdout.isatty():
+        return None
+    if r.baseline or r.torn or r.content or r.link is not None or r.bit_error or r.depth > 1:
+        return None
+    _progress["done"] += 1
+    done, total = _progress["done"], _progress["total"]
+    if done >= total:
+        return None
+    left = (time.time() - _progress["t0"]) / done * (total - done)
+    return "  cut %d of %d, about %s left" % (done, total, _duration(left))
+
+
+def _duration(seconds):
+    if seconds < 90:
+        return "%d s" % max(1, round(seconds))
+    if seconds < 5400:
+        return "%d min" % round(seconds / 60)
+    return "%.1f h" % (seconds / 3600)
 
 
 def _print_result(r):
@@ -43,6 +71,9 @@ def _print_result(r):
         note = "runs %s" % r.image              # what the oracle found installed and running
     print("%-4s %-28s %-9s %-22s %6.1fs  %s" % (
         status, r.cut, op, where, r.seconds, note), flush=True)
+    line = _progress_line(r)
+    if line:
+        print(line, flush=True)
 
 
 def _load(args):
@@ -106,12 +137,16 @@ def _make_dirs(*paths):
             os.makedirs(os.path.dirname(out), exist_ok=True)
 
 
-def _print_plan(plan):
+def _print_plan(plan, shard=None):
     print()
     for line in plan.lines():
         print(line)
     print("plan (%s): %s" % (plan.mode, plan.summary()))
     print(flush=True)
+    total = len(plan.cuts)
+    if shard:
+        total = len(range(shard[0] - 1, total, shard[1]))       # every Nth, from the Kth
+    _progress.update(total=total, done=0, t0=time.time())
 
 
 def _hint_time(trace, ad):
@@ -147,10 +182,24 @@ def _run(ad, args, **kw):
         return None
 
 
+def quick(ad):
+    """--quick: the shape of the result, fast. One cut at each edge between phases and one
+    inside each long phase; no torn states, second cuts, damaged images, bit errors or
+    broken links."""
+    ad.plan = {"mode": "phases", "per_phase": 1}
+    ad.torn = ad.depth = None
+    ad.content_faults = ad.link_cuts = ad.bit_errors = None
+
+
 def cmd_run(args):
+    if args.quick and args.full:
+        print("--quick and --full ask for opposite things: pick one", file=sys.stderr)
+        return 2
     ad = _load(args)
     if ad is None:
         return 2
+    if args.quick and not args.cut:
+        quick(ad)
     if args.full and not args.cut:
         # everything worth testing, as fast as this machine allows
         args.torn = True
@@ -201,7 +250,8 @@ def cmd_run(args):
     if not ad.oracle:
         print("note: this adapter has no 'oracle' section, so each verdict rests on the "
               "driver alone (what the firmware says about itself)", flush=True)
-    out = _run(ad, args, fail_fast=args.fail_fast, on_plan=_print_plan if ad.plan else None)
+    plan_printer = (lambda plan: _print_plan(plan, getattr(ad, "shard", None))) if ad.plan else None
+    out = _run(ad, args, fail_fast=args.fail_fast, on_plan=plan_printer)
     if out is None:
         return 3
     report = runner.as_dict(out, ad)
@@ -297,6 +347,9 @@ def _print_verdict(out, report, html):
     if failed:
         print("the first one: %s: %s" % (failed[0]["cut"], failed[0]["message"]))
         print("run it alone:  %s" % reports.reproduce(report, failed[0]))
+        export = reports.export_command(report, failed[0])
+        if export:
+            print("for a board:   %s" % export)
 
 
 def demo_folder():
@@ -542,6 +595,10 @@ def run_options(r):
                         "second cut during each recovery and the adapter's damaged-image tests, "
                         "on one emulator per core, with long updates sped up by powering most "
                         "cuts up from their computed state")
+    r.add_argument("--quick", action="store_true",
+                   help="a first look in a few minutes: the edges of every phase of the update "
+                        "and one cut inside each long one, nothing else (no torn states, no "
+                        "second cuts, no damaged images)")
     r.add_argument("--torn", action="store_true",
                    help="also boot from torn states: each cut's operation left half done")
     r.add_argument("--depth", type=_depth_arg, metavar="N",

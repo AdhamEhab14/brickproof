@@ -107,3 +107,4 @@ number: `NNNN-a-few-words.md`, with its title, the date and the reasons.
 | 0099 | 2026-10-26 | [RenodeSession, one file per part](0099-renodesession-one-file-per-part.md) |
 | 0100 | 2026-10-26 | [The flash models share their common helpers](0100-the-flash-models-share-their-common-helpers.md) |
 | 0101 | 2026-10-26 | [Every adapter key in one list](0101-every-adapter-key-in-one-list.md) |
+| 0102 | 2026-10-26 | [A quick first look, and a run that says where it is](0102-a-quick-first-look-and-a-run-that-says-where-it-is.md) |
