@@ -109,3 +109,4 @@ number: `NNNN-a-few-words.md`, with its title, the date and the reasons.
 | 0101 | 2026-10-26 | [Every adapter key in one list](0101-every-adapter-key-in-one-list.md) |
 | 0102 | 2026-10-26 | [A quick first look, and a run that says where it is](0102-a-quick-first-look-and-a-run-that-says-where-it-is.md) |
 | 0103 | 2026-10-26 | [A guide for each kind of update, and the quick start run in CI](0103-a-guide-for-each-kind-of-update-and-the-quick-start-run-in-ci.md) |
+| 0104 | 2026-10-26 | [One version, one command, and the recipes written down](0104-one-version-one-command-and-the-recipes-written-down.md) |

@@ -22,7 +22,7 @@ jobs:
 
       - name: The tag must match the package version
         run: |
-          version=$(python -c "import re;print(re.search(r'^version = \"(.+)\"', open('pyproject.toml').read(), re.M).group(1))")
+          version=$(python -c "import re;print(re.search(r'^__version__ = \"(.+)\"', open('src/brickproof/__init__.py').read(), re.M).group(1))")
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
 
       - name: Build

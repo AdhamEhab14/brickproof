@@ -20,6 +20,7 @@
 
 **The project**
 
+- [Contributing](../CONTRIBUTING.md): set-up, how a change is checked, and recipes (a bug fix, a demo bug build, a target, an adapter key, a chip family)
 - [Targets](../adapters/README.md): the real firmware BrickProof has been run on, and what it found
 - [How BrickProof is built](architecture.md): where the code is
 - [Features and what proves them](features.md), and the parity check that keeps every result the same through a change

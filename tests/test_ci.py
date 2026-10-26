@@ -136,3 +136,12 @@ def test_a_campaign_past_its_time_is_stopped(tmp_path, monkeypatch):
     ])
     code, secs = scenarios.run_one(scenarios.load(path)[0], shlex.split(command), str(tmp_path))
     assert code is None and secs < 20
+
+
+def test_the_dev_commands_answer(capsys):
+    spec = importlib.util.spec_from_file_location("dev", os.path.join(ROOT, "tools", "dev.py"))
+    dev = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dev)
+    assert dev.main(["help"]) == 0 and "tools/dev.py check" in capsys.readouterr().out
+    assert dev.main(["no-such-command"]) == 2
+    assert dev.main(["scenario"]) == 2

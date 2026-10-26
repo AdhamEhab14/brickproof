@@ -1,7 +1,10 @@
 # Releasing
 
-1. Set the version in `pyproject.toml` and `src/brickproof/__init__.py`, and add its section to
-   `CHANGELOG.md`. Merge that to `main` with all checks green.
+1. Set the version in one place, `__version__` in `src/brickproof/__init__.py` (the package
+   reads it from there), turn `## Unreleased` in `CHANGELOG.md` into its section, and set the
+   GitHub Action examples in `README.md` and `docs/guide/results-and-ci.md` to the new tag.
+   `tests/test_version.py` fails until all of these agree. Merge that to `main` with all
+   checks green.
 2. Tag and push:
 
    ```bash
