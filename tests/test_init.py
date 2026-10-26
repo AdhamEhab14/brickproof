@@ -97,8 +97,8 @@ def test_banners_become_patterns():
 
 
 def test_without_renode_the_next_step_is_setup(mcuboot, monkeypatch):
-    from brickproof import runner
-    monkeypatch.setattr(runner, "find_renode", lambda: None)
+    from brickproof.campaign import bringup          # where find_emulator looks it up
+    monkeypatch.setattr(bringup, "find_renode", lambda: None)
     said = []
     inits.run(staged_answers(), interactive=False, say=said.append, probe_device=False)
     nxt = [s for s in said if s.startswith("Next:")]
