@@ -46,7 +46,7 @@ nothing automatic checks it today.
 | Hand-picked cuts (`at_op`, `on_erase`, `at_ops` ranges) | e2e; `test_runner.py` |
 | Random soak (`--soak`, `--seed`) | `test_soak.py`. Unit only |
 | `--full` (everything in one run) | Not in CI |
-| `--quick` (a first look: phase edges and one cut per long phase) | `test_cli_output.py`. Unit only |
+| `--quick` (a first look: phase edges and one cut per long phase) | `quickstart` (the demo); `test_cli_output.py` |
 | Progress and time left after each cut (terminal only); a failure's reproduce and export commands | `test_cli_output.py` |
 | Parallel emulators (`-j N`, `-j auto`), results independent of N | every `-j 3` campaign; `test_pool.py` |
 | `--shard K/N` | MCUboot `f411` (4 shards); `exhaustive.yml` (20 shards, run by hand) |
@@ -77,14 +77,14 @@ nothing automatic checks it today.
 
 | Command | Proof |
 |---|---|
-| `brickproof setup` (download Renode, checked against its SHA-256) | `test_setup.py`. Unit only |
+| `brickproof setup` (download Renode, checked against its SHA-256) | `quickstart` (downloads it on a clean runner); `test_setup.py` |
 | `brickproof init` (questions, then one probe boot) | `test_init.py`. The probe boot: not in CI |
 | `brickproof check` | `test_check.py`; `run` makes the same checks before every CI campaign |
 | Unknown adapter keys refused, with the nearest real key (`adapter_keys.py`) | `test_adapter_keys.py`, which also checks that the adapter reference documents every key |
 | `brickproof run` | every CI campaign |
 | `brickproof demo`, `demo --list` | `docker`, `package` |
-| `brickproof trace` | `test_trace.py`. The command itself: not in CI |
-| `brickproof export` | `test_export.py`. Unit only |
+| `brickproof trace` | `quickstart`; `test_trace.py` |
+| `brickproof export` | `quickstart`; `test_export.py` |
 | `brickproof adapter-from-zephyr` | `test_zephyr_adapter.py` |
 | `extends:` in adapters | 67 of the demo's 72 adapters extend another (five base adapters); `test_adapter.py` |
 
