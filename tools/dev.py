@@ -12,6 +12,7 @@ It uses this checkout's source (src/), so nothing needs installing first but the
 dependencies: pip install -e ".[dev]".
 """
 import os
+import shlex
 import subprocess
 import sys
 
@@ -48,8 +49,10 @@ def main(argv=None):
             print("which? e.g.: python tools/dev.py scenario demo-f411 (the ids are in tests/scenarios.yaml)")
             return 2
         ids = [a for i in rest for a in ("--id", i)]
-        return run(py, os.path.join("tools", "scenarios.py"), "run", *ids,
-                   "--command", "%s -m brickproof.cli" % py.replace("\\", "/"))
+        # scenarios.py splits --command like a shell would: the interpreter's path is quoted,
+        # so one with spaces (D:\Embedded projects\...) stays one argument
+        command = "%s -m brickproof.cli" % shlex.quote(py.replace("\\", "/"))
+        return run(py, os.path.join("tools", "scenarios.py"), "run", *ids, "--command", command)
     if cmd == "parity":
         if len(rest) != 1:
             print("usage: python tools/dev.py parity <folder of reports>")
