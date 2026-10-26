@@ -108,3 +108,4 @@ number: `NNNN-a-few-words.md`, with its title, the date and the reasons.
 | 0100 | 2026-10-26 | [The flash models share their common helpers](0100-the-flash-models-share-their-common-helpers.md) |
 | 0101 | 2026-10-26 | [Every adapter key in one list](0101-every-adapter-key-in-one-list.md) |
 | 0102 | 2026-10-26 | [A quick first look, and a run that says where it is](0102-a-quick-first-look-and-a-run-that-says-where-it-is.md) |
+| 0103 | 2026-10-26 | [A guide for each kind of update, and the quick start run in CI](0103-a-guide-for-each-kind-of-update-and-the-quick-start-run-in-ci.md) |

@@ -93,6 +93,7 @@ Docker image is there too: [results, a real board, and CI](docs/guide/results-an
 | [docs/](docs/README.md) | everything below, in one index |
 | [Getting started](docs/getting-started.md) | install, the demo and its bug builds |
 | [Testing your own firmware](docs/guide/testing-your-firmware.md) | `init`, `check`, `run`, the three kinds of update |
+| Five steps for: [MCUboot](docs/guide/mcuboot.md), [a staged image](docs/guide/staged-update.md), [over the UART](docs/guide/uart-protocol.md), [a storage library](docs/guide/storage-library.md) | the guide for your kind of update |
 | [What a run covers](docs/guide/what-a-run-covers.md) | every kind of test a run makes |
 | [Results, a real board, and CI](docs/guide/results-and-ci.md) | reports, exporting a cut's flash, the Action, Docker |
 | [The adapter file](docs/reference/adapter.md), [options](docs/reference/cli.md), [limits](docs/reference/limits.md) | reference |

@@ -12,6 +12,8 @@
 #   e2e       - the Three-Tier bootloader built from source, cut during its FBL self-update
 #   action    - the GitHub Action used the way another repository would (Renode and m33mu)
 #   docker    - the image builds and runs the demo
+#   quickstart - what a new user does, from the wheel in a clean folder: setup downloads
+#               Renode, the demo runs and catches a bug, trace, export and check work
 #   parity    - every report of this run against tests/parity/baseline.json: a change not
 #               meant to change results leaves every verdict, coverage figure and cut alone
 # ci-ok is the one required check: green when everything that had to run passed.
@@ -244,6 +246,46 @@ jobs:
           docker run --rm brickproof demo no_erase --fail-fast
           [ $? -eq 1 ]
 
+  # the README's quick start and the commands around it, the way a new user runs them:
+  # from the wheel, in a folder that is not this repository, with the Renode setup fetches
+  quickstart:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The wheel, installed somewhere clean
+        run: |
+          pip install build && python -m build --wheel
+          python -m venv /tmp/user && /tmp/user/bin/pip install dist/*.whl
+          echo "/tmp/user/bin" >> "$GITHUB_PATH"
+      - name: brickproof setup downloads the emulator
+        working-directory: /tmp
+        run: |
+          env -u RENODE_PATH brickproof setup
+      - name: The demo, a first look
+        working-directory: /tmp
+        run: brickproof demo --quick
+      - name: A bug build is caught (exit code 1)
+        working-directory: /tmp
+        run: |
+          set +e; brickproof demo self_lock --fail-fast; code=$?; set -e
+          echo "exit code $code"; [ "$code" = 1 ]
+      - name: trace, export and check on the installed demo
+        working-directory: /tmp
+        run: |
+          demo=$(/tmp/user/bin/python -c 'import brickproof.demo, os; print(os.path.dirname(brickproof.demo.__file__))')
+          brickproof trace "$demo/f103/adapter.yaml" | tail -3
+          brickproof export "$demo/f103/adapter.yaml" --cut 3 -o /tmp/op-3.bin
+          test -s /tmp/op-3.bin && test -s /tmp/op-3.txt
+          sed 's/^boot_settle:/boot_setle:/; s#^target: ../firmware#target: '"$demo"'/firmware#' "$demo/f103/adapter.yaml" > /tmp/typo.yaml
+          set +e; brickproof check /tmp/typo.yaml; code=$?; set -e
+          echo "exit code $code"; [ "$code" != 0 ]
+
   parity:
     needs: [changes, scenarios, e2e, action]
     if: always() && needs.changes.outputs.code == 'true'
@@ -265,7 +307,7 @@ jobs:
   # The one required check. Green when every job that had to run passed; the emulator
   # jobs are skipped on a change to documentation only, and that is fine.
   ci-ok:
-    needs: [changes, checks, compat, package, model-rules, scenarios, e2e, action, docker, parity]
+    needs: [changes, checks, compat, package, model-rules, scenarios, e2e, action, docker, quickstart, parity]
     if: always()
     runs-on: ubuntu-latest
     steps:

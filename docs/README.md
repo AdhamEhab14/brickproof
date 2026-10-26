@@ -4,6 +4,7 @@
 
 - [Getting started](getting-started.md): install, the bundled demo, its bug builds, the five chips
 - [Testing your own firmware](guide/testing-your-firmware.md): `init`, `check`, `run --full`, and the three kinds of update
+- Five steps for your kind of update: [MCUboot](guide/mcuboot.md), [a bootloader that installs a staged image](guide/staged-update.md), [an update sent over the UART](guide/uart-protocol.md), [a flash storage library](guide/storage-library.md)
 
 **Using it**
 

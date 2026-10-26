@@ -22,7 +22,9 @@ half a minute, against about 12 minutes for everything. Use it while the adapter
 and roughly how long they will take; a failure ends with the command that runs it again and
 the one that exports its flash for a real board.
 
-Three kinds of update are covered:
+Three kinds of update are covered, each with a five-step guide ([MCUboot](mcuboot.md),
+[a staged image](staged-update.md), [over the UART](uart-protocol.md),
+[a storage library](storage-library.md)):
 
 | Kind | What it means | What you need |
 |---|---|---|
