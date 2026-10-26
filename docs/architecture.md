@@ -13,8 +13,8 @@
    and a second cut during recovery are added when asked for.
 4. **Each cut.** From the same starting flash, the update runs again with power cut at one
    operation; the flash is checked byte for byte against the replay, the device is powered
-   up, and the oracle (`oracle.py`) and the driver judge whether it recovered (`runner.py`,
-   spread over the emulators by `pool.py`).
+   up, and the oracle (`oracle.py`) and the driver judge whether it recovered
+   (`campaign/cuts.py`, `campaign/judge.py`, spread over the emulators by `pool.py`).
 5. **The verdict.** Every result goes into the JSON, JUnit, HTML and SARIF reports
    (`report.py`), with the command that reproduces each failure.
 
@@ -29,7 +29,8 @@
 | `src/brickproof/plan.py` | The cut planner: distinct flash states, exhaustive or sampled |
 | `src/brickproof/torn.py` | Torn states: an erase or a program left half done |
 | `src/brickproof/oracle.py` | The outside judge: approved image installed, and really running |
-| `src/brickproof/runner.py`, `pool.py` | A campaign: baseline, cuts, torn states, depth, over one or many emulators |
+| `src/brickproof/campaign/` | A campaign, one module per part: `results`, `golden` (the uninterrupted update), `judge` (one verdict), `cuts` (power cuts, torn states, soak), `faults` (damaged images, bit errors, a broken link), `depth` (cuts during recovery), `core` (the whole campaign), `bringup` (the emulators and `brickproof run`). `runner.py` re-exports the names other code imports |
+| `src/brickproof/pool.py` | Shares the cuts over several emulators, results in a fixed order |
 | `src/brickproof/report.py`, `regulations.py` | JUnit and HTML reports, and the regulation map |
 | `src/brickproof/export.py` | A cut's flash as files for a real board |
 | `src/brickproof/drivers/` | Built-in drivers (`staged_slot`) |

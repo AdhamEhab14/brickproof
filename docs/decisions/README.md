@@ -103,3 +103,4 @@ number: `NNNN-a-few-words.md`, with its title, the date and the reasons.
 | 0095 | 2026-10-25 | [The demo, one folder per chip](0095-the-demo-one-folder-per-chip.md) |
 | 0096 | 2026-10-25 | [Every target folder the same, and committed firmware checked](0096-every-target-folder-the-same-and-committed-firmwar.md) |
 | 0097 | 2026-10-25 | [The docs, split by what a reader wants](0097-the-docs-split-by-what-a-reader-wants.md) |
+| 0098 | 2026-10-26 | [The runner, one module per part](0098-the-runner-one-module-per-part.md) |
