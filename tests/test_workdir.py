@@ -167,3 +167,22 @@ def test_an_nrf52840_gets_its_own_flash_controller_and_no_svd_download(tmp_path)
     assert "\nPAGE = 0x1000\n" in model and "\nFLASH_SIZE = 0x100000\n" in model
     assert not (work / "models" / "stm32f4_flash.py").exists()
     assert "bpOptionBytes: Memory.MappedMemory @ sysbus 0x10001000" in repl       # the UICR
+
+
+FLASH_MODELS = ["stm32f1_flash.py", "stm32f4_flash.py", "stm32l4_flash.py", "nrf52_flash.py"]
+
+
+@pytest.mark.parametrize("model", FLASH_MODELS)
+def test_each_flash_model_gets_the_common_helpers_once(model):
+    text = open(os.path.join(wd.MODELS, model), encoding="utf-8").read()
+    assert len(wd.COMMON_MARK.findall(text)) == 1
+    out = wd.with_common(text)
+    assert not wd.COMMON_MARK.search(out)
+    for helper in ("st", "st_w", "log", "wake_clock", "spend", "first_difference", "get", "put"):
+        helper = "def %s(" % helper
+        assert out.count(helper) == 1, helper
+
+
+def test_a_flash_model_without_the_mark_is_refused():
+    with pytest.raises(ValueError, match="FLASH_COMMON"):
+        wd.with_common("PAGE = 0x400\n")

@@ -105,3 +105,4 @@ number: `NNNN-a-few-words.md`, with its title, the date and the reasons.
 | 0097 | 2026-10-25 | [The docs, split by what a reader wants](0097-the-docs-split-by-what-a-reader-wants.md) |
 | 0098 | 2026-10-26 | [The runner, one module per part](0098-the-runner-one-module-per-part.md) |
 | 0099 | 2026-10-26 | [RenodeSession, one file per part](0099-renodesession-one-file-per-part.md) |
+| 0100 | 2026-10-26 | [The flash models share their common helpers](0100-the-flash-models-share-their-common-helpers.md) |

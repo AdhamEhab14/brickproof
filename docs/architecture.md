@@ -23,7 +23,7 @@
 | Path | What |
 |---|---|
 | `src/brickproof/engine/` | The emulators, driven in lock-step virtual time: `session.py` (`RenodeSession`, put together from `renode/process.py`, `clock.py`, `memory.py`, `flash_model.py` and `power.py`), `m33mu.py`, `workdir.py` (the work folder), `geometry.py` (`FlashGeometry`), `flash_regs.py` (the flash models' test registers) and `common.py` (what both backends share) |
-| `src/brickproof/models/` | The flash controller model (operation counting, cuts, the chip's rules, option bytes) and the memory guard |
+| `src/brickproof/models/` | The flash controller models, one per chip family (operation counting, cuts, the chip's rules, option bytes), the helpers they share (`flash_common.py`, put into each when it is copied), the RCC and power models and the memory guard |
 | `src/brickproof/platforms/` | Base Renode platforms the models plug into |
 | `src/brickproof/trace.py` | The golden-run trace: phases, replay to any operation |
 | `src/brickproof/plan.py` | The cut planner: distinct flash states, exhaustive or sampled |
