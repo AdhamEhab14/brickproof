@@ -46,6 +46,8 @@ nothing automatic checks it today.
 | Hand-picked cuts (`at_op`, `on_erase`, `at_ops` ranges) | e2e; `test_runner.py` |
 | Random soak (`--soak`, `--seed`) | `test_soak.py`. Unit only |
 | `--full` (everything in one run) | Not in CI |
+| `--quick` (a first look: phase edges and one cut per long phase) | `test_cli_output.py`. Unit only |
+| Progress and time left after each cut (terminal only); a failure's reproduce and export commands | `test_cli_output.py` |
 | Parallel emulators (`-j N`, `-j auto`), results independent of N | every `-j 3` campaign; `test_pool.py` |
 | `--shard K/N` | MCUboot `f411` (4 shards); `exhaustive.yml` (20 shards, run by hand) |
 | `--cut N`, `--fail-fast` | bug builds (`--fail-fast`); `--cut`: `test_runner.py`, unit only |

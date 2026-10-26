@@ -19,6 +19,7 @@
 
 | Option | What it does |
 |---|---|
+| `--quick` | a first look: one cut at each edge between phases and one inside each long phase; no torn states, second cuts, damaged images, bit errors or broken links |
 | `--full` | everything in one run: clean cuts, `--torn`, `--depth 2` and the adapter's damaged-image tests, on one emulator per core, with a long update sped up automatically (most cuts powered up from their computed state) |
 | `--plan every` / `--plan phases` | cut every distinct flash state, or sample long phases |
 | `--torn` | also boot from torn erases and programs |
