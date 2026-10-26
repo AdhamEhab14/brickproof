@@ -77,7 +77,7 @@ has the details, and [what a run covers](docs/guide/what-a-run-covers.md) says w
 ## In CI
 
 ```yaml
-- uses: AdhamEhab14/brickproof@v0.3.0
+- uses: AdhamEhab14/brickproof@v0.4.0
   with:
     adapter: test/brickproof.yaml
     args: --torn --depth 2 -j 3
