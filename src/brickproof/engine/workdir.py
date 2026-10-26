@@ -110,6 +110,21 @@ def _set_sectors(model_text, sectors):
     return model_text
 
 
+COMMON_MARK = re.compile(r"^# @FLASH_COMMON@.*\n(?:#.*\n)?", re.M)
+
+
+def with_common(model_text):
+    """The flash model with models/flash_common.py put in at its '# @FLASH_COMMON@' line:
+    the helpers every model has, kept in one place. Renode cannot import it, so it goes in
+    as text, like the geometry."""
+    with open(os.path.join(MODELS, "flash_common.py")) as f:
+        common = f.read()
+    model_text, n = COMMON_MARK.subn(lambda m: common, model_text)
+    if n != 1:
+        raise ValueError("flash model has no '# @FLASH_COMMON@' line")
+    return model_text
+
+
 def patch_geometry(model_text, flash):
     """Rewrite a flash model's geometry lines: FLASH_BASE and FLASH_SIZE, and what an
     erase wipes there, one PAGE size or a list of SECTORS."""
@@ -146,12 +161,13 @@ def prepare(workdir, adapter):
     models = os.path.join(workdir, "models")
     os.makedirs(models, exist_ok=True)
     for name in os.listdir(MODELS):
-        if not name.endswith(".py") or name.startswith("_") or name == "mem_guard.py":
+        if not name.endswith(".py") or name.startswith("_") or name in ("mem_guard.py", "flash_common.py"):
             continue
         if name.endswith("_flash.py") and name != adapter.flash.model:
             continue                            # another chip family's controller
         text = open(os.path.join(MODELS, name)).read()
         if name.endswith("_flash.py"):
+            text = with_common(text)
             text = patch_geometry(text, adapter.flash)
             if adapter.flash.ob_base is not None:
                 text = _set_const(text, "OB_BASE", adapter.flash.ob_base)

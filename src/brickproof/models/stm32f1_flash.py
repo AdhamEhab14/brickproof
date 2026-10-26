@@ -102,12 +102,8 @@ RESETS = 60                 # state word: resets since the engine last cleared i
 bus = None if request.IsInit else self.GetMachine().SystemBus   # no machine yet at construction
 
 
-def st(i):
-    return int(bus.ReadDoubleWord(STATE + 4 * i))
-
-
-def st_w(i, v):
-    bus.WriteDoubleWord(STATE + 4 * i, v & 0xFFFFFFFF)
+# @FLASH_COMMON@ st, st_w, log, wake_clock, spend, first_difference, get, put:
+# models/flash_common.py, put here when the model is copied (engine/workdir.py)
 
 
 def ensure_state():
@@ -132,31 +128,6 @@ def after_reset(machine, ob=OB_BASE, kr=IWDG_KR, resets=STATE + 4 * RESETS):
         c.SetHookAtMemoryAccess(None)           # a reset ends any program that was going on
     if not int(b.ReadByte(ob + 2)) & 1:
         b.WriteDoubleWord(kr, 0xCCCC)
-
-
-def log(text):
-    if st(TRACE) == 1:
-        f = open(TRACE_FILE, "a")
-        f.write(text + chr(10))
-        f.close()
-
-
-def wake_clock():
-    # Renode's clock can miss the CPU thread starting at the beginning of a RunFor, and
-    # then wait out a 10 ms timeout each time the CPU stops early, which it does over and
-    # over while flash is programmed: a one-second slice once took 450 s. Telling the
-    # clock the CPU is active again ends that, and costs nothing when it was not waiting.
-    EmulationManager.Instance.CurrentEmulation.MasterTimeSource.ReportHandleActive()
-    bus.Machine.LocalTimeSource.ReportHandleActive()
-
-
-def spend(us):
-    # the chip is busy for this long and the CPU, which runs from flash, waits
-    wake_clock()
-    if us:
-        for c in bus.GetCPUs():
-            c.SkipTime(TimeInterval.FromMicroseconds(us))
-    return us
 
 
 def resync():
@@ -237,31 +208,6 @@ def all_differences():
 
 def option_differences():
     return [OB_BASE + i for i in range(0, OB_SIZE, 2) if differs(OB_BASE + i)]
-
-
-def first_difference(addr, n):
-    # first address in [addr, addr+n) where flash is not what bpExpect holds, or 0
-    now = bus.ReadBytes(addr, n)
-    want = bus.ReadBytes(addr - FLASH_BASE + EXPECT, n)
-    if Convert.ToBase64String(now) == Convert.ToBase64String(want):
-        return 0
-    for i in range(n):
-        if now[i] != want[i]:
-            return addr + i
-    return 0
-
-
-def get(addr, size):
-    # `size` bytes as a number, least significant byte first
-    raw = bus.ReadBytes(addr, size)
-    v = 0
-    for i in range(size):
-        v |= int(raw[i]) << (8 * i)
-    return v
-
-
-def put(addr, size, v):
-    bus.WriteBytes(Array[Byte]([(v >> (8 * i)) & 0xFF for i in range(size)]), addr)
 
 
 def listen(on):

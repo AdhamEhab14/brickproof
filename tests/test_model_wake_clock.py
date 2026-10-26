@@ -13,13 +13,18 @@ import os
 
 import pytest
 
+from brickproof.engine import workdir
+
 MODELS = os.path.join(os.path.dirname(__file__), "..", "src", "brickproof", "models")
 FLASH_MODELS = sorted(f for f in os.listdir(MODELS) if f.endswith("_flash.py"))
 
 
 def functions(name):
+    """The model's functions as Renode gets them: with models/flash_common.py put in."""
     with open(os.path.join(MODELS, name), encoding="utf-8") as f:
-        tree = ast.parse(f.read())
+        tree = ast.parse(workdir.with_common(f.read()))
+    names = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+    assert len(names) == len(set(names)), "%s: a helper is both in the model and in flash_common.py" % name
     return {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
 
 
