@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "brickproof-fw"
-version = "0.3.0"
+# the version is in one place, src/brickproof/__init__.py (see docs/releasing.md)
+dynamic = ["version"]
 description = "Power-fail testing for firmware updates: cut power at every flash operation in Renode and check the device recovers"
 readme = "README.md"
 license = "Apache-2.0"
@@ -32,6 +33,9 @@ brickproof = "brickproof.cli:main"
 Homepage = "https://github.com/AdhamEhab14/brickproof"
 Issues = "https://github.com/AdhamEhab14/brickproof/issues"
 Changelog = "https://github.com/AdhamEhab14/brickproof/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = {attr = "brickproof.__version__"}
 
 [tool.setuptools]
 # The demo is a package too, so that `pip install brickproof-fw` brings it along and

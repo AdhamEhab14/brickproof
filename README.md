@@ -98,7 +98,7 @@ Docker image is there too: [results, a real board, and CI](docs/guide/results-an
 | [Results, a real board, and CI](docs/guide/results-and-ci.md) | reports, exporting a cut's flash, the Action, Docker |
 | [The adapter file](docs/reference/adapter.md), [options](docs/reference/cli.md), [limits](docs/reference/limits.md) | reference |
 | [Targets](adapters/README.md) | the real firmware it has run on, and what it found |
-| [How it is built](docs/architecture.md), [decisions](docs/decisions/README.md), [features](docs/features.md) | for working on BrickProof |
+| [Contributing](CONTRIBUTING.md), [how it is built](docs/architecture.md), [decisions](docs/decisions/README.md), [features](docs/features.md) | for working on BrickProof: set-up, how a change is checked, recipes |
 
 ## Licence
 
